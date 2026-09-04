@@ -1,0 +1,560 @@
+/* Görsel referans şablonları — görseldeki 9 tema */
+
+.exam-banner__tpl[class*='--viz-'] {
+  --banner-height: clamp(110px, 13vw, 148px);
+}
+
+.exam-banner__body--viz-score {
+  padding-right: 8px;
+}
+
+.exam-banner__body--with-left-panel {
+  padding-left: calc(18% + 12px);
+}
+
+.exam-banner__tpl--viz-yks-wave .exam-banner__body--with-yks-panel {
+  flex: 1;
+  min-width: 0;
+  margin-left: 22%;
+  padding-left: 12px;
+}
+
+/* Score box */
+.exam-banner__score-box {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+  border-left: 1px solid var(--banner-border);
+  padding-left: 10px;
+  margin-left: 4px;
+}
+
+.exam-banner__score-box--compact {
+  gap: 3px;
+  padding-left: 4px;
+}
+
+.exam-banner__score-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 28px;
+}
+
+.exam-banner__score-box--compact .exam-banner__score-cell {
+  min-width: 18px;
+}
+
+.exam-banner__score-label {
+  font-size: clamp(6px, 0.7vw, 8px);
+  font-weight: 700;
+  color: var(--banner-muted);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.exam-banner__score-value {
+  font-size: clamp(10px, 1.2vw, 13px);
+  font-weight: 700;
+  color: var(--banner-text);
+}
+
+.exam-banner__score-line {
+  display: block;
+  width: 100%;
+  min-width: 22px;
+  height: 1px;
+  margin-top: 6px;
+  background: var(--banner-text);
+}
+
+.exam-banner__score-box--compact .exam-banner__score-line {
+  min-width: 14px;
+  margin-top: 3px;
+}
+
+.exam-banner-root--thumbnail .exam-banner__score-box {
+  display: none;
+}
+
+/* Subject block */
+.exam-banner__viz-subject {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.exam-banner__viz-exam-tag {
+  margin: 0;
+  align-self: flex-start;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: clamp(7px, 0.9vw, 10px);
+  font-weight: 700;
+  color: #fff;
+  background: var(--banner-secondary);
+}
+
+.exam-banner__tpl--viz-leaf-soft .exam-banner__viz-exam-tag {
+  background: #fce8ec;
+  color: var(--banner-secondary);
+}
+
+.exam-banner__viz-exam-tag--muted {
+  background: transparent;
+  color: var(--banner-muted);
+  padding: 0;
+  font-weight: 600;
+}
+
+/* Grade boxes */
+.exam-banner__viz-grade-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: clamp(11px, 1.5vw, 16px);
+  font-weight: 800;
+  color: var(--banner-primary);
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+.exam-banner__viz-grade-box--gray {
+  background: #eef1f5;
+}
+
+.exam-banner__viz-grade-box--red-outline {
+  border: 2px solid #f5c6cf;
+  background: #fff8f9;
+  border-radius: 8px;
+}
+
+.exam-banner__viz-grade-box--blue-outline {
+  border: 1.5px solid #b8cfe8;
+  background: #f4f8fc;
+}
+
+.exam-banner__viz-grade-box--pill-blue {
+  border-radius: 999px;
+  background: #e8f2fa;
+  border: 1px solid #b8cfe8;
+  color: var(--banner-primary);
+}
+
+.exam-banner__viz-grade-red {
+  color: var(--banner-secondary);
+  font-weight: 800;
+}
+
+.exam-banner__viz-grade-large {
+  font-size: clamp(14px, 2vw, 20px);
+  margin: 0;
+}
+
+/* Template 1 — curves */
+.exam-banner__viz-deco {
+  position: absolute;
+  pointer-events: none;
+}
+
+.exam-banner__viz-deco--curve-tr {
+  top: 0;
+  right: 0;
+  width: 80px;
+  height: 50px;
+}
+
+.exam-banner__viz-deco--curve-br {
+  bottom: 0;
+  right: 120px;
+  width: 60px;
+  height: 40px;
+}
+
+/* Template 2 — flow lines */
+.exam-banner__viz-flow-lines {
+  position: absolute;
+  right: 90px;
+  top: 8px;
+  bottom: 8px;
+  width: 40px;
+  pointer-events: none;
+}
+
+.exam-banner__viz-flow-line {
+  position: absolute;
+  right: 0;
+  width: 100%;
+  height: 2px;
+  border-radius: 2px;
+  transform: rotate(-12deg);
+}
+
+.exam-banner__viz-flow-line--red {
+  top: 30%;
+  background: var(--banner-secondary);
+  opacity: 0.6;
+}
+
+.exam-banner__viz-flow-line--blue {
+  top: 55%;
+  background: var(--banner-primary);
+  opacity: 0.5;
+  width: 80%;
+}
+
+/* Template 3 — logo panel + slash */
+.exam-banner__tpl--viz-leaf-bold {
+  display: flex;
+  align-items: stretch;
+}
+
+.exam-banner__viz-logo-panel {
+  position: relative;
+  flex: 0 0 18%;
+  min-width: 68px;
+  max-width: 110px;
+  background: var(--banner-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 8px;
+}
+
+.exam-banner__viz-logo-panel-cut {
+  position: absolute;
+  right: -10px;
+  top: 0;
+  width: 12px;
+  height: 100%;
+  background: var(--banner-primary);
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+  z-index: 2;
+}
+
+.exam-banner__viz-logo-panel-cut::after {
+  content: '';
+  position: absolute;
+  right: -3px;
+  top: 0;
+  width: 3px;
+  height: 100%;
+  background: var(--banner-secondary);
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+
+.exam-banner__viz-slash-right {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 28px;
+  background: var(--banner-secondary);
+  clip-path: polygon(60% 0, 100% 0, 100% 100%, 0 100%);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.exam-banner__tpl--viz-leaf-bold .exam-banner__body--with-left-panel {
+  flex: 1;
+  min-width: 0;
+  padding-left: 16px;
+}
+
+/* Template 4 — geometric */
+.exam-banner__viz-geo-bg {
+  position: absolute;
+  left: 30%;
+  top: 20%;
+  width: 40%;
+  height: 60%;
+  background: linear-gradient(135deg, transparent 40%, #f0f4f8 40%, #f0f4f8 60%, transparent 60%);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.exam-banner__viz-brand-word {
+  margin: 0;
+  font-size: clamp(12px, 1.8vw, 18px);
+  font-weight: 800;
+  color: var(--banner-primary);
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+  line-height: 1.1;
+}
+
+.exam-banner__viz-parallelogram {
+  display: inline-block;
+  padding: 6px 14px;
+  background: #eef1f5;
+  transform: skewX(-12deg);
+  font-size: clamp(11px, 1.4vw, 15px);
+  font-weight: 800;
+  color: var(--banner-primary);
+}
+
+.exam-banner__viz-parallelogram span {
+  display: inline-block;
+  transform: skewX(12deg);
+}
+
+/* Template 5 — YKS panel */
+.exam-banner__tpl--viz-yks-wave {
+  display: flex;
+}
+
+.exam-banner__viz-yks-panel {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 22%;
+  min-width: 76px;
+  max-width: 130px;
+  background: var(--banner-primary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 0 12px 12px 0;
+  z-index: 1;
+}
+
+.exam-banner__viz-yks-panel-title {
+  margin: 0;
+  font-size: clamp(6px, 0.8vw, 9px);
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+  text-align: center;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.exam-banner__viz-wave-br {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 140px;
+  height: 55px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.exam-banner__viz-wave-br--overlap {
+  width: 120px;
+  height: 50px;
+}
+
+/* Template 6 — wave top */
+.exam-banner__viz-wave-tl {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 120px;
+  height: 28px;
+  pointer-events: none;
+}
+
+/* Template 7 — angular lines + target */
+.exam-banner__col--logo-target {
+  position: relative;
+}
+
+.exam-banner__viz-target {
+  position: absolute;
+  top: 2px;
+  right: -4px;
+  width: 14px;
+  height: 14px;
+}
+
+.exam-banner__viz-angular-lines {
+  position: absolute;
+  right: 88px;
+  top: 12px;
+  bottom: 12px;
+  width: 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  pointer-events: none;
+}
+
+.exam-banner__viz-angular-lines span {
+  display: block;
+  height: 2px;
+  transform: rotate(-40deg);
+  transform-origin: right center;
+}
+
+.exam-banner__viz-angular-lines span:nth-child(1) {
+  width: 100%;
+  background: var(--banner-secondary);
+}
+
+.exam-banner__viz-angular-lines span:nth-child(2) {
+  width: 85%;
+  margin-left: auto;
+  background: var(--banner-primary);
+}
+
+.exam-banner__viz-angular-lines span:nth-child(3) {
+  width: 65%;
+  margin-left: auto;
+  background: var(--banner-secondary);
+  opacity: 0.6;
+}
+
+/* Template 8 — triangle */
+.exam-banner__viz-triangle-br {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 0 55px 70px;
+  border-color: transparent transparent var(--banner-primary) transparent;
+  pointer-events: none;
+}
+
+.exam-banner__viz-red-line-top {
+  position: absolute;
+  right: 70px;
+  bottom: 55px;
+  width: 40px;
+  height: 2px;
+  background: var(--banner-secondary);
+  pointer-events: none;
+}
+
+/* Template 9 — official */
+.exam-banner__tpl--viz-maarif-official {
+  --banner-height: clamp(115px, 14vw, 155px);
+}
+
+.exam-banner__viz-official-border {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--banner-secondary);
+  pointer-events: none;
+}
+
+.exam-banner__viz-official-border--top {
+  top: 0;
+}
+
+.exam-banner__viz-official-border--bottom {
+  bottom: 0;
+}
+
+.exam-banner__body--viz-official {
+  padding: 12px 16px;
+  gap: 10px;
+  align-items: center;
+}
+
+.exam-banner__viz-official-logo {
+  width: clamp(64px, 11%, 96px);
+  text-align: center;
+  gap: 2px;
+}
+
+.exam-banner__viz-official-inst {
+  margin: 0;
+  font-size: clamp(6px, 0.75vw, 9px);
+  font-weight: 600;
+  color: var(--banner-secondary);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.exam-banner__viz-official-center {
+  flex: 1;
+  text-align: center;
+  min-width: 0;
+}
+
+.exam-banner__viz-official-exam {
+  margin: 2px 0 0;
+  font-size: clamp(9px, 1.1vw, 12px);
+  font-weight: 600;
+  color: var(--banner-text);
+}
+
+.exam-banner__viz-student-grid {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+  min-width: 0;
+  max-width: 42%;
+}
+
+.exam-banner__viz-student-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: clamp(7px, 0.8vw, 9px);
+  color: var(--banner-muted);
+  min-width: 0;
+}
+
+.exam-banner__viz-student-line {
+  display: block;
+  height: 1px;
+  border-bottom: 1px dotted var(--banner-border);
+}
+
+.exam-banner__viz-puan-box {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border: 1.5px solid var(--banner-border);
+  border-radius: 8px;
+  min-width: 52px;
+}
+
+.exam-banner__viz-puan-label {
+  font-size: clamp(8px, 0.9vw, 10px);
+  font-weight: 800;
+  color: var(--banner-primary);
+}
+
+.exam-banner__viz-puan-line {
+  display: block;
+  width: 100%;
+  min-width: 36px;
+  height: 28px;
+  border: 1px dotted var(--banner-border);
+  border-radius: 4px;
+}
+
+.exam-banner-root--thumbnail .exam-banner__viz-student-grid,
+.exam-banner-root--thumbnail .exam-banner__viz-puan-box {
+  display: none;
+}
+
+.exam-banner-root--thumbnail .exam-banner__viz-deco,
+.exam-banner-root--thumbnail .exam-banner__viz-flow-lines,
+.exam-banner-root--thumbnail .exam-banner__viz-slash-right,
+.exam-banner-root--thumbnail .exam-banner__viz-wave-br,
+.exam-banner-root--thumbnail .exam-banner__viz-angular-lines,
+.exam-banner-root--thumbnail .exam-banner__viz-triangle-br {
+  opacity: 0.7;
+  transform: scale(0.85);
+}

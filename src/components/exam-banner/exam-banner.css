@@ -1,0 +1,674 @@
+/* Exam banner — vektörel HTML/CSS/SVG, print-safe */
+
+.exam-banner-root {
+  --banner-primary: #123b68;
+  --banner-secondary: #be1e3e;
+  --banner-background: #ffffff;
+  --banner-text: #172b47;
+  --banner-muted: #66778a;
+  --banner-border: #d8e2ec;
+  --banner-soft: #eef4f9;
+  --banner-height: clamp(100px, 12.5vw, 135px);
+  --banner-radius: 0;
+  --banner-logo-scale: 1;
+  width: 100%;
+  color: var(--banner-text);
+  font-family: "Poppins", Inter, Helvetica, Arial, sans-serif;
+  line-height: 1.2;
+}
+
+.exam-banner-root.test-banner {
+  break-inside: avoid;
+  page-break-inside: avoid;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+@media print {
+  .exam-banner-root {
+    box-shadow: none !important;
+  }
+}
+
+.exam-banner__tpl {
+  position: relative;
+  width: 100%;
+  min-height: var(--banner-height);
+  background: var(--banner-background);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.exam-banner__tpl--thumbnail {
+  min-height: 0;
+  height: 100%;
+}
+
+.exam-banner__body {
+  display: flex;
+  align-items: stretch;
+  min-height: var(--banner-height);
+  padding: 14px 16px;
+  gap: 12px;
+  box-sizing: border-box;
+}
+
+.exam-banner__tpl--thumbnail .exam-banner__body {
+  min-height: 0;
+  padding: 6px 8px;
+  gap: 6px;
+}
+
+.exam-banner__col {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.exam-banner__col--logo {
+  flex: 0 0 auto;
+  width: clamp(56px, 10%, 88px);
+  max-width: 88px;
+}
+
+.exam-banner__tpl--thumbnail .exam-banner__col--logo {
+  width: 28%;
+  max-width: none;
+}
+
+.exam-banner__col--center {
+  flex: 1 1 auto;
+}
+
+.exam-banner__col--grade {
+  flex: 0 0 auto;
+  max-width: 28%;
+  text-align: right;
+}
+
+.exam-banner__divider {
+  flex: 0 0 2px;
+  align-self: stretch;
+  margin: 2px 0;
+}
+
+.exam-banner__divider--bordo {
+  width: 2px;
+  background: var(--banner-secondary);
+}
+
+.exam-banner__divider--thin {
+  width: 1px;
+  background: var(--banner-border);
+}
+
+.exam-banner__divider--primary {
+  width: 2px;
+  background: var(--banner-primary);
+}
+
+/* Logo */
+.exam-banner__logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 48px;
+  transform: scale(var(--banner-logo-scale));
+  transform-origin: center center;
+}
+
+.exam-banner__tpl--thumbnail .exam-banner__logo {
+  min-height: 0;
+}
+
+.exam-banner__logo-img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+.exam-banner__logo-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 48px;
+  color: var(--banner-muted);
+  opacity: 0.45;
+}
+
+.exam-banner__logo-placeholder-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.exam-banner__logo--on-dark .exam-banner__logo-placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.exam-banner__logo--on-dark .exam-banner__logo-img {
+  filter: none;
+}
+
+/* Typography */
+.exam-banner__leaf-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.exam-banner__badge {
+  display: inline-block;
+  align-self: flex-start;
+  max-width: 100%;
+  font-size: clamp(8px, 1.1vw, 11px);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.exam-banner__badge--capsule {
+  padding: 2px 10px;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--banner-secondary);
+}
+
+.exam-banner__badge--plain {
+  color: var(--banner-secondary);
+  font-weight: 600;
+  text-transform: none;
+}
+
+.exam-banner__topic {
+  margin: 0;
+  font-size: clamp(14px, 2.2vw, 26px);
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--banner-text);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.exam-banner__subtopic {
+  margin: 0;
+  font-size: clamp(10px, 1.4vw, 14px);
+  color: var(--banner-muted);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.exam-banner__exam-label {
+  margin: 0;
+  font-size: clamp(8px, 1vw, 11px);
+  font-weight: 600;
+  color: var(--banner-muted);
+  letter-spacing: 0.06em;
+}
+
+.exam-banner__exam-label--small {
+  margin-top: 2px;
+}
+
+.exam-banner__subject-plain {
+  margin: 0;
+  font-size: clamp(11px, 1.5vw, 15px);
+  font-weight: 600;
+  color: var(--banner-text);
+  overflow-wrap: anywhere;
+}
+
+.exam-banner__subject-plain--bold {
+  font-weight: 700;
+  font-size: clamp(12px, 1.7vw, 17px);
+}
+
+.exam-banner__subject-plain--upper {
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.exam-banner__title {
+  margin: 0 0 2px;
+  font-size: clamp(9px, 1.1vw, 12px);
+  font-weight: 600;
+  color: var(--banner-secondary);
+}
+
+.exam-banner__grade {
+  text-align: center;
+}
+
+.exam-banner__grade--end {
+  text-align: right;
+}
+
+.exam-banner__grade-level {
+  margin: 0;
+  font-size: clamp(12px, 1.8vw, 18px);
+  font-weight: 700;
+  color: var(--banner-primary);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.exam-banner__grade-exam {
+  margin: 2px 0 0;
+  font-size: clamp(8px, 1vw, 11px);
+  font-weight: 600;
+  color: var(--banner-muted);
+  overflow-wrap: anywhere;
+}
+
+/* Strip lines */
+.exam-banner__strip {
+  display: block;
+  width: 100%;
+  height: 3px;
+}
+
+.exam-banner__strip-primary {
+  fill: var(--banner-primary);
+}
+
+.exam-banner__strip-secondary {
+  fill: var(--banner-secondary);
+}
+
+/* Leaf minimal */
+.exam-banner__tpl--leaf-minimal {
+  border: 1px solid var(--banner-border);
+}
+
+.exam-banner__corner {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+}
+
+.exam-banner__corner--tl {
+  top: 0;
+  left: 0;
+  border-top: 3px solid var(--banner-primary);
+  border-left: 3px solid var(--banner-secondary);
+}
+
+.exam-banner__minimal-text {
+  gap: 1px;
+}
+
+/* Leaf modern */
+.exam-banner__tpl--leaf-modern {
+  display: flex;
+  align-items: stretch;
+}
+
+.exam-banner__modern-block {
+  position: relative;
+  flex: 0 0 20%;
+  min-width: 72px;
+  max-width: 120px;
+  background: #0d3764;
+}
+
+.exam-banner__modern-block-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 10px 8px;
+}
+
+.exam-banner__modern-cut {
+  position: absolute;
+  top: 0;
+  right: -14px;
+  width: 16px;
+  height: 100%;
+  background: #0d3764;
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+  z-index: 1;
+}
+
+.exam-banner__modern-cut::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: -2px;
+  width: 3px;
+  height: 100%;
+  background: var(--banner-secondary);
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+
+.exam-banner__body--modern {
+  flex: 1;
+  padding-left: 20px;
+}
+
+/* Leaf linear */
+.exam-banner__tpl--leaf-linear {
+  border-bottom: 1px solid var(--banner-border);
+}
+
+.exam-banner__linear-lines {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  bottom: 8px;
+  width: 28px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.exam-banner__linear-lines span {
+  display: block;
+  height: 2px;
+  transform: rotate(-35deg);
+  transform-origin: right center;
+}
+
+.exam-banner__linear-lines span:nth-child(1) {
+  width: 100%;
+  background: var(--banner-primary);
+}
+
+.exam-banner__linear-lines span:nth-child(2) {
+  width: 75%;
+  margin-left: auto;
+  background: var(--banner-secondary);
+}
+
+.exam-banner__linear-lines span:nth-child(3) {
+  width: 55%;
+  margin-left: auto;
+  background: var(--banner-soft);
+}
+
+/* YKS TYT */
+.exam-banner__tpl--yks-tyt {
+  border-bottom: 2px solid var(--banner-border);
+}
+
+.exam-banner__trial-center {
+  padding-right: 22%;
+}
+
+.exam-banner__exam-type-huge {
+  margin: 0;
+  font-size: clamp(28px, 5vw, 52px);
+  font-weight: 800;
+  line-height: 0.95;
+  color: var(--banner-primary);
+  letter-spacing: -0.02em;
+}
+
+.exam-banner__tyt-panel {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 22%;
+  min-width: 72px;
+  background: var(--banner-primary);
+  clip-path: polygon(18% 0, 100% 0, 100% 100%, 0 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.exam-banner__tyt-panel span {
+  color: rgba(255, 255, 255, 0.15);
+  font-size: clamp(20px, 3vw, 36px);
+  font-weight: 900;
+  letter-spacing: 0.05em;
+}
+
+/* YKS AYT */
+.exam-banner__tpl--yks-ayt {
+  display: flex;
+  flex-direction: column;
+}
+
+.exam-banner__ayt-panel {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 18%;
+  min-width: 68px;
+  max-width: 110px;
+  background: var(--banner-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 8px;
+  z-index: 1;
+}
+
+.exam-banner__ayt-cut {
+  position: absolute;
+  right: -12px;
+  top: 0;
+  width: 14px;
+  height: 100%;
+  background: var(--banner-primary);
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+
+.exam-banner__ayt-cut::after {
+  content: '';
+  position: absolute;
+  right: -2px;
+  top: 20%;
+  height: 60%;
+  width: 2px;
+  background: var(--banner-secondary);
+}
+
+.exam-banner__body--ayt {
+  padding-left: calc(18% + 20px);
+}
+
+.exam-banner__exam-type-large {
+  margin: 0;
+  font-size: clamp(22px, 3.5vw, 40px);
+  font-weight: 800;
+  line-height: 1;
+  color: var(--banner-primary);
+}
+
+/* LGS verbal */
+.exam-banner__tpl--lgs-verbal {
+  position: relative;
+}
+
+.exam-banner__lgs-verbal-bg {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 35%;
+  height: 100%;
+  background: #fff2f4;
+  clip-path: ellipse(90% 120% at 100% 50%);
+  pointer-events: none;
+}
+
+.exam-banner__lgs-curve--tl {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 40px;
+  height: 40px;
+  border-top: 2px solid var(--banner-secondary);
+  border-left: 2px solid var(--banner-primary);
+  border-radius: 0 0 24px 0;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* LGS numerical */
+.exam-banner__tpl--lgs-numerical {
+  display: flex;
+  align-items: stretch;
+}
+
+.exam-banner__lgs-num-block {
+  flex: 0 0 18%;
+  min-width: 64px;
+  max-width: 100px;
+  background: var(--banner-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+}
+
+.exam-banner__body--lgs-num {
+  flex: 1;
+}
+
+.exam-banner__dot-pattern {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 24px;
+  height: 24px;
+  opacity: 0.35;
+  background-image: radial-gradient(circle, var(--banner-primary) 1px, transparent 1px);
+  background-size: 5px 5px;
+  pointer-events: none;
+}
+
+/* Maarif written */
+.exam-banner__tpl--maarif {
+  border: 1px solid var(--banner-border);
+}
+
+.exam-banner__body--maarif {
+  align-items: center;
+}
+
+.exam-banner__maarif-logo {
+  width: clamp(64px, 12%, 100px);
+  text-align: center;
+  gap: 4px;
+}
+
+.exam-banner__institution {
+  margin: 2px 0 0;
+  font-size: clamp(7px, 0.9vw, 10px);
+  font-weight: 600;
+  color: var(--banner-muted);
+  overflow-wrap: anywhere;
+  line-height: 1.2;
+}
+
+.exam-banner__col--subject {
+  flex: 0 0 22%;
+  text-align: center;
+  min-width: 0;
+}
+
+.exam-banner__col--exam-info {
+  flex: 1 1 auto;
+  text-align: right;
+  min-width: 0;
+}
+
+.exam-banner__maarif-subject {
+  margin: 0;
+  font-size: clamp(14px, 2vw, 22px);
+  font-weight: 700;
+  color: var(--banner-primary);
+  overflow-wrap: anywhere;
+}
+
+.exam-banner__maarif-grade {
+  margin: 4px 0 0;
+  font-size: clamp(10px, 1.2vw, 13px);
+  font-weight: 600;
+  color: var(--banner-text);
+}
+
+.exam-banner__maarif-line {
+  margin: 0;
+  font-size: clamp(8px, 1vw, 11px);
+  color: var(--banner-muted);
+  line-height: 1.35;
+}
+
+.exam-banner__maarif-written {
+  margin: 4px 0 0;
+  font-size: clamp(11px, 1.4vw, 15px);
+  font-weight: 700;
+  color: var(--banner-secondary);
+}
+
+/* Student info */
+.exam-banner__student-info {
+  display: flex;
+  gap: 12px;
+  padding: 4px 16px 8px;
+  font-size: clamp(8px, 0.9vw, 10px);
+  color: var(--banner-muted);
+  border-top: 1px solid var(--banner-border);
+}
+
+.exam-banner__student-info span {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 1px dotted var(--banner-border);
+  padding-bottom: 2px;
+}
+
+/* Thumbnail scaling */
+.exam-banner-root--thumbnail {
+  height: 100%;
+  pointer-events: none;
+}
+
+.exam-banner-root--thumbnail .exam-banner__topic {
+  font-size: clamp(7px, 2.5vw, 11px);
+}
+
+.exam-banner-root--thumbnail .exam-banner__exam-type-huge {
+  font-size: clamp(14px, 4vw, 22px);
+}
+
+.exam-banner-root--thumbnail .exam-banner__exam-type-large {
+  font-size: clamp(12px, 3.5vw, 18px);
+}
+
+.exam-banner-root--thumbnail .exam-banner__tyt-panel,
+.exam-banner-root--thumbnail .exam-banner__ayt-panel,
+.exam-banner-root--thumbnail .exam-banner__modern-block,
+.exam-banner-root--thumbnail .exam-banner__lgs-num-block {
+  min-width: 0;
+}
+
+.exam-banner-root--thumbnail .exam-banner__student-info {
+  display: none;
+}
+
+/* Live preview in sidebar */
+.test-banner-live-preview .exam-banner-root {
+  width: 100%;
+}

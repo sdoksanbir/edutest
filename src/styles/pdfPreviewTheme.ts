@@ -1,0 +1,67 @@
+/**
+ * PDF Önizleme Modal teması - Kırpma aracı ile aynı (slate dark)
+ */
+export const pdfPreviewTheme = {
+  colors: {
+    bgRoot: "#0f172a",
+    bgSidebar: "#1e293b",
+    bgCard: "#334155",
+    bgInput: "#475569",
+    border: "#475569",
+    borderLight: "#64748b",
+    accent: "#3b82f6",
+    accentHover: "#2563eb",
+    accentMuted: "#60a5fa",
+    text: "#f1f5f9",
+    textMuted: "#94a3b8",
+    textDisabled: "#64748b",
+    headerBg: "#1e293b",
+    headerText: "#f1f5f9",
+    primary: "#2563eb",
+    success: "#22c55e",
+    successHover: "#16a34a",
+    danger: "#ef4444",
+    dangerHover: "#dc2626",
+    warning: "#f59e0b",
+    warningHover: "#d97706",
+    selected: "#f59e0b",
+    selectedBorder: "#f59e0b",
+  },
+  sizes: {
+    sidebarWidth: 300,
+    headerHeight: 36,
+    /** Soru numarası kutuları - satırda 10 kutu */
+    questionBoxSize: 24,
+    questionBoxGap: 4,
+    questionBoxColumns: 10,
+    buttonSize: 24,
+    inputHeight: 28,
+    gap: 10,
+    gapSection: 12,
+    gapLabelInput: 8,
+    padding: 12,
+    radius: 8,
+    radiusSm: 4,
+  },
+  font: {
+    xs: "12px",
+    sm: "13px",
+    base: "14px",
+    lg: "15px",
+    xl: "17px",
+    xxl: "19px",
+  },
+  fontWeight: {
+    normal: 400,
+    medium: 500,
+    semibold: 600,
+    bold: 700,
+  },
+  lineHeight: {
+    tight: 1.25,
+    normal: 1.5,
+    relaxed: 1.625,
+  },
+  fontFamily:
+    "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+} as const;

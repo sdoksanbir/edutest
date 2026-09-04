@@ -1,0 +1,171 @@
+/**
+ * TestQube editor — design tokens (typography, spacing, radii, layout).
+ * Components reference these via var(--tq-*) or .tq-* utility classes in ui.css.
+ */
+:root {
+  color-scheme: light;
+
+  /* --- Typography: single family app-wide --- */
+  --tq-font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  /* Scale (rem); fluid where it helps zoom / scaling */
+  --tq-text-page-title: clamp(1.0625rem, 1rem + 0.2vw, 1.1875rem);
+  --tq-text-section: clamp(0.9375rem, 0.9rem + 0.12vw, 1rem);
+  --tq-text-label: 0.8125rem;
+  --tq-text-body: 0.875rem;
+  --tq-text-input: 0.875rem;
+  --tq-text-helper: 0.8125rem;
+  --tq-text-button: 0.875rem;
+  --tq-text-card-title: 1rem;
+  --tq-text-card-body: 0.875rem;
+
+  --tq-weight-regular: 400;
+  --tq-weight-medium: 500;
+  --tq-weight-semibold: 600;
+  --tq-weight-bold: 700;
+
+  --tq-leading-none: 1.1;
+  --tq-leading-tight: 1.25;
+  --tq-leading-snug: 1.35;
+  --tq-leading-normal: 1.45;
+  --tq-leading-relaxed: 1.55;
+
+  /* --- Spacing scale: 4 / 8 / 12 / 16 / 20 / 24 / 32 --- */
+  --tq-space-1: 0.25rem;
+  --tq-space-2: 0.5rem;
+  --tq-space-3: 0.75rem;
+  --tq-space-4: 1rem;
+  --tq-space-5: 1.25rem;
+  --tq-space-6: 1.5rem;
+  --tq-space-8: 2rem;
+
+  /* --- Radius --- */
+  --tq-radius-sm: 0.375rem;
+  --tq-radius-md: 0.5rem;
+  --tq-radius-lg: 0.625rem;
+  --tq-radius-xl: 0.75rem;
+  --tq-radius-2xl: 1rem;
+
+  /* --- Control heights (inputs, selects, bar buttons) --- */
+  --tq-control-height: 2.5rem;
+  --tq-control-padding-x: 0.75rem;
+  --tq-control-icon: 2.25rem;
+
+  /* --- Layout --- */
+  --tq-sidebar-width: clamp(17.75rem, 26vw, 22.5rem);
+  --tq-main-padding: clamp(var(--tq-space-3), 1.2vw + 0.5rem, var(--tq-space-5));
+  --tq-shell-gap: var(--tq-space-2);
+  --tq-topbar-height: 3.5rem;
+
+  /* PDF önizleme modal — panel genişlikleri (fluid) */
+  --pdf-panel-left-width: clamp(19rem, 23vw, 26rem);
+  --pdf-panel-thumb-width: clamp(7.5rem, 10vw, 9.6875rem);
+  --pdf-panel-theme-width: clamp(18rem, 22vw, 24rem);
+  --pdf-panel-optik-width: clamp(12.5rem, 16vw, 15.5rem);
+  --pdf-panel-rail-width: 2.125rem;
+  /* En uzun etiket: Düzenleme — tüm rail kutuları bu boyuta sabitlenir */
+  --pdf-panel-rail-min-height: calc(
+    1.5rem + 0.9375rem + 0.375rem + 10 * (0.6875rem + 0.06em)
+  );
+  --pdf-panel-padding: 0.75rem;
+  --pdf-panel-section-gap: 0.75rem;
+  --pdf-panel-header-gap: 0.625rem;
+
+  /* Breakpoint references (for media queries in CSS only) */
+  --tq-bp-compact: 90rem; /* ~1440 */
+  --tq-bp-medium: 100rem; /* ~1600 */
+
+  /* --- Light theme — color design tokens --- */
+  --primary: #183b66;
+  --primary-hover: #123154;
+  --primary-active: #0d2846;
+  --primary-soft: #eaf1f8;
+
+  --accent: #b4233c;
+  --accent-hover: #961d32;
+  --accent-active: #7f192b;
+  --accent-soft: #fbecef;
+
+  --app-bg: #f3f6fa;
+  --panel-bg: #ffffff;
+  --surface-secondary: #f8fafc;
+  --surface-hover: #f1f5f9;
+  --surface-selected: #eaf1f8;
+  --canvas-bg: #e9eef5;
+
+  --border: #d9e2ec;
+  --border-light: #e8edf3;
+  --border-strong: #c5d0dc;
+  --border-page: #dce3eb;
+  --border-focus: #3f6f9f;
+
+  --text-primary: #172033;
+  --text-secondary: #5b6678;
+  --text-muted: #8a95a6;
+  --text-module: #526071;
+  --text-on-primary: #ffffff;
+  --text-panel: #27364a;
+  --text-icon: #66758a;
+
+  --success: #16835d;
+  --warning: #c47a10;
+  --danger: #c9364f;
+
+  --shadow-card: 0 1px 3px rgb(15 35 55 / 0.06);
+  --shadow-floating: 0 3px 10px rgb(15 35 55 / 0.1);
+  --shadow-modal: 0 12px 32px rgb(15 35 55 / 0.16);
+  --shadow-page: 0 4px 18px rgb(20 35 55 / 0.1);
+  --shadow-primary-sm: 0 1px 3px rgb(24 59 102 / 0.18);
+
+  --focus-ring: 0 0 0 3px rgb(24 59 102 / 0.1);
+
+  /* --- Focus (a11y) --- */
+  --tq-focus-ring: 0 0 0 2px #fff, 0 0 0 4px var(--border-focus);
+  --tq-focus-ring-inset: inset 0 0 0 2px var(--border-focus);
+
+  /* --- Surfaces (legacy aliases) --- */
+  --tq-main-surface: var(--app-bg);
+  --tq-card-border: var(--border);
+}
+
+/* Fluid root: scales with viewport, capped for readability on 4K */
+html.tq-editor-root {
+  font-size: clamp(14px, 0.8125rem + 0.35vw, 16px);
+}
+
+/* compact — ≤1440px CSS viewport */
+@media (max-width: 90rem) {
+  :root {
+    --tq-sidebar-width: clamp(14rem, 20vw, 17.5rem);
+    --pdf-panel-left-width: clamp(17rem, 20vw, 20rem);
+    --pdf-panel-thumb-width: clamp(7rem, 9vw, 8.125rem);
+    --pdf-panel-theme-width: clamp(16.5rem, 19vw, 19.5rem);
+    --pdf-panel-optik-width: clamp(11.25rem, 14vw, 13.75rem);
+    --pdf-panel-rail-width: 2rem;
+    --pdf-panel-padding: 0.625rem;
+  }
+}
+
+/* medium — 1600px+ */
+@media (min-width: 100rem) {
+  :root {
+    --tq-sidebar-width: clamp(17.75rem, 22vw, 23rem);
+    --pdf-panel-left-width: clamp(20rem, 18vw, 26rem);
+    --pdf-panel-theme-width: clamp(19rem, 17vw, 24rem);
+    --pdf-panel-optik-width: clamp(13rem, 13vw, 16.5rem);
+    --pdf-panel-padding: 0.875rem;
+  }
+}
+
+/* large / 4K — 1920px+ CSS viewport */
+@media (min-width: 120rem) {
+  :root {
+    --tq-sidebar-width: clamp(18.5rem, 18vw, 24rem);
+    --pdf-panel-left-width: clamp(21rem, 16vw, 27rem);
+    --pdf-panel-thumb-width: clamp(8rem, 8vw, 10.5rem);
+    --pdf-panel-theme-width: clamp(20rem, 15vw, 25rem);
+    --pdf-panel-optik-width: clamp(14rem, 12vw, 17.5rem);
+    --pdf-panel-rail-width: 2.25rem;
+    --tq-main-padding: var(--tq-space-5);
+  }
+}

@@ -1,0 +1,47 @@
+/* LGS Sözel — tek SVG banner (viewBox 0 0 1498 92) */
+
+.lgs-verbal-banner {
+  --lgs-navy: #003366;
+  --lgs-red: #a11d33;
+  --lgs-grade-text: #b51f3d;
+  --lgs-soft-red: #fee2e2;
+  --lgs-border: #d1d5dc;
+  --lgs-text: #003366;
+  --lgs-text-muted: #6b92b9;
+
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: "Poppins", Inter, Helvetica, Arial, sans-serif;
+}
+
+.lgs-verbal-banner__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.lgs-verbal-banner--thumbnail .lgs-verbal-banner__svg {
+  min-height: 0;
+}
+
+.lgs-verbal-banner-compare {
+  position: relative;
+  width: 100%;
+}
+
+.lgs-verbal-banner-compare__reference {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.lgs-verbal-banner-compare__vector {
+  position: relative;
+  z-index: 1;
+}
