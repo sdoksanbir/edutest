@@ -14,9 +14,7 @@ import {
   BANNER_GAP_PT,
   BANNER_H_PT,
   CLASSIC_BANNER_LINE_PT,
-  CLASSIC_BANNER_RADIUS_PT,
   CLASSIC_INFO_BAR_BADGE_INSET_PT,
-  DESC_BOX_GAP_BELOW_PT,
   drawDescriptionBox,
   headerHeightPt,
 } from './pdf-description-utils.js'
@@ -56,7 +54,11 @@ import {
   resolveSubjectPillTextColor,
   resolveSubjectPillTextOffsetYPt,
 } from './modern-corporate-header-shared.js'
-import { otherPageColumnDividerStartFromTopPt, themeFirstPageHeaderTotalPt } from './header-styles.js'
+import {
+  isClassicTestBannerHeader,
+  otherPageColumnDividerStartFromTopPt,
+  themeFirstPageHeaderTotalPt,
+} from './header-styles.js'
 import { mergeHeaderBadgeConfig } from './header-badge-by-style.js'
 import { drawHeaderLogoPdfInBox, parseLogoBytes } from './header-logo.js'
 import {
@@ -66,7 +68,6 @@ import {
   columnDividerTextEnabled,
   columnDividerWidthPt,
   pageFrameColor,
-  pageFrameCornerRadiusMm,
   pageFrameEnabled,
   pageFrameInnerGapMm,
   pageFrameLineStyle,
@@ -75,28 +76,6 @@ import {
 import type { PDFDocument } from 'pdf-lib'
 
 export { headerHeightPt } from './pdf-description-utils.js'
-
-const BEZIER_K = 0.5522847498
-
-const PATH_ROUND_RECT_LEFT = (w: number, h: number, r: number) =>
-  `M ${r},0 L ${w},0 L ${w},${h} L 0,${h} L 0,${r} Q 0,0 ${r},0 Z`
-
-const PATH_ROUND_RECT_RIGHT = (w: number, h: number, r: number) =>
-  `M 0,0 L ${w - r},0 Q ${w},0 ${w},${r} L ${w},${h} L 0,${h} Z`
-
-function otherPageBannerPath(w: number, h: number, r: number): string {
-  const k = BEZIER_K
-  return [
-    `M 0,${h}`,
-    `L ${w},${h}`,
-    `L ${w},${r}`,
-    `C ${w},${r * (1 - k)} ${w - r + k * r},0 ${w - r},0`,
-    `L ${r},0`,
-    `C ${r - k * r},0 0,${r * (1 - k)} 0,${r}`,
-    `L 0,${h}`,
-    'Z',
-  ].join(' ')
-}
 
 export function hexToRgbColor(hex: string): RGB {
   const s = (hex || '').trim().replace(/^#/, '')
@@ -108,18 +87,6 @@ export function hexToRgbColor(hex: string): RGB {
   )
 }
 
-function strokeRoundRectLeft(page: PDFPage, x: number, yTop: number, w: number, h: number, r: number, color: RGB) {
-  page.drawSvgPath(PATH_ROUND_RECT_LEFT(w, h, r), { x, y: yTop, borderColor: color, borderWidth: 1 })
-}
-
-function strokeRoundRectRight(page: PDFPage, x: number, yTop: number, w: number, h: number, r: number, color: RGB) {
-  page.drawSvgPath(PATH_ROUND_RECT_RIGHT(w, h, r), { x, y: yTop, borderColor: color, borderWidth: 1 })
-}
-
-function strokeOtherPageBanner(page: PDFPage, x: number, yTop: number, w: number, h: number, r: number, color: RGB) {
-  page.drawSvgPath(otherPageBannerPath(w, h, r), { x, y: yTop, borderColor: color, borderWidth: 1 })
-}
-
 /** Canvas: beyaz dolgu + çerçeve. yBottom = PDF alt kenar. */
 function drawDottedSidePanel(
   page: PDFPage,
@@ -127,22 +94,31 @@ function drawDottedSidePanel(
   yBottom: number,
   w: number,
   h: number,
-  r: number,
+  _r: number,
   theme: RGB,
-  side: 'left' | 'right',
+  _side: 'left' | 'right',
 ) {
-  const yTop = yBottom + h
-  const path = side === 'left' ? PATH_ROUND_RECT_LEFT(w, h, r) : PATH_ROUND_RECT_RIGHT(w, h, r)
-  page.drawSvgPath(path, { x, y: yTop, color: rgb(1, 1, 1) })
-
-  if (side === 'left') strokeRoundRectLeft(page, x, yTop, w, h, r, theme)
-  else strokeRoundRectRight(page, x, yTop, w, h, r, theme)
+  page.drawRectangle({
+    x,
+    y: yBottom,
+    width: w,
+    height: h,
+    color: rgb(1, 1, 1),
+    borderColor: theme,
+    borderWidth: CLASSIC_BANNER_LINE_PT,
+  })
 }
 
-function drawDottedFullBanner(page: PDFPage, x: number, yBottom: number, w: number, h: number, r: number, theme: RGB) {
-  const yTop = yBottom + h
-  page.drawSvgPath(otherPageBannerPath(w, h, r), { x, y: yTop, color: rgb(1, 1, 1) })
-  strokeOtherPageBanner(page, x, yTop, w, h, r, theme)
+function drawDottedFullBanner(page: PDFPage, x: number, yBottom: number, w: number, h: number, _r: number, theme: RGB) {
+  page.drawRectangle({
+    x,
+    y: yBottom,
+    width: w,
+    height: h,
+    color: rgb(1, 1, 1),
+    borderColor: theme,
+    borderWidth: CLASSIC_BANNER_LINE_PT,
+  })
 }
 
 export function corporateFirstPageHeaderTotalPt(
@@ -213,27 +189,15 @@ async function drawPage1Style3Banner(
   const infoTop = boxY - BANNER_GAP_PT
   const badgeConfigEarly = mergeHeaderBadgeConfig(config, styleId)
   const infoH = resolveClassicInfoBarHeightPt(badgeConfigEarly)
-  const infoR = payload.include_description ? 0 : CLASSIC_BANNER_RADIUS_PT
-  if (infoR <= 0) {
-    page.drawRectangle({
-      x: geom.ml,
-      y: infoTop - infoH,
-      width: contentW,
-      height: infoH,
-      color: rgb(1, 1, 1),
-      borderColor: theme,
-      borderWidth: CLASSIC_BANNER_LINE_PT,
-    })
-  } else {
-    const infoPath = `M 0,0 L ${contentW},0 L ${contentW},${infoH - infoR} Q ${contentW},${infoH} ${contentW - infoR},${infoH} L ${infoR},${infoH} Q 0,${infoH} 0,${infoH - infoR} Z`
-    page.drawSvgPath(infoPath, {
-      x: geom.ml,
-      y: infoTop,
-      color: rgb(1, 1, 1),
-      borderColor: theme,
-      borderWidth: CLASSIC_BANNER_LINE_PT,
-    })
-  }
+  page.drawRectangle({
+    x: geom.ml,
+    y: infoTop - infoH,
+    width: contentW,
+    height: infoH,
+    color: rgb(1, 1, 1),
+    borderColor: theme,
+    borderWidth: CLASSIC_BANNER_LINE_PT,
+  })
 
   const topicTxt = visibleTopicText(config)
   const subTopicTxt = visibleSubTopicText(config)
@@ -406,11 +370,12 @@ export async function drawPageHeader(
     return
   }
 
+  const styleId = String(payload.header_style_id ?? '')
   if (pageNum === 1) {
-    if (isCorporateHeader(String(payload.header_style_id ?? ''))) {
-      await drawThemeFirstPageHeaderPdf(pdf, page, payload, geom, mt, fonts)
-    } else {
+    if (isClassicTestBannerHeader(styleId) || !isCorporateHeader(styleId)) {
       await drawPage1Style3Banner(pdf, page, payload, geom, mt, theme, fonts)
+    } else {
+      await drawThemeFirstPageHeaderPdf(pdf, page, payload, geom, mt, fonts)
     }
   } else if (payload.written_paper_header) {
     page.drawLine({
@@ -419,10 +384,10 @@ export async function drawPageHeader(
       thickness: 0.9,
       color: rgb(0, 0, 0),
     })
-  } else if (isCorporateHeader(String(payload.header_style_id ?? ''))) {
-    await drawThemeRunningHeaderPdfFromPayload(pdf, page, payload, pageNum, geom, mt, fonts)
-  } else {
+  } else if (isClassicTestBannerHeader(styleId) || !isCorporateHeader(styleId)) {
     drawOtherPageBanner(page, payload, geom, mt, theme, fonts)
+  } else {
+    await drawThemeRunningHeaderPdfFromPayload(pdf, page, payload, pageNum, geom, mt, fonts)
   }
 }
 
@@ -492,35 +457,6 @@ export function drawPageFrame(
   const style = pageFrameLineStyle(payload)
   const dash =
     style === 'dashed' ? [4, 3] : style === 'dotted' ? [1, 2] : undefined
-  const cornerR = Math.min(
-    mmToPt(pageFrameCornerRadiusMm(payload)),
-    w / 2,
-    h / 2,
-  )
-
-  if (cornerR > 0) {
-    const path = [
-      `M ${cornerR},0`,
-      `L ${w - cornerR},0`,
-      `Q ${w},0 ${w},${cornerR}`,
-      `L ${w},${h - cornerR}`,
-      `Q ${w},${h} ${w - cornerR},${h}`,
-      `L ${cornerR},${h}`,
-      `Q 0,${h} 0,${h - cornerR}`,
-      `L 0,${cornerR}`,
-      `Q 0,0 ${cornerR},0`,
-      'Z',
-    ].join(' ')
-    page.drawSvgPath(path, {
-      x,
-      y: y + h,
-      borderColor,
-      borderWidth,
-      borderDashArray: dash,
-    })
-    return
-  }
-
   page.drawRectangle({
     x,
     y,

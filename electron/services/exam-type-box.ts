@@ -246,22 +246,6 @@ function hexToRgb(hex: string): RGB {
   )
 }
 
-function roundRectPath(w: number, h: number, r: number): string {
-  const rad = Math.min(r, w / 2, h / 2)
-  return [
-    `M ${rad},0`,
-    `L ${w - rad},0`,
-    `Q ${w},0 ${w},${rad}`,
-    `L ${w},${h - rad}`,
-    `Q ${w},${h} ${w - rad},${h}`,
-    `L ${rad},${h}`,
-    `Q 0,${h} 0,${h - rad}`,
-    `L 0,${rad}`,
-    `Q 0,0 ${rad},0`,
-    'Z',
-  ].join(' ')
-}
-
 function pdfDashArray(style: ExamTypeBoxBorderStyle): number[] | undefined {
   if (style === 'dashed') return [4, 3]
   if (style === 'dotted') return [1, 2]
@@ -290,11 +274,12 @@ export function drawExamTypeBoxFillPdf(
   config: HeaderConfig,
 ) {
   if (!examTypeBoxFillEnabled(config) || boxW <= 0 || boxH <= 0) return
-  page.drawSvgPath(roundRectPath(boxW, boxH, EXAM_TYPE_BOX_RADIUS_PT), {
+  page.drawRectangle({
     x: boxX,
-    y: boxY + boxH,
+    y: boxY,
+    width: boxW,
+    height: boxH,
     color: hexToRgb(examTypeBoxFillColor(config)),
-    borderWidth: 0,
   })
 }
 
@@ -314,9 +299,11 @@ export function drawExamTypeBoxBorderPdf(
   const dash = pdfDashArray(style)
 
   if (style === 'solid') {
-    page.drawSvgPath(roundRectPath(boxW, boxH, EXAM_TYPE_BOX_RADIUS_PT), {
+    page.drawRectangle({
       x: boxX,
-      y: boxY + boxH,
+      y: boxY,
+      width: boxW,
+      height: boxH,
       borderColor,
       borderWidth,
     })

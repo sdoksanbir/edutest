@@ -154,15 +154,12 @@ function lineBaselinePt(boxTopPt: number, lineIdx: number, layout: DescriptionLa
   return boxTopPt - layout.padTopPt - (lineIdx + 0.5) * layout.leadingPt - DESC_TEXT_OFFSET_PT
 }
 
-/** pdf-lib drawSvgPath: y anchor = şeklin ÜST kenarı (scale(1,-1) nedeniyle) */
-function descriptionBoxPath(w: number, h: number, r: number): string {
-  return `M 0,0 L ${w},0 L ${w},${h - r} Q ${w},${h} ${w - r},${h} L ${r},${h} Q 0,${h} 0,${h - r} L 0,0 Z`
-}
-
-function drawDescriptionBoxPath(page: PDFPage, x: number, yTop: number, w: number, h: number, r: number, theme: RGB) {
-  page.drawSvgPath(descriptionBoxPath(w, h, r), {
+function drawDescriptionBoxPath(page: PDFPage, x: number, yTop: number, w: number, h: number, _r: number, theme: RGB) {
+  page.drawRectangle({
     x,
-    y: yTop,
+    y: yTop - h,
+    width: w,
+    height: h,
     color: rgb(1, 1, 1),
     borderColor: theme,
     borderWidth: 1,

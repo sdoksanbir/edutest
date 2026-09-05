@@ -57,22 +57,6 @@ function hexToRgb(hex: string): RGB {
   )
 }
 
-function roundRectPath(w: number, h: number, r: number): string {
-  const rr = Math.min(r, w / 2, h / 2)
-  return [
-    `M ${rr} 0`,
-    `L ${w - rr} 0`,
-    `Q ${w} 0 ${w} ${rr}`,
-    `L ${w} ${h - rr}`,
-    `Q ${w} ${h} ${w - rr} ${h}`,
-    `L ${rr} ${h}`,
-    `Q 0 ${h} 0 ${h - rr}`,
-    `L 0 ${rr}`,
-    `Q 0 0 ${rr} 0`,
-    'Z',
-  ].join(' ')
-}
-
 export function parseBannerRightMode(raw: unknown): BannerRightMode | undefined {
   if (raw === 'examType' || raw === 'score' || raw === 'testNo' || raw === 'hidden') return raw
   return undefined
@@ -233,19 +217,15 @@ export function drawStyle1ScoreBoxPdf(
   const borderColor = hexToRgb(resolveScoreBoxBorderColor(config))
   const labelColor = hexToRgb(resolveScoreBoxLabelColor(config))
   const muted = rgb(0.42, 0.45, 0.5)
-  const r = STYLE_1_SCORE_BOX_RADIUS_PT
   const borderW = resolveScoreBoxBorderWidthPt(config)
   const underlineW = resolveScoreBoxLineWidthPt(config)
 
-  page.drawSvgPath(roundRectPath(boxW, boxH, r), {
+  page.drawRectangle({
     x: boxX,
-    y: boxY + boxH,
+    y: boxY,
+    width: boxW,
+    height: boxH,
     color: fillColor,
-    borderWidth: 0,
-  })
-  page.drawSvgPath(roundRectPath(boxW, boxH, r), {
-    x: boxX,
-    y: boxY + boxH,
     borderColor,
     borderWidth: borderW,
   })
@@ -295,7 +275,6 @@ export function drawStyle1TestNoPdf(
   const boxH = resolveTestNoHeightPt(config)
   const boxW = resolveTestNoWidthPt(config)
   const borderW = STYLE_1_TEST_NO_BORDER_PT
-  const radius = STYLE_1_TEST_NO_RADIUS_PT
   const fillColor = hexToRgb(resolveTestNoFillColor(config))
   const borderColor = hexToRgb(resolveTestNoBorderColor(config))
   const labelColor = hexToRgb(resolveTestNoLabelColor(config))
@@ -312,25 +291,21 @@ export function drawStyle1TestNoPdf(
   const boxX = rightEdgeX - boxW
   const boxY = bodyBottom + (bodyH - boxH) / 2
 
-  page.drawSvgPath(roundRectPath(boxW, boxH, radius), {
+  page.drawRectangle({
     x: boxX,
-    y: boxY + boxH,
+    y: boxY,
+    width: boxW,
+    height: boxH,
     color: rgb(1, 1, 1),
-    borderWidth: 0,
-  })
-
-  page.drawSvgPath(roundRectPath(leftW, boxH, radius), {
-    x: boxX,
-    y: boxY + boxH,
-    color: fillColor,
-    borderWidth: 0,
-  })
-
-  page.drawSvgPath(roundRectPath(boxW, boxH, radius), {
-    x: boxX,
-    y: boxY + boxH,
     borderColor,
     borderWidth: borderW,
+  })
+  page.drawRectangle({
+    x: boxX,
+    y: boxY,
+    width: leftW,
+    height: boxH,
+    color: fillColor,
   })
 
   const midY = boxY + boxH / 2
