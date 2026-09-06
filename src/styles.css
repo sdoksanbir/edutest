@@ -1,0 +1,53 @@
+@import './styles/tokens.css';
+@import './styles/ui.css';
+@import './styles/light-theme.css';
+@import './styles/cropTool.css';
+@import './styles/pdfPreviewUi.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  background: var(--tq-body-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+
+.pdf-preview-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #475569 #1e293b;
+}
+.pdf-preview-scroll *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.pdf-preview-scroll *::-webkit-scrollbar-track {
+  background: #1e293b;
+  border-radius: 4px;
+}
+.pdf-preview-scroll *::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 4px;
+}
+.pdf-preview-scroll *::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+.pdf-preview-scroll *::-webkit-scrollbar-thumb:active {
+  background: #3b82f6;
+}
+.pdf-preview-scroll *::-webkit-scrollbar-corner {
+  background: #1e293b;
+}
