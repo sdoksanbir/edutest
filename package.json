@@ -1,20 +1,27 @@
 {
   "name": "edutest",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "node scripts/copy-tesseract-assets.mjs && concurrently -k \"vite\" \"node scripts/dev-electron-watch.mjs\"",
+    "dev": "node scripts/copy-tesseract-assets.mjs && node scripts/copy-pdfjs-assets.mjs && concurrently -k \"vite\" \"node scripts/dev-electron-watch.mjs\"",
     "start": "npm run build && npm run build:electron && electron .",
-    "prebuild": "node scripts/copy-tesseract-assets.mjs",
+    "prebuild": "node scripts/copy-tesseract-assets.mjs && node scripts/copy-pdfjs-assets.mjs",
     "build": "tsc -b && vite build",
     "build:electron": "tsc -p electron/tsconfig.json && tsc -p electron/tsconfig.preload.json && node scripts/rename-preload.mjs",
     "lint": "oxlint",
-    "test": "node --experimental-strip-types scripts/test-font-equalize-math.mjs && node --experimental-strip-types scripts/test-column-bounds.mjs && node --experimental-strip-types scripts/test-bulk-scale-session.mjs && node --experimental-strip-types scripts/test-common-font-target.mjs && node --experimental-strip-types scripts/test-equalize-stale-manual.mjs",
+    "test": "node --experimental-strip-types scripts/test-column-bounds.mjs && node --experimental-strip-types scripts/test-bulk-scale-session.mjs && node --experimental-strip-types scripts/test-image-balance.mjs && node --experimental-strip-types scripts/test-crop-capture-sync.mjs",
     "preview": "vite preview",
     "copy:tesseract": "node scripts/copy-tesseract-assets.mjs",
-    "postinstall": "node scripts/copy-tesseract-assets.mjs"
+    "postinstall": "node scripts/copy-tesseract-assets.mjs && node scripts/copy-pdfjs-assets.mjs",
+    "dist": "npm run pack:prepare && electron-builder --publish never",
+    "dist:win": "npm run pack:prepare && electron-builder --win --publish never",
+    "dist:mac": "npm run pack:prepare && electron-builder --mac --publish never",
+    "dist:dir": "npm run pack:prepare && electron-builder --dir --publish never",
+    "pack:prepare": "npm run copy:assets && vite build && npm run build:electron",
+    "copy:pdfjs": "node scripts/copy-pdfjs-assets.mjs",
+    "copy:assets": "node scripts/copy-tesseract-assets.mjs && node scripts/copy-pdfjs-assets.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -55,5 +62,7 @@
     "typescript": "~6.0.2",
     "vite": "^8.2.2",
     "wait-on": "^9.1.0"
-  }
+  },
+  "author": "EduTest",
+  "description": "EduTest — sınav / test PDF hazırlama uygulaması"
 }

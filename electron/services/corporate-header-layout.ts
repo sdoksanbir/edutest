@@ -198,8 +198,31 @@ export type HeaderConfig = {
     | 'viz-maarif-official'
     | 'leaf-ref-corporate'
     | 'lgs-verbal-ref'
+    | 'lgs-official-ref'
   examBannerTitle: string
   academicYear: string
+  /** LGS yıl kapsülü — dolgu; boşsa accentColor */
+  lgsYearFillColor: string
+  lgsYearTextColor: string
+  lgsYearFontPt: number
+  lgsYearPadXPt: number
+  lgsYearPadYPt: number
+  lgsTitleFontPt: number
+  lgsTitleTextColor: string
+  lgsTitleBold: boolean
+  lgsSubjectFontPt: number
+  lgsSubjectTextColor: string
+  lgsSubjectBold: boolean
+  lgsSubjectBandWidthPt: number
+  lgsInstructionFontPt: number
+  lgsBookletType: string
+  lgsShowLogo: boolean
+  lgsLogoUrl: string
+  lgsPresetLogoId: string
+  lgsLogoSizePct: number
+  lgsLogoUseThemeColors: boolean
+  lgsLogoColorPrimary: string
+  lgsLogoColorSecondary: string
   writtenExamNumber: string
   showStudentInfo: boolean
   gradeLevel: string
@@ -343,7 +366,28 @@ export function defaultHeaderConfig(): HeaderConfig {
     useExamBanner: false,
     examBannerTemplate: 'leaf-corporate',
     examBannerTitle: 'DENEME SINAVI',
-    academicYear: '2026–2027',
+    academicYear: '2026 - 2027 EĞİTİM - ÖĞRETİM YILI',
+    lgsYearFillColor: '',
+    lgsYearTextColor: '#2C2C2C',
+    lgsYearFontPt: 17,
+    lgsYearPadXPt: 18,
+    lgsYearPadYPt: 8,
+    lgsTitleFontPt: 19,
+    lgsTitleTextColor: '#2C2C2C',
+    lgsTitleBold: true,
+    lgsSubjectFontPt: 24,
+    lgsSubjectTextColor: '#FFFFFF',
+    lgsSubjectBold: true,
+    lgsSubjectBandWidthPt: 480,
+    lgsInstructionFontPt: 15,
+    lgsBookletType: '',
+    lgsShowLogo: true,
+    lgsLogoUrl: '',
+    lgsPresetLogoId: '5',
+    lgsLogoSizePct: 100,
+    lgsLogoUseThemeColors: true,
+    lgsLogoColorPrimary: '',
+    lgsLogoColorSecondary: '',
     writtenExamNumber: '1. YAZILI SINAVI',
     showStudentInfo: false,
     gradeLevel: '10. SINIF',
@@ -451,6 +495,7 @@ function parseExamBannerTemplateId(raw: unknown): HeaderConfig['examBannerTempla
     'viz-maarif-official',
     'leaf-ref-corporate',
     'lgs-verbal-ref',
+    'lgs-official-ref',
   ]
   return valid.includes(id as HeaderConfig['examBannerTemplate'])
     ? (id as HeaderConfig['examBannerTemplate'])
@@ -713,6 +758,94 @@ export function parseHeaderConfig(raw: unknown): HeaderConfig {
     ),
     examBannerTitle: String(o.examBannerTitle ?? o.exam_banner_title ?? d.examBannerTitle),
     academicYear: String(o.academicYear ?? o.academic_year ?? d.academicYear),
+    lgsYearFillColor: String(o.lgsYearFillColor ?? o.lgs_year_fill_color ?? d.lgsYearFillColor),
+    lgsYearTextColor: String(o.lgsYearTextColor ?? o.lgs_year_text_color ?? d.lgsYearTextColor),
+    lgsYearFontPt: Math.max(
+      8,
+      Math.min(
+        22,
+        Math.round(Number(o.lgsYearFontPt ?? o.lgs_year_font_pt ?? d.lgsYearFontPt) * 2) / 2,
+      ),
+    ),
+    lgsYearPadXPt: Math.max(
+      4,
+      Math.min(
+        48,
+        Math.round(Number(o.lgsYearPadXPt ?? o.lgs_year_pad_x_pt ?? d.lgsYearPadXPt) * 2) / 2,
+      ),
+    ),
+    lgsYearPadYPt: Math.max(
+      2,
+      Math.min(
+        24,
+        Math.round(Number(o.lgsYearPadYPt ?? o.lgs_year_pad_y_pt ?? d.lgsYearPadYPt) * 2) / 2,
+      ),
+    ),
+    lgsTitleFontPt: Math.max(
+      8,
+      Math.min(
+        28,
+        Math.round(Number(o.lgsTitleFontPt ?? o.lgs_title_font_pt ?? d.lgsTitleFontPt) * 2) / 2,
+      ),
+    ),
+    lgsTitleTextColor: String(o.lgsTitleTextColor ?? o.lgs_title_text_color ?? d.lgsTitleTextColor),
+    lgsTitleBold: parseBool(o.lgsTitleBold ?? o.lgs_title_bold, d.lgsTitleBold),
+    lgsSubjectFontPt: Math.max(
+      8,
+      Math.min(
+        28,
+        Math.round(Number(o.lgsSubjectFontPt ?? o.lgs_subject_font_pt ?? d.lgsSubjectFontPt) * 2) / 2,
+      ),
+    ),
+    lgsSubjectTextColor: String(
+      o.lgsSubjectTextColor ?? o.lgs_subject_text_color ?? d.lgsSubjectTextColor,
+    ),
+    lgsSubjectBold: parseBool(o.lgsSubjectBold ?? o.lgs_subject_bold, d.lgsSubjectBold),
+    lgsSubjectBandWidthPt: Math.max(
+      160,
+      Math.min(
+        893,
+        Math.round(
+          Number(o.lgsSubjectBandWidthPt ?? o.lgs_subject_band_width_pt ?? d.lgsSubjectBandWidthPt) *
+            2,
+        ) / 2,
+      ),
+    ),
+    lgsInstructionFontPt: Math.max(
+      8,
+      Math.min(
+        22,
+        Math.round(
+          Number(o.lgsInstructionFontPt ?? o.lgs_instruction_font_pt ?? d.lgsInstructionFontPt) * 2,
+        ) / 2,
+      ),
+    ),
+    lgsBookletType: (() => {
+      const raw = String(o.lgsBookletType ?? o.lgs_booklet_type ?? d.lgsBookletType)
+        .trim()
+        .toUpperCase()
+      return /^[A-D]$/.test(raw) ? raw : ''
+    })(),
+    lgsShowLogo: parseBool(o.lgsShowLogo ?? o.lgs_show_logo, d.lgsShowLogo),
+    lgsLogoUrl: String(o.lgsLogoUrl ?? o.lgs_logo_url ?? d.lgsLogoUrl),
+    lgsPresetLogoId: String(o.lgsPresetLogoId ?? o.lgs_preset_logo_id ?? d.lgsPresetLogoId),
+    lgsLogoSizePct: Math.max(
+      40,
+      Math.min(
+        200,
+        Math.round(Number(o.lgsLogoSizePct ?? o.lgs_logo_size_pct ?? d.lgsLogoSizePct)),
+      ),
+    ),
+    lgsLogoUseThemeColors: parseBool(
+      o.lgsLogoUseThemeColors ?? o.lgs_logo_use_theme_colors,
+      d.lgsLogoUseThemeColors,
+    ),
+    lgsLogoColorPrimary: String(
+      o.lgsLogoColorPrimary ?? o.lgs_logo_color_primary ?? d.lgsLogoColorPrimary,
+    ),
+    lgsLogoColorSecondary: String(
+      o.lgsLogoColorSecondary ?? o.lgs_logo_color_secondary ?? d.lgsLogoColorSecondary,
+    ),
     writtenExamNumber: String(
       o.writtenExamNumber ?? o.written_exam_number ?? d.writtenExamNumber,
     ),
@@ -848,4 +981,11 @@ export function parseHeaderConfig(raw: unknown): HeaderConfig {
 export function isCorporateHeader(styleId: string | undefined): boolean {
   if (isClassicTestBannerHeader(styleId)) return false
   return isThemeHeader(styleId) || styleId === CORPORATE_HEADER_STYLE_ID
+}
+
+/** LGS resmi deneme şablonu */
+export function isLgsOfficialBannerConfig(
+  config: { useExamBanner?: boolean; examBannerTemplate?: string } | null | undefined,
+): boolean {
+  return config?.useExamBanner === true && config?.examBannerTemplate === 'lgs-official-ref'
 }

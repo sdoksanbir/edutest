@@ -262,6 +262,102 @@ export function isValidNormRect(norm: NormRect): boolean {
   );
 }
 
+const RECT_EPSILON = 1e-8;
+const LOCAL_RECT_EPSILON = 1e-8;
+
+/** inner dikdörtgeni outer içinde mi (ikisi de aynı normalize koordinat uzayında)? */
+export function isRectContained(inner: NormRect, outer: NormRect): boolean {
+  if (!isValidNormRect(inner) || !isValidNormRect(outer)) return false;
+  return (
+    inner.x >= outer.x - RECT_EPSILON &&
+    inner.y >= outer.y - RECT_EPSILON &&
+    inner.x + inner.width <= outer.x + outer.width + RECT_EPSILON &&
+    inner.y + inner.height <= outer.y + outer.height + RECT_EPSILON
+  );
+}
+
+export type PageNormalizedRectToCropLocalResult =
+  | { ok: true; rect: NormRect }
+  | { ok: false; reason: "OUTSIDE_QUESTION_CROP" | "INVALID_LOCAL_RECT" };
+
+/**
+ * Sayfa-normalize rect'i soru crop'una göre normalize 0–1 rect'e çevirir.
+ * Containment ile local-coordinate geçerliliğini ayrı teşhis eder.
+ */
+export function resolvePageNormalizedRectToCropLocal(
+  pageRect: NormRect,
+  questionCrop: NormRect
+): PageNormalizedRectToCropLocalResult {
+  if (!isRectContained(pageRect, questionCrop)) {
+    return { ok: false, reason: "OUTSIDE_QUESTION_CROP" };
+  }
+  if (!(questionCrop.width > 0) || !(questionCrop.height > 0)) {
+    return { ok: false, reason: "INVALID_LOCAL_RECT" };
+  }
+  const rawLocal = {
+    x: (pageRect.x - questionCrop.x) / questionCrop.width,
+    y: (pageRect.y - questionCrop.y) / questionCrop.height,
+    width: pageRect.width / questionCrop.width,
+    height: pageRect.height / questionCrop.height,
+  };
+  const withinLocalEpsilon =
+    Number.isFinite(rawLocal.x) &&
+    Number.isFinite(rawLocal.y) &&
+    Number.isFinite(rawLocal.width) &&
+    Number.isFinite(rawLocal.height) &&
+    rawLocal.x >= -LOCAL_RECT_EPSILON &&
+    rawLocal.y >= -LOCAL_RECT_EPSILON &&
+    rawLocal.width > 0 &&
+    rawLocal.height > 0 &&
+    rawLocal.x + rawLocal.width <= 1 + LOCAL_RECT_EPSILON &&
+    rawLocal.y + rawLocal.height <= 1 + LOCAL_RECT_EPSILON;
+  if (!withinLocalEpsilon) {
+    return { ok: false, reason: "INVALID_LOCAL_RECT" };
+  }
+  const local = clampNormRect(rawLocal);
+  return isValidNormRect(local)
+    ? { ok: true, rect: local }
+    : { ok: false, reason: "INVALID_LOCAL_RECT" };
+}
+
+/** Sayfa-normalize rect'i soru crop'una göre normalize 0–1 rect'e çevirir. */
+export function pageNormalizedRectToCropLocal(
+  pageRect: NormRect,
+  questionCrop: NormRect
+): NormRect | null {
+  const result = resolvePageNormalizedRectToCropLocal(pageRect, questionCrop);
+  return result.ok ? result.rect : null;
+}
+
+/** Soru-local normalize rect'i kaynak sayfa normalize koordinatına taşır. */
+export function cropLocalRectToPageNormalized(
+  localRect: NormRect,
+  questionCrop: NormRect
+): NormRect | null {
+  if (!isValidNormRect(localRect) || !isValidNormRect(questionCrop)) return null;
+  const pageRect = {
+    x: questionCrop.x + localRect.x * questionCrop.width,
+    y: questionCrop.y + localRect.y * questionCrop.height,
+    width: localRect.width * questionCrop.width,
+    height: localRect.height * questionCrop.height,
+  };
+  return isRectContained(pageRect, questionCrop) ? clampNormRect(pageRect) : null;
+}
+
+/** Kullanıcı sürüklemesini soru crop'u içinde tutan kesişim. */
+export function constrainRectToContainer(
+  rect: NormRect,
+  container: NormRect
+): NormRect | null {
+  if (!isValidNormRect(container)) return null;
+  const x0 = Math.max(container.x, rect.x);
+  const y0 = Math.max(container.y, rect.y);
+  const x1 = Math.min(container.x + container.width, rect.x + rect.width);
+  const y1 = Math.min(container.y + container.height, rect.y + rect.height);
+  if (x1 - x0 <= RECT_EPSILON || y1 - y0 <= RECT_EPSILON) return null;
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+}
+
 /**
  * Desktop parity: Boşluk varsa seçim alanını içeriğe (soruya) sığacak kadar küçült.
  * Canvas ile görüntüden içerik bbox bulunur, padding eklenir.

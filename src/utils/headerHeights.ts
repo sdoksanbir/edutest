@@ -18,6 +18,7 @@ import {
   testBannerHeaderBlockHeightPt,
   leafCorporateBannerHeaderBlockHeightPt,
   lgsVerbalBannerHeaderBlockHeightPt,
+  lgsOfficialBannerHeaderBlockHeightPt,
 } from './testBannerLayout'
 
 function isLeafRefCorporateBanner(config?: HeaderConfig): boolean {
@@ -26,6 +27,10 @@ function isLeafRefCorporateBanner(config?: HeaderConfig): boolean {
 
 function isLgsVerbalRefBanner(config?: HeaderConfig): boolean {
   return config?.useExamBanner === true && config.examBannerTemplate === 'lgs-verbal-ref'
+}
+
+function isLgsOfficialRefBanner(config?: HeaderConfig): boolean {
+  return config?.useExamBanner === true && config.examBannerTemplate === 'lgs-official-ref'
 }
 
 export function themeFirstPageHeaderTotalPt(
@@ -45,6 +50,13 @@ export function themeFirstPageHeaderTotalPt(
           ? testBannerContentWidthPt(pageWpt, marginLeftMm, marginRightMm)
           : 451
       return lgsVerbalBannerHeaderBlockHeightPt(contentW)
+    }
+    if (isLgsOfficialRefBanner(headerConfig)) {
+      const contentW =
+        pageWpt != null && marginLeftMm != null && marginRightMm != null
+          ? testBannerContentWidthPt(pageWpt, marginLeftMm, marginRightMm)
+          : 451
+      return lgsOfficialBannerHeaderBlockHeightPt(contentW)
     }
     const contentW =
       pageWpt != null && marginLeftMm != null && marginRightMm != null

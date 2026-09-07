@@ -26,6 +26,8 @@ import {
   ANSWER_KEY_LAYOUT,
 } from "../../utils/answerKeyLayout";
 import {
+  ANSWER_KEY_NAVY_HEX,
+  ANSWER_KEY_RED_HEX,
   drawSeparateAnswerKeyTableCanvas,
   SEPARATE_AK,
   separateAnswerKeyCapacity,
@@ -51,6 +53,15 @@ import {
 } from "../../utils/optikFormSettings";
 import type { QuestionItem } from "../../types";
 import { resolveRequestedScale } from "../../utils/questionScale";
+import { fasikulFrameHidesQuestionNumber, normalizeFasikulQuestionFrame, drawFasikulFrameFillBehind, drawFasikulFramePaperTint } from "../../utils/fasikulQuestionFrame";
+import {
+  drawScratchGridOnCanvas,
+  resolveScratchGridRectPt,
+  SCRATCH_BORDER_WIDTH_PT,
+  SCRATCH_CORNER_RADIUS_PT,
+  SCRATCH_PAD_BOTTOM_PT,
+  SCRATCH_STROKE_WIDTH_PT,
+} from "../../utils/questionScratchGrid";
 import {
   computeColumnImageBounds,
   IMG_COL_RIGHT_PAD_PT,
@@ -63,7 +74,6 @@ import {
   measureInkBoundsFromImage,
   type QuestionScaleDiagRow,
 } from "../../utils/questionScaleDiagnostics";
-import { DEFAULT_TARGET_QUESTION_LINE_PT } from "../../utils/normalizeQuestionFont";
 import {
   computeDescriptionLayout,
   descriptionHeaderBlockHeightPt,
@@ -108,6 +118,8 @@ import {
   classicBannerSubjectText,
   otherPageHeaderLeftText,
   otherPageHeaderRightText,
+  trialOsymOtherPageLeftText,
+  trialOsymOtherPageRightText,
   visibleSubTopicText,
   visibleTopicText,
 } from "../../utils/headerFieldVisibility";
@@ -181,6 +193,7 @@ import {
 } from "../../utils/questionNumberMetrics";
 
 const PT_PER_INCH = 72;
+const DEFAULT_TARGET_QUESTION_LINE_PT = 10;
 /** Ekranda sayfa boyutu (CSS) — overlay / tıklama ile aynı kalır. */
 const DISPLAY_DPI = 96;
 const DISPLAY_PT_TO_PX = DISPLAY_DPI / PT_PER_INCH;
@@ -323,6 +336,8 @@ type CanvasPdfPreviewProps = {
   drawSelectionOutline?: boolean;
   /** Sorular arası yeşil boşluk çizgisi — overlay kullanılıyorsa false */
   drawGapIndicators?: boolean;
+  /** Fasikül: soru altı kareli çözüm alanı (boşluğa göre büyür/küçülür) */
+  showQuestionScratchGrid?: boolean;
   /** Thumbnail genişliği (px) - verilirse zoom otomatik hesaplanır, sütuna tam sığar */
   thumbnailWidthPx?: number;
   /**
@@ -432,6 +447,7 @@ export default function CanvasPdfPreview({
   interactive = true,
   drawSelectionOutline = true,
   drawGapIndicators = true,
+  showQuestionScratchGrid = false,
   canvasFrameClassName,
   thumbnailWidthPx,
   previewSharpness = DEFAULT_PREVIEW_SHARPNESS,
@@ -680,12 +696,6 @@ export default function CanvasPdfPreview({
         l.display_number as number,
         (l.answer_key || "?").trim().toUpperCase() || "?",
       ]);
-    const isAnswerKeyOnlyPage =
-      includeAnswerKey &&
-      answerKeyMode === "separate_page" &&
-      currentPage > maxQuestionPage &&
-      currentPage <= maxQuestionPage + answerKeyPageCount;
-    const optikFormPageStart = maxQuestionPage + answerKeyPageCount + 1;
     const optikRowsEarly =
       optikFormEnabled && optikFormQuestions.length > 0
         ? optikRowsFromLayoutItems(layoutData, optikFormQuestions)
@@ -733,12 +743,21 @@ export default function CanvasPdfPreview({
         otherPageHeaderBottomGapMm,
         writtenPaperHeader,
       });
-    const isOptikSeparatePage =
-      optikFormEnabled &&
+    const optikTakesSeparatePage =
+      !!optikFormEnabled &&
       (optikFormPlacement === "separate_page" ||
-        (optikFormPlacement === "end_of_test" && !endOfTestOptikFits)) &&
-      currentPage === optikFormPageStart;
+        (optikFormPlacement === "end_of_test" && !endOfTestOptikFits));
+    const optikSeparatePageCount = optikTakesSeparatePage ? 1 : 0;
+    /** Optik ayrı sayfadaysa cevap anahtarından önce; cevap anahtarı en sonda */
+    const optikFormPageStart = maxQuestionPage + 1;
+    const isOptikSeparatePage =
+      optikTakesSeparatePage && currentPage === optikFormPageStart;
     const isOptikFormOnlyPage = isOptikSeparatePage;
+    const isAnswerKeyOnlyPage =
+      includeAnswerKey &&
+      answerKeyMode === "separate_page" &&
+      currentPage > maxQuestionPage + optikSeparatePageCount &&
+      currentPage <= maxQuestionPage + optikSeparatePageCount + answerKeyPageCount;
     const isExtraSheetPage = isAnswerKeyOnlyPage || isOptikFormOnlyPage;
 
     const drawRoundRectLeft = (
@@ -791,19 +810,23 @@ export default function CanvasPdfPreview({
 
       const tableX = areaX;
       const tableYBottom = tableYTop + tableHeightPx;
+      const akNavy = hexToRgb(ANSWER_KEY_NAVY_HEX);
+      const akRed = hexToRgb(ANSWER_KEY_RED_HEX);
+      const akNavyRgb = `rgb(${Math.round(akNavy[0] * 255)}, ${Math.round(akNavy[1] * 255)}, ${Math.round(akNavy[2] * 255)})`;
+      const akRedRgb = `rgb(${Math.round(akRed[0] * 255)}, ${Math.round(akRed[1] * 255)}, ${Math.round(akRed[2] * 255)})`;
 
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(tableX, tableYTop, tableWidthPx, tableHeightPx);
 
-      const headerBg = `rgba(${Math.round(primary[0] * 255)}, ${Math.round(primary[1] * 255)}, ${Math.round(primary[2] * 255)}, 0.25)`;
+      const headerBg = `rgba(${Math.round(akNavy[0] * 255)}, ${Math.round(akNavy[1] * 255)}, ${Math.round(akNavy[2] * 255)}, 0.25)`;
       ctx.fillStyle = headerBg;
       ctx.fillRect(tableX, tableYTop, tableWidthPx, headerHeightPx);
 
-      ctx.strokeStyle = themeRgb;
+      ctx.strokeStyle = akNavyRgb;
       ctx.lineWidth = ANSWER_KEY_LAYOUT.BORDER_WIDTH_PT * scale;
       ctx.strokeRect(tableX, tableYTop, tableWidthPx, tableHeightPx);
 
-      ctx.fillStyle = themeRgb;
+      ctx.fillStyle = akNavyRgb;
       ctx.font = `bold ${ANSWER_KEY_LAYOUT.TITLE_FONT_PT * scale}px Arial, Helvetica`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
@@ -817,7 +840,7 @@ export default function CanvasPdfPreview({
       ctx.font = `bold ${cellFontSize}px Arial, Helvetica`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillStyle = primaryRgb;
+      ctx.fillStyle = akRedRgb;
 
       for (let c = 0; c < columnCount; c++) {
         const cellCenterX = tableX + (c + 0.5) * cellWidthPx;
@@ -835,7 +858,7 @@ export default function CanvasPdfPreview({
         }
       }
 
-      ctx.strokeStyle = themeRgb;
+      ctx.strokeStyle = akNavyRgb;
       ctx.lineWidth = ANSWER_KEY_LAYOUT.GRID_LINE_WIDTH_PT * scale;
       for (let c = 1; c < columnCount; c++) {
         const lineX = tableX + c * cellWidthPx;
@@ -1614,6 +1637,7 @@ export default function CanvasPdfPreview({
         pageNum: currentPage,
         logoImage,
         otherPageHeaderBottomGapMm: otherPageHeaderGapMm,
+        trialTestName: trialDescriptionMeta?.testName,
       });
     } else if (!isExtraSheetPage && currentPage > 1) {
       // Test / deneme diğer sayfalar: noktalı dolgu, dış çerçeve; yazılar beyaz zemin üstünde (çizgisiz)
@@ -1666,14 +1690,23 @@ export default function CanvasPdfPreview({
       const topicPt = getHeaderFieldFontPt("topic", headerStyleId, headerConfig, "running");
       const brandPt = getHeaderFieldFontPt("brandName", headerStyleId, headerConfig, "running");
       const otherFont = CLASSIC_PDF_MATCH_FONT_FAMILY;
+      const trialOtherPage = Boolean(trialDescriptionMeta);
       ctx.font = `bold ${topicPt * scale}px ${otherFont}`;
-      let titleStr = otherPageHeaderLeftText(headerConfig).slice(0, 80);
+      let titleStr = (
+        trialOtherPage
+          ? trialOsymOtherPageLeftText(trialDescriptionMeta?.examCode)
+          : otherPageHeaderLeftText(headerConfig)
+      ).slice(0, 80);
       while (titleStr.length > 1 && ctx.measureText(titleStr).width > halfPx - padX) {
         titleStr = titleStr.slice(0, -1);
       }
       const twT = ctx.measureText(titleStr).width;
       ctx.font = `bold ${brandPt * scale}px ${otherFont}`;
-      let schn = otherPageHeaderRightText(headerConfig).slice(0, 80);
+      let schn = (
+        trialOtherPage
+          ? trialOsymOtherPageRightText(headerConfig)
+          : otherPageHeaderRightText(headerConfig)
+      ).slice(0, 80);
       while (schn.length > 0 && ctx.measureText(schn).width > halfPx - padX) {
         schn = schn.slice(0, -1);
       }
@@ -1693,7 +1726,11 @@ export default function CanvasPdfPreview({
       ctx.textBaseline = "alphabetic";
       ctx.textAlign = "left";
       if (titleStr) {
-        ctx.fillStyle = headerFieldColor(headerConfig, "topic", "#262626");
+        const leftColor =
+          trialOtherPage && (trialDescriptionMeta?.examCodeColor || "").trim()
+            ? (trialDescriptionMeta!.examCodeColor || "").trim()
+            : headerFieldColor(headerConfig, "topic", "#262626");
+        ctx.fillStyle = leftColor;
         ctx.font = `bold ${topicPt * scale}px ${otherFont}`;
         ctx.fillText(
           titleStr,
@@ -1951,7 +1988,9 @@ export default function CanvasPdfPreview({
         }
       }
 
-      const { x: cx, y: cy } = ptToCanvas(imgX, imgY);
+      // Fasikül: Örnek rozeti kaldırıldı — görsel yerleşim imgY’den çizilir
+      const drawImgTopPt = imgY;
+      const { x: cx, y: cy } = ptToCanvas(imgX, drawImgTopPt);
       const imgWpx = imgW * scale;
       const imgHpx = imgH * scale;
 
@@ -2015,15 +2054,49 @@ export default function CanvasPdfPreview({
         );
       }
 
+      const qForFrame = useEditorStore
+        .getState()
+        .questions.find((x) => x.order_index === item.order_index);
+      const frameSettings = normalizeFasikulQuestionFrame(qForFrame?.fasikulFrame);
+      if (frameSettings.enabled) {
+        drawFasikulFrameFillBehind(ctx, {
+          x: cx,
+          y: cy,
+          w: imgWpx,
+          h: imgHpx,
+          frame: frameSettings,
+          padPx: 0,
+        });
+      }
+
+      const pad = frameSettings.enabled
+        ? Math.max(0, Math.min(imgWpx / 3, imgHpx / 3, frameSettings.innerPaddingPx || 0))
+        : 0;
+      const drawX = cx + pad;
+      const drawY = cy + pad;
+      const drawW = Math.max(1, imgWpx - pad * 2);
+      const drawH = Math.max(1, imgHpx - pad * 2);
+
       if (imgEl && imgEl.complete) {
-        ctx.drawImage(imgEl, cx, cy, imgWpx, imgHpx);
+        ctx.drawImage(imgEl, drawX, drawY, drawW, drawH);
       } else {
         ctx.fillStyle = "#f0f0f0";
-        ctx.fillRect(cx, cy, imgWpx, imgHpx);
+        ctx.fillRect(drawX, drawY, drawW, drawH);
+      }
+
+      if (frameSettings.enabled) {
+        drawFasikulFramePaperTint(ctx, {
+          x: cx,
+          y: cy,
+          w: imgWpx,
+          h: imgHpx,
+          frame: frameSettings,
+        });
       }
 
       const dnLabel = item.display_number;
-      if (dnLabel != null && questionNumberingEnabled) {
+      const hideNumber = fasikulFrameHidesQuestionNumber(frameSettings);
+      if (dnLabel != null && questionNumberingEnabled && !hideNumber) {
         const numLabel = questionNumberLabel(dnLabel);
         const numFontPt = questionNumberFontPt;
         ctx.fillStyle = questionNumberDrawColor(questionNumberColorMode, primaryHex);
@@ -2045,6 +2118,111 @@ export default function CanvasPdfPreview({
       scaleDiagRows.map((r) => `${r.questionNo}:${r.finalDrawWidth}:${r.requestedScale}`).join("|"),
       "canvas-preview",
     );
+
+    // Fasikül: soru altı kareli alan — sorular arası / footer boşluğuna göre
+    if (showQuestionScratchGrid) {
+      const midX = pageWpt / 2;
+      const dragLive = questionDragLiveRef?.current;
+      const liveImgYTopPt = (it: (typeof pageItems)[number]) => {
+        if (
+          dragLive &&
+          dragLive.pageNum === currentPage &&
+          dragLive.orderIndex === it.order_index
+        ) {
+          return dragLive.imgYTopPt;
+        }
+        return it.img_y_top_pt ?? 0;
+      };
+      pageItems.forEach((item) => {
+        if (item.kind === "answer_key_page") return;
+        if (
+          item.img_x_pt == null ||
+          item.img_y_top_pt == null ||
+          item.img_w_pt == null ||
+          item.img_h_pt == null
+        ) {
+          return;
+        }
+        const yShiftPt = useLiveReflowLayout
+          ? 0
+          : liveAlignmentYShiftPtForItem(item, {
+              pageNum: currentPage,
+              columns,
+              band: alignmentBand,
+              live,
+              committedHeaderBottomGapMm: headerBottomGapMm,
+              committedOtherPageHeaderBottomGapMm: otherPageHeaderBottomGapMm,
+            });
+        const imgYTop = liveImgYTopPt(item) + yShiftPt;
+        const imgH = item.img_h_pt;
+        // Görsel alt kenarı (Örnek rozeti yok)
+        const currBottomPt = imgYTop - imgH;
+        const isLeft = (item.img_x_pt ?? 0) < midX;
+        const below = pageItems.filter((l) => {
+          if (l.img_x_pt == null || l.img_y_top_pt == null || l.img_h_pt == null) return false;
+          if ((l.img_x_pt ?? 0) < midX !== isLeft) return false;
+          const lShift = useLiveReflowLayout
+            ? 0
+            : liveAlignmentYShiftPtForItem(l, {
+                pageNum: currentPage,
+                columns,
+                band: alignmentBand,
+                live,
+                committedHeaderBottomGapMm: headerBottomGapMm,
+                committedOtherPageHeaderBottomGapMm: otherPageHeaderBottomGapMm,
+              });
+          return liveImgYTopPt(l) + lShift < imgYTop;
+        });
+        const next = below.sort(
+          (a, b) => liveImgYTopPt(b) - liveImgYTopPt(a),
+        )[0];
+        let gapBottomPt = footerTopPt;
+        if (next) {
+          const nextShift = useLiveReflowLayout
+            ? 0
+            : liveAlignmentYShiftPtForItem(next, {
+                pageNum: currentPage,
+                columns,
+                band: alignmentBand,
+                live,
+                committedHeaderBottomGapMm: headerBottomGapMm,
+                committedOtherPageHeaderBottomGapMm: otherPageHeaderBottomGapMm,
+              });
+          gapBottomPt = liveImgYTopPt(next) + nextShift;
+        }
+        const colRightPt = item.x_pt + item.w_pt;
+        const questionLeftPt = questionImageLeftPt(item, numOffsetMm, numGapMm);
+        const gridWidthPt = Math.max(0, colRightPt - questionLeftPt);
+        const padBottomPt = SCRATCH_PAD_BOTTOM_PT;
+        const grid = resolveScratchGridRectPt({
+          xPt: questionLeftPt,
+          widthPt: gridWidthPt,
+          questionBottomPt: currBottomPt,
+          gapBottomPt,
+          padBottomPt,
+        });
+        if (!grid) return;
+        const { x: leftPx, y: topPx } = ptToCanvas(grid.x, grid.yTop);
+        const cellPx = grid.cellPt * scale;
+        drawScratchGridOnCanvas(
+          ctx,
+          {
+            leftPx,
+            topPx,
+            widthPx: grid.width * scale,
+            heightPx: grid.height * scale,
+            cellPx,
+            cols: grid.cols,
+            rows: grid.rows,
+          },
+          {
+            lineWidthPx: SCRATCH_STROKE_WIDTH_PT * scale,
+            borderWidthPx: SCRATCH_BORDER_WIDTH_PT * scale,
+            radiusPx: SCRATCH_CORNER_RADIUS_PT * scale,
+          },
+        );
+      });
+    }
 
     // Sorular arası ve sayfa altı boşluk göstergesi: ortada, uçları oklu çizgi + mm değeri
     if (drawGapIndicators) {
@@ -2372,7 +2550,7 @@ export default function CanvasPdfPreview({
           pairsPerRow: SEPARATE_AK.PAIRS_PER_ROW,
         });
         const entriesPerPage = Math.max(SEPARATE_AK.PAIRS_PER_ROW, capacity);
-        const pageIdx = currentPage - maxQuestionPage - 1;
+        const pageIdx = currentPage - maxQuestionPage - optikSeparatePageCount - 1;
         const startIdx = pageIdx * entriesPerPage;
         const chunk = answerKeyItems.slice(startIdx, startIdx + entriesPerPage);
         if (chunk.length > 0) {
@@ -2385,8 +2563,6 @@ export default function CanvasPdfPreview({
             scale,
             items: chunk,
             title: "Cevap Anahtarı",
-            primaryHex,
-            accentHex,
             pairsPerRow: SEPARATE_AK.PAIRS_PER_ROW,
           });
         }
@@ -2436,7 +2612,9 @@ export default function CanvasPdfPreview({
       const cols = footerAnswerByCol.length;
       const fontSize = 9 * scale;
       ctx.font = `bold ${fontSize}px Arial, Helvetica`;
-      ctx.fillStyle = writtenPaperHeader ? writtenStrokeRgb : primaryRgb;
+      ctx.fillStyle = writtenPaperHeader
+        ? writtenStrokeRgb
+        : `rgb(${Math.round(hexToRgb(ANSWER_KEY_NAVY_HEX)[0] * 255)}, ${Math.round(hexToRgb(ANSWER_KEY_NAVY_HEX)[1] * 255)}, ${Math.round(hexToRgb(ANSWER_KEY_NAVY_HEX)[2] * 255)})`;
       ctx.textBaseline = baseline;
       for (let col = 0; col < cols; col++) {
         let ans = footerAnswerByCol[col] ?? "";
@@ -2728,6 +2906,7 @@ export default function CanvasPdfPreview({
     selectedQuestions,
     drawSelectionOutline,
     drawGapIndicators,
+    showQuestionScratchGrid,
     ptToCanvas,
     watermarkEnabled,
     watermarkSettings,

@@ -73,6 +73,27 @@ export function otherPageHeaderRightText(config: HeaderConfig): string {
   return headerFieldDisplayText(config, 'brandName')
 }
 
+/** Deneme ÖSYM — diğer sayfa sol (sınav kodu) */
+export function trialOsymOtherPageLeftText(examCode?: string | null): string {
+  return (examCode || '').trim().toUpperCase() || 'SINAV KODU'
+}
+
+/** Deneme ÖSYM — diğer sayfa sağ (kurum adı) */
+export function trialOsymOtherPageRightText(config: HeaderConfig): string {
+  if (!isHeaderFieldVisible(config, 'brandName')) return ''
+  return otherPageHeaderRightText(config).trim() || 'KURUM ADI'
+}
+
+/** Deneme LGS — diğer sayfa sol (test adı) */
+export function trialLgsOtherPageLeftText(testName?: string | null): string {
+  return (testName || '').trim() || 'TEST ADI'
+}
+
+/** Deneme LGS — diğer sayfa sağ (kurum adı) */
+export function trialLgsOtherPageRightText(config: HeaderConfig): string {
+  return trialOsymOtherPageRightText(config)
+}
+
 export function headerCenterTopicText(config: HeaderConfig): string {
   return visibleTopicText(config).replace(/\s+/g, ' ').trim()
 }

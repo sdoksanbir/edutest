@@ -2,7 +2,7 @@
  * Font eşitleme teşhis aşamaları — ölçek / çizim matematiğini değiştirmez.
  */
 
-import { resolveManualScale, resolveNormalizationScale, resolveRequestedScale } from './questionScale'
+import { resolveManualScale, resolveNormalizationScale, resolveRequestedScale } from './questionScale.ts'
 
 export type EqualizeDiagStage =
   | 'BEFORE_EQUALIZE'
@@ -26,6 +26,19 @@ export type EqualizeCommittedRow = {
 let activeEqualizeRunId: string | null = null
 let lastEqualizeRunId: string | null = null
 let committedByOrder = new Map<number, EqualizeCommittedRow>()
+let equalizeGeneration = 0
+let scaleInteractionSequence = 0
+let manualOverrideQuestionIds = new Set<string>()
+
+export type ScaleInteractionSnapshot = {
+  interactionToken: string
+  interactionStartedAt: number
+  equalizeGeneration: number
+}
+
+function isDevDiagnostics(): boolean {
+  return (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true
+}
 
 export function createEqualizeRunId(): string {
   return `eq_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -33,18 +46,69 @@ export function createEqualizeRunId(): string {
 
 export function beginEqualizeRun(runId?: string): string {
   const id = runId ?? createEqualizeRunId()
+  equalizeGeneration++
   activeEqualizeRunId = id
   lastEqualizeRunId = id
   committedByOrder = new Map()
+  manualOverrideQuestionIds = new Set()
+  if (isDevDiagnostics()) {
+    console.debug('[EQUALIZE_SCALE_GUARD_BEGIN]', {
+      equalizeRunId: id,
+      equalizeGeneration,
+    })
+  }
   return id
 }
 
 export function endEqualizeRun(): void {
+  if (isDevDiagnostics()) {
+    console.debug('[EQUALIZE_SCALE_GUARD_END]', {
+      equalizeRunId: activeEqualizeRunId,
+      equalizeGeneration,
+    })
+  }
   activeEqualizeRunId = null
 }
 
 export function getActiveEqualizeRunId(): string | null {
   return activeEqualizeRunId
+}
+
+export function beginScaleInteraction(): ScaleInteractionSnapshot {
+  scaleInteractionSequence++
+  return {
+    interactionToken: `scale_${Date.now()}_${scaleInteractionSequence}`,
+    interactionStartedAt: Date.now(),
+    equalizeGeneration,
+  }
+}
+
+export function isScaleInteractionStale(
+  interaction: ScaleInteractionSnapshot | null | undefined,
+): boolean {
+  return interaction == null || interaction.equalizeGeneration !== equalizeGeneration
+}
+
+export function rejectStaleScaleEvent(opts: {
+  questionId?: string | null
+  interaction: ScaleInteractionSnapshot | null | undefined
+  eventType: string
+  attemptedManualScale?: number | null
+}): void {
+  if (!isDevDiagnostics()) return
+  console.warn('[STALE_SCALE_EVENT_REJECTED]', {
+    questionId: opts.questionId ?? null,
+    interactionStartedAt: opts.interaction?.interactionStartedAt ?? null,
+    interactionToken: opts.interaction?.interactionToken ?? null,
+    currentEqualizeRunId: activeEqualizeRunId ?? lastEqualizeRunId,
+    eventType: opts.eventType,
+    attemptedManualScale: opts.attemptedManualScale ?? null,
+  })
+}
+
+export function recordManualOverrideAfterEqualize(questionIds: string[]): void {
+  if (activeEqualizeRunId != null || lastEqualizeRunId == null) return
+  for (const id of questionIds) manualOverrideQuestionIds.add(id)
 }
 
 /** Export / sonraki canvas: son tamamlanan veya aktif run */
@@ -221,4 +285,43 @@ export function assertEqualizeManualScaleInvariant(
   return errors
 }
 
-export { buildEqualizeCommitScaleFields } from './equalizeCommitScale'
+export function assertEqualizePostCommitScaleInvariant(
+  stage: 'LAYOUT_REFRESHED' | 'PDF_EXPORT',
+  questions: Array<{
+    id: string
+    order_index: number
+    manualScale?: number | null
+    normalizationScale?: number | null
+    display_scale?: number | null
+  }>,
+): number {
+  let errors = 0
+  for (const q of questions) {
+    if (!committedByOrder.has(q.order_index) || manualOverrideQuestionIds.has(q.id)) continue
+    const manual = resolveManualScale(q)
+    const normalization = resolveNormalizationScale(q)
+    const requested = resolveRequestedScale(q)
+    const display = q.display_scale ?? requested
+    if (
+      Math.abs(manual - 1) <= 1e-6 &&
+      Math.abs(requested - normalization) <= 0.0001 &&
+      Math.abs(display - normalization) <= 0.0001
+    ) {
+      continue
+    }
+    errors++
+    if (isDevDiagnostics()) {
+      console.error('EQUALIZE_POST_COMMIT_SCALE_MUTATION', {
+        equalizeRunId: activeEqualizeRunId ?? lastEqualizeRunId,
+        stage,
+        questionId: q.id,
+        questionNo: q.order_index + 1,
+        manualScale: manual,
+        normalizationScale: normalization,
+        requestedScale: requested,
+        display_scale: display,
+      })
+    }
+  }
+  return errors
+}

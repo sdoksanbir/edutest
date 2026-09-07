@@ -32,6 +32,20 @@ export function lgsVerbalBannerHeaderBlockHeightPt(contentWidthPt: number): numb
   return lgsVerbalBannerBodyHeightPt(contentWidthPt)
 }
 
+/** LGS resmi deneme başlığı — referans 925×272 */
+export const LGS_OFFICIAL_BANNER_VIEW_W = 925
+export const LGS_OFFICIAL_BANNER_VIEW_H = 272
+/** Açıklama kutusu altı — soru başlangıç boşluğu */
+export const LGS_OFFICIAL_BELOW_GAP_PT = 6
+
+export function lgsOfficialBannerBodyHeightPt(contentWidthPt: number): number {
+  return contentWidthPt * (LGS_OFFICIAL_BANNER_VIEW_H / LGS_OFFICIAL_BANNER_VIEW_W)
+}
+
+export function lgsOfficialBannerHeaderBlockHeightPt(contentWidthPt: number): number {
+  return lgsOfficialBannerBodyHeightPt(contentWidthPt) + LGS_OFFICIAL_BELOW_GAP_PT
+}
+
 /** Yaprak test referans banner — gövde + alt bilgi şeridi (143px ≈ 107pt) */
 export const LEAF_CORPORATE_BANNER_FOOTER_H_PT = 21
 export const LEAF_CORPORATE_BANNER_BODY_H_PT = 86.25 + LEAF_CORPORATE_BANNER_FOOTER_H_PT

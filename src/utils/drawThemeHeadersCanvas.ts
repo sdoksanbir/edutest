@@ -37,8 +37,9 @@ import {
 } from './headerLeftColumn'
 import { HEADER_LOGO_COL_PAD_PT } from './headerLogo'
 import type { HeaderConfig } from './corporateHeaderLayout'
+import { isLgsOfficialBannerConfig } from './corporateHeaderLayout'
 import { fieldFontPt, runningHeaderSideFontPt, type HeaderFontFieldKey } from './headerFieldFonts'
-import { headerFieldDisplayText, otherPageHeaderLeftText, otherPageHeaderRightText, visibleSubTopicText, visibleTopicText } from './headerFieldVisibility'
+import { headerFieldDisplayText, otherPageHeaderLeftText, otherPageHeaderRightText, trialLgsOtherPageLeftText, trialLgsOtherPageRightText, visibleSubTopicText, visibleTopicText } from './headerFieldVisibility'
 
 export type ThemeRunningHeaderParams = {
   ctx: CanvasRenderingContext2D
@@ -53,6 +54,8 @@ export type ThemeRunningHeaderParams = {
   pageNum: number
   logoImage?: HTMLImageElement | null
   otherPageHeaderBottomGapMm?: number
+  /** Deneme LGS — diğer sayfa sol (test adı) */
+  trialTestName?: string | null
 }
 
 export type ThemeHeaderDrawParams = CorporateHeaderDrawParams & {
@@ -457,6 +460,7 @@ export function drawThemeRunningHeaderCanvas(p: ThemeRunningHeaderParams): numbe
       pageNum: p.pageNum,
       styleId: p.styleId,
       otherPageHeaderBottomGapMm: p.otherPageHeaderBottomGapMm,
+      trialTestName: p.trialTestName,
     })
   }
 
@@ -472,8 +476,12 @@ export function drawThemeRunningHeaderCanvas(p: ThemeRunningHeaderParams): numbe
   const contentWpx = p.pageWpx - p.ml - p.mr
   const primary = rgbCss(p.config.primaryColor)
   const accent = rgbCss(p.config.accentColor)
-  const topicText = otherPageHeaderLeftText(p.config)
-  const brandText = otherPageHeaderRightText(p.config)
+  const topicText = isLgsOfficialBannerConfig(p.config)
+    ? trialLgsOtherPageLeftText(p.trialTestName)
+    : otherPageHeaderLeftText(p.config)
+  const brandText = isLgsOfficialBannerConfig(p.config)
+    ? trialLgsOtherPageRightText(p.config)
+    : otherPageHeaderRightText(p.config)
 
   clearArea(p.ctx, p.ml, y0, contentWpx, totalH)
 

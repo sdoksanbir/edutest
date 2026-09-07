@@ -6,6 +6,7 @@ import { rgb, type PDFDocument, type PDFPage, type PDFFont, type RGB } from 'pdf
 import {
   CORPORATE_LEFT_COL_W_PT,
   CORPORATE_STRIPE_H_PT,
+  isLgsOfficialBannerConfig,
   parseHeaderConfig,
   type HeaderConfig,
 } from './corporate-header-layout.js'
@@ -25,6 +26,8 @@ import {
   headerFieldDisplayText,
   otherPageHeaderLeftText,
   otherPageHeaderRightText,
+  trialLgsOtherPageLeftText,
+  trialLgsOtherPageRightText,
   visibleSubTopicText,
   visibleTopicText,
 } from './header-field-visibility.js'
@@ -310,6 +313,7 @@ export async function drawStyle1RunningHeaderPdf(
   fonts: { regular: PDFFont; bold: PDFFont },
   styleId = 'style_1',
   otherPageGapMm = 1.0,
+  trialTestName?: string | null,
 ) {
   const primary = hexToRgb(config.primaryColor || '#0A1931')
   const accent = hexToRgb(config.accentColor || '#DC2626')
@@ -332,8 +336,12 @@ export async function drawStyle1RunningHeaderPdf(
 
   const midY = bodyBottom + STYLE_1_RUNNING_BODY_PT / 2 - 2
 
-  const topic = otherPageHeaderLeftText(config)
-  const brand = otherPageHeaderRightText(config)
+  const topic = isLgsOfficialBannerConfig(config)
+    ? trialLgsOtherPageLeftText(trialTestName)
+    : otherPageHeaderLeftText(config)
+  const brand = isLgsOfficialBannerConfig(config)
+    ? trialLgsOtherPageRightText(config)
+    : otherPageHeaderRightText(config)
   const textX = geom.ml + 4
 
   const labelSize = runningHeaderSideFontPt(styleId, config)

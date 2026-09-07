@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type RefObject } from "react";
-import { Minus, Plus, ZoomIn } from "lucide-react";
+import { Frame, Minus, Plus, ZoomIn } from "lucide-react";
 import type { LayoutItem } from "../../api/client";
 import type { QuestionItem } from "../../types";
 import { resolveRequestedScale } from "../../utils/questionScale";
@@ -29,6 +29,16 @@ import {
   getPageColumnShiftMeta,
   type ColumnShiftDirection,
 } from "../../utils/columnShift";
+import {
+  DEFAULT_FASIKUL_QUESTION_FRAME,
+  normalizeFasikulQuestionFrame,
+  type FasikulFrameApplyScope,
+  type FasikulQuestionFrameSettings,
+} from "../../utils/fasikulQuestionFrame";
+import FasikulQuestionFrameMenu, {
+  FasikulFramePreviewChrome,
+} from "../fasikul/FasikulQuestionFrameMenu";
+import { useEditorStore } from "../../store/editorStore";
 
 type Props = {
   enabled: boolean;
@@ -76,6 +86,8 @@ type Props = {
     imageGapMm?: number;
   } | null>;
   onRegisterRedraw?: (redraw: () => void) => void | (() => void);
+  /** Fasikül: solda çerçeve menü simgesi */
+  fasikulFrameControls?: boolean;
 };
 
 const MIN_SIZE_PCT = 50;
@@ -162,7 +174,70 @@ export default function QuestionVerticalDragOverlay({
   layoutLiveRef,
   alignmentPreviewLiveRef,
   onRegisterRedraw,
+  fasikulFrameControls = false,
 }: Props) {
+  const setQuestionFasikulFrame = useEditorStore((s) => s.setQuestionFasikulFrame);
+  const applyFasikulFrameToQuestions = useEditorStore((s) => s.applyFasikulFrameToQuestions);
+  const [frameMenu, setFrameMenu] = useState<{
+    orderIndex: number;
+    questionId: string;
+    anchor: { x: number; y: number };
+    avoidRect: { left: number; top: number; right: number; bottom: number };
+  } | null>(null);
+  const [applyScope, setApplyScope] = useState<FasikulFrameApplyScope>("this");
+
+  useEffect(() => {
+    if (!frameMenu) return;
+    if (selectedOrderIndices.length > 1) {
+      setApplyScope("selected");
+    }
+  }, [frameMenu?.questionId, selectedOrderIndices.length]);
+
+  const questionByOrder = useMemo(() => {
+    const map = new Map<number, QuestionItem>();
+    for (const q of questions) map.set(q.order_index, q);
+    return map;
+  }, [questions]);
+
+  const pageOrderIndices = useMemo(
+    () =>
+      layout
+        .filter((it) => it.page === pageNum && typeof it.order_index === "number")
+        .map((it) => it.order_index as number),
+    [layout, pageNum],
+  );
+
+  const frameMenuQuestion = frameMenu
+    ? questionByOrder.get(frameMenu.orderIndex)
+    : undefined;
+  const frameMenuValue: FasikulQuestionFrameSettings = normalizeFasikulQuestionFrame(
+    frameMenuQuestion?.fasikulFrame ?? DEFAULT_FASIKUL_QUESTION_FRAME,
+  );
+
+  const frameTargetIds = useMemo(() => {
+    if (!frameMenuQuestion) return [] as string[];
+    if (applyScope === "this") return [frameMenuQuestion.id];
+    if (applyScope === "selected") {
+      const ids = selectedOrderIndices
+        .map((oi) => questionByOrder.get(oi)?.id)
+        .filter((id): id is string => Boolean(id));
+      return ids.length > 0 ? ids : [frameMenuQuestion.id];
+    }
+    if (applyScope === "page") {
+      return pageOrderIndices
+        .map((oi) => questionByOrder.get(oi)?.id)
+        .filter((id): id is string => Boolean(id));
+    }
+    return questions.map((q) => q.id);
+  }, [
+    applyScope,
+    frameMenuQuestion,
+    pageOrderIndices,
+    questionByOrder,
+    questions,
+    selectedOrderIndices,
+  ]);
+
   const [, bumpLiveFrame] = useReducer((n: number) => n + 1, 0);
   const layoutData =
     layoutLiveRef?.current && layoutLiveRef.current.length > 0
@@ -471,11 +546,16 @@ export default function QuestionVerticalDragOverlay({
         const isHover = hoverOrder === item.order_index;
         const isDragging = dragOrder === item.order_index;
         const sizeSliderOpen = sizeSliderOrder === item.order_index;
-        const showControls = isHover || isDragging || sizeSliderOpen;
+        const frameMenuOpen = frameMenu?.orderIndex === item.order_index;
+        const showControls = isHover || isDragging || sizeSliderOpen || frameMenuOpen;
         const sizePct = displayScaleByOrder.get(item.order_index) ?? 100;
         const shift = shiftMeta.get(item.order_index ?? -1);
         const showShiftArrows = Boolean(onColumnShift && shift);
         const isSelected = selectedOrderIndices.includes(item.order_index);
+        const qItem = questionByOrder.get(item.order_index);
+        const frameSettings = normalizeFasikulQuestionFrame(
+          qItem?.fasikulFrame ?? DEFAULT_FASIKUL_QUESTION_FRAME,
+        );
 
         const isHighlighted = isSelected || isHover || isDragging;
 
@@ -488,6 +568,7 @@ export default function QuestionVerticalDragOverlay({
           <div
             key={item.order_index}
             data-question-hit
+            data-question-order={item.order_index}
             className={`pointer-events-auto absolute ${isDragging ? "cursor-grabbing" : draggable ? "cursor-ns-resize" : "cursor-pointer"}`}
             style={{
               left: rect.left,
@@ -502,6 +583,8 @@ export default function QuestionVerticalDragOverlay({
             onPointerDown={(e) => {
               if ((e.target as HTMLElement).closest("[data-column-shift-arrow]")) return;
               if ((e.target as HTMLElement).closest("[data-question-size-control]")) return;
+              if ((e.target as HTMLElement).closest("[data-fasikul-frame-trigger]")) return;
+              if ((e.target as HTMLElement).closest("[data-fasikul-frame-menu]")) return;
               if (e.button !== 0) return;
               e.preventDefault();
               e.stopPropagation();
@@ -525,6 +608,65 @@ export default function QuestionVerticalDragOverlay({
               } ${isSelected ? QUESTION_SELECTION_SELECTED_CLASS : ""}`}
               aria-hidden
             />
+            {fasikulFrameControls && <FasikulFramePreviewChrome settings={frameSettings} />}
+            {fasikulFrameControls && (
+              <div
+                className={`absolute left-0 top-3 z-20 -translate-x-1/2 transition-opacity duration-150 ${
+                  showControls
+                    ? "opacity-100"
+                    : "pointer-events-none opacity-0"
+                }`}
+                data-fasikul-frame-trigger
+              >
+                <button
+                  type="button"
+                  title="Soru çerçevesi"
+                  aria-label="Soru çerçevesi menüsünü aç"
+                  aria-expanded={frameMenuOpen}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!qItem) return;
+                    const r = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                    if (frameMenuOpen) {
+                      setFrameMenu(null);
+                      return;
+                    }
+                    const hit = (e.currentTarget as HTMLElement).closest(
+                      "[data-question-hit]",
+                    ) as HTMLElement | null;
+                    const hr = hit?.getBoundingClientRect();
+                    setFrameMenu({
+                      orderIndex: item.order_index,
+                      questionId: qItem.id,
+                      anchor: { x: r.right, y: r.top },
+                      avoidRect: hr
+                        ? {
+                            left: hr.left,
+                            top: hr.top,
+                            right: hr.right,
+                            bottom: hr.bottom,
+                          }
+                        : {
+                            left: r.left,
+                            top: r.top,
+                            right: r.right,
+                            bottom: r.bottom,
+                          },
+                    });
+                    onSelectQuestion(item.order_index, { skipScroll: true });
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className={`pointer-events-auto flex h-7 w-7 items-center justify-center rounded-full shadow-sm ring-1 transition hover:scale-105 active:scale-95 ${
+                    frameMenuOpen
+                      ? "bg-violet-600 text-white ring-violet-300"
+                      : "bg-white/95 text-slate-700 ring-slate-300 hover:bg-violet-50 hover:text-violet-700"
+                  }`}
+                >
+                  <Frame className="h-3.5 w-3.5" strokeWidth={2.25} />
+                </button>
+              </div>
+            )}
             {showShiftArrows && shift!.showPrevColumnArrow && (
               <div
                 className={`absolute left-0 top-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5 transition-opacity duration-150 ${
@@ -638,6 +780,38 @@ export default function QuestionVerticalDragOverlay({
           </div>
         );
       })}
+      {fasikulFrameControls && frameMenu && frameMenuQuestion && (
+        <FasikulQuestionFrameMenu
+          open
+          anchor={frameMenu.anchor}
+          avoidRect={frameMenu.avoidRect}
+          avoidOrderIndex={frameMenu.orderIndex}
+          value={frameMenuValue}
+          onChange={(next) => {
+            if (applyScope === "this" || frameTargetIds.length <= 1) {
+              setQuestionFasikulFrame(frameMenu.questionId, next);
+              return;
+            }
+            applyFasikulFrameToQuestions(frameTargetIds, next);
+          }}
+          onClose={() => setFrameMenu(null)}
+          applyScope={applyScope}
+          onApplyScopeChange={setApplyScope}
+          targetCount={frameTargetIds.length}
+          selectedCount={selectedOrderIndices.length}
+          onApplyNow={() => {
+            const payload = {
+              ...frameMenuValue,
+              enabled: true,
+            };
+            if (applyScope === "this") {
+              setQuestionFasikulFrame(frameMenu.questionId, payload);
+            } else {
+              applyFasikulFrameToQuestions(frameTargetIds, payload);
+            }
+          }}
+        />
+      )}
       {onDisplayScaleChange &&
         floatingSliderOrder != null &&
         floatingAnchor?.orderIndex === floatingSliderOrder && (

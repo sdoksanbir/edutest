@@ -6,6 +6,7 @@ import { getLocalSource, getLocalSourceForQuestion } from "../../store/cropLocal
 import { useQuestionImageSrc } from "../../hooks/useQuestionImageSrc";
 import { plainTextToCanvasSync } from "../../utils/plainTextPreviewCanvas";
 import { suggestFontPxFromSelection } from "../../utils/questionImageFontEstimate";
+import { balanceDocumentImageRgba } from "../../utils/balanceDocumentImage";
 import ExplanationCaptionModal from "./ExplanationCaptionModal";
 import QuestionImageMathTextModal from "./QuestionImageMathTextModal";
 
@@ -54,8 +55,9 @@ export default function QuestionPreviewModal({
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
   const [displaySize, setDisplaySize] = useState<{ w: number; h: number }>({ w: 400, h: 300 });
   const naturalSizeRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
-  const [canUndoRemoveBg, setCanUndoRemoveBg] = useState(false);
-  const imageBeforeRemoveBgRef = useRef<string | null>(null);
+  const [canUndoToneEdit, setCanUndoToneEdit] = useState(false);
+  const imageBeforeToneEditRef = useRef<string | null>(null);
+  const removeBackgroundBeforeToneEditRef = useRef(false);
   const [captionModalOpen, setCaptionModalOpen] = useState(false);
   const [textToolActive, setTextToolActive] = useState(false);
   const [textDrag, setTextDrag] = useState<{
@@ -156,8 +158,9 @@ export default function QuestionPreviewModal({
       setImageLoaded(false);
       setEraserActive(false);
       setEraserSize(ERASER_SIZE_DEFAULT);
-      setCanUndoRemoveBg(false);
-      imageBeforeRemoveBgRef.current = null;
+      setCanUndoToneEdit(false);
+      imageBeforeToneEditRef.current = null;
+      removeBackgroundBeforeToneEditRef.current = false;
       setCaptionModalOpen(false);
       setTextToolActive(false);
       setTextDrag(null);
@@ -516,8 +519,9 @@ export default function QuestionPreviewModal({
     try {
       const dataUrlBefore = canvas.toDataURL("image/png");
       const base64Before = dataUrlBefore.replace(/^data:image\/png;base64,/, "");
-      if (!imageBeforeRemoveBgRef.current) {
-        imageBeforeRemoveBgRef.current = base64Before;
+      if (!imageBeforeToneEditRef.current) {
+        imageBeforeToneEditRef.current = base64Before;
+        removeBackgroundBeforeToneEditRef.current = latestQuestion.remove_background ?? false;
       }
 
       const w = canvas.width;
@@ -535,21 +539,69 @@ export default function QuestionPreviewModal({
       const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
       flattenQuestionImageToSingleLayer(latestQuestion.id, base64);
       updateRemoveBackground(latestQuestion.id, true);
-      setCanUndoRemoveBg(true);
+      setCanUndoToneEdit(true);
     } catch {
       console.error("Arka plan kaldırılamadı.");
       alert("Arka plan kaldırılamadı. Lütfen tekrar deneyin.");
     }
   };
 
-  const handleUndoRemoveBackground = () => {
-    const before = imageBeforeRemoveBgRef.current;
+  const handleBalanceImage = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx || !imageLoaded) return;
+    try {
+      const before = canvas.toDataURL("image/png").replace(/^data:image\/png;base64,/, "");
+      if (!imageBeforeToneEditRef.current) {
+        imageBeforeToneEditRef.current = before;
+        removeBackgroundBeforeToneEditRef.current = latestQuestion.remove_background ?? false;
+      }
+      const width = canvas.width;
+      const height = canvas.height;
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const balanced = balanceDocumentImageRgba({
+        data: imageData.data,
+        width,
+        height,
+      });
+      imageData.data.set(balanced.data);
+      ctx.putImageData(imageData, 0, 0);
+      const base64 = canvas.toDataURL("image/png").replace(/^data:image\/png;base64,/, "");
+      flattenQuestionImageToSingleLayer(latestQuestion.id, base64);
+      setCanUndoToneEdit(true);
+
+      if (import.meta.env.DEV) {
+        const capture = latestQuestion.capture;
+        console.debug("[IMAGE_BALANCE]", {
+          ...Object.fromEntries(
+            Object.entries(balanced.diagnostics).map(([key, value]) => [
+              key,
+              Number(value.toFixed(4)),
+            ]),
+          ),
+          naturalWidth: width,
+          naturalHeight: height,
+          captureWidthPx: capture?.cropWidthPx ?? null,
+          captureHeightPx: capture?.cropHeightPx ?? null,
+          captureDimensionsMatch:
+            capture == null ||
+            (capture.cropWidthPx === width && capture.cropHeightPx === height),
+        });
+      }
+    } catch {
+      console.error("Görüntü dengelenemedi.");
+      alert("Görüntü dengelenemedi. Lütfen tekrar deneyin.");
+    }
+  };
+
+  const handleUndoToneEdit = () => {
+    const before = imageBeforeToneEditRef.current;
     if (!before) return;
     try {
       flattenQuestionImageToSingleLayer(latestQuestion.id, before);
-      updateRemoveBackground(latestQuestion.id, false);
-      imageBeforeRemoveBgRef.current = null;
-      setCanUndoRemoveBg(false);
+      updateRemoveBackground(latestQuestion.id, removeBackgroundBeforeToneEditRef.current);
+      imageBeforeToneEditRef.current = null;
+      setCanUndoToneEdit(false);
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext("2d");
       if (canvas && ctx) {
@@ -747,11 +799,20 @@ export default function QuestionPreviewModal({
             >
               {latestQuestion.remove_background ? "Arka plan kaldır ✓" : "Arka planı kaldır"}
             </button>
-            {canUndoRemoveBg && (
+            <button
+              type="button"
+              onClick={handleBalanceImage}
+              disabled={!imageLoaded}
+              title="Görüntünün ton ve kontrast dağılımını dengeler"
+              className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+            >
+              Görüntüyü Dengele
+            </button>
+            {canUndoToneEdit && (
               <button
                 type="button"
-                onClick={handleUndoRemoveBackground}
-                title="Arka plan kaldırma işlemini geri al"
+                onClick={handleUndoToneEdit}
+                title="Son ton düzenleme işlemlerini geri al"
                 className="flex items-center gap-1 rounded-md border border-slate-400 bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-200"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

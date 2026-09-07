@@ -2,7 +2,7 @@
  * Modern Kurumsal (Tema 1) — Canvas banner çizimi.
  */
 
-import { CORPORATE_GRAY, type HeaderConfig } from './corporateHeaderLayout'
+import { CORPORATE_GRAY, type HeaderConfig, isLgsOfficialBannerConfig } from './corporateHeaderLayout'
 import {
   CORPORATE_LEFT_COL_W_PT,
   CORPORATE_STRIPE_H_PT,
@@ -25,7 +25,7 @@ import { style1BannerBlockHeightPt, style1BodyHeightPt } from './style1HeaderMet
 import { drawHeaderLeftColumnCanvas, headerLeftColumnActive } from './headerLeftColumn'
 import { HEADER_LOGO_COL_PAD_PT } from './headerLogo'
 import { fieldFontPt, runningHeaderSideFontPt, type HeaderFontFieldKey } from './headerFieldFonts'
-import { headerFieldDisplayText, otherPageHeaderLeftText, otherPageHeaderRightText, visibleSubTopicText, visibleTopicText } from './headerFieldVisibility'
+import { headerFieldDisplayText, otherPageHeaderLeftText, otherPageHeaderRightText, trialLgsOtherPageLeftText, trialLgsOtherPageRightText, visibleSubTopicText, visibleTopicText } from './headerFieldVisibility'
 import {
   drawExamTypeBoxFillCanvas,
   drawExamTypeBoxBorderCanvas,
@@ -58,6 +58,8 @@ export type CorporateHeaderDrawParams = {
   logoImage?: HTMLImageElement | null
   styleId?: string
   otherPageHeaderBottomGapMm?: number
+  /** Deneme LGS — diğer sayfa sol metin (test adı) */
+  trialTestName?: string | null
 }
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -313,8 +315,12 @@ export function drawStyle1RunningHeaderCanvas(
   const textMidY = bodyY0 + bodyH / 2
   const textStartX = p.ml + 4 * s
 
-  const topic = otherPageHeaderLeftText(p.config)
-  const brand = otherPageHeaderRightText(p.config)
+  const topic = isLgsOfficialBannerConfig(p.config)
+    ? trialLgsOtherPageLeftText(p.trialTestName)
+    : otherPageHeaderLeftText(p.config)
+  const brand = isLgsOfficialBannerConfig(p.config)
+    ? trialLgsOtherPageRightText(p.config)
+    : otherPageHeaderRightText(p.config)
 
   p.ctx.textAlign = 'left'
   p.ctx.textBaseline = 'middle'

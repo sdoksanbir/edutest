@@ -51,7 +51,14 @@ function BlueToggle({
   );
 }
 
-export default function AnswerKeyFooterPanel() {
+type AnswerKeyFooterPanelProps = {
+  /** Deneme: sadece switch — ayrı sayfa; ayar modalı yok */
+  trialMode?: boolean;
+};
+
+export default function AnswerKeyFooterPanel({
+  trialMode = false,
+}: AnswerKeyFooterPanelProps) {
   const { tokens: t } = usePdfPreviewUi();
   const options = useEditorStore((s) => s.options);
   const answerKeyMode = useEditorStore((s) => s.answerKeyMode);
@@ -67,13 +74,19 @@ export default function AnswerKeyFooterPanel() {
   const [showOptikSettings, setShowOptikSettings] = useState(false);
 
   const optikBlockedByPerPage =
-    options.includeAnswerKey && answerKeyMode === "per_page";
+    !trialMode && options.includeAnswerKey && answerKeyMode === "per_page";
 
   useEffect(() => {
     if (optikBlockedByPerPage && optikFormEnabled) {
       setOptikFormEnabled(false);
     }
   }, [optikBlockedByPerPage, optikFormEnabled, setOptikFormEnabled]);
+
+  useEffect(() => {
+    if (trialMode && options.includeAnswerKey && answerKeyMode !== "separate_page") {
+      setAnswerKeyMode("separate_page");
+    }
+  }, [trialMode, options.includeAnswerKey, answerKeyMode, setAnswerKeyMode]);
 
   const openAnswerKeyModal = () => setShowAnswerKeyModal(true);
 
@@ -83,6 +96,11 @@ export default function AnswerKeyFooterPanel() {
 
   const handleAnswerKeyToggle = () => {
     if (options.includeAnswerKey) {
+      toggleOption("includeAnswerKey");
+      return;
+    }
+    if (trialMode) {
+      setAnswerKeyMode("separate_page");
       toggleOption("includeAnswerKey");
       return;
     }
@@ -115,17 +133,24 @@ export default function AnswerKeyFooterPanel() {
       >
         <div className="pdf-preview-collapsible-section space-y-2.5">
           <div className="flex items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                if (options.includeAnswerKey) openAnswerKeyModal();
-                else handleAnswerKeyToggle();
-              }}
-              className={`flex min-w-0 items-center gap-2 text-left ${t.link}`}
-            >
-              <KeyRound className="pdf-preview-panel-option-icon" aria-hidden />
-              <span>Cevap anahtarı</span>
-            </button>
+            {trialMode ? (
+              <span className={`flex min-w-0 items-center gap-2 ${t.link}`}>
+                <KeyRound className="pdf-preview-panel-option-icon" aria-hidden />
+                <span>Cevap anahtarı</span>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  if (options.includeAnswerKey) openAnswerKeyModal();
+                  else handleAnswerKeyToggle();
+                }}
+                className={`flex min-w-0 items-center gap-2 text-left ${t.link}`}
+              >
+                <KeyRound className="pdf-preview-panel-option-icon" aria-hidden />
+                <span>Cevap anahtarı</span>
+              </button>
+            )}
             <BlueToggle
               checked={options.includeAnswerKey}
               onChange={handleAnswerKeyToggle}
@@ -133,10 +158,12 @@ export default function AnswerKeyFooterPanel() {
             />
           </div>
 
-          {options.includeAnswerKey ? (
+          {options.includeAnswerKey && !trialMode ? (
             <div className="space-y-2">
               <p className={`text-xs ${t.labelMuted}`}>
-                Yerleşim: {ANSWER_KEY_MODE_LABELS[answerKeyMode] ?? ANSWER_KEY_MODE_LABELS.separate_page}
+                Yerleşim:{" "}
+                {ANSWER_KEY_MODE_LABELS[answerKeyMode] ??
+                  ANSWER_KEY_MODE_LABELS.separate_page}
               </p>
               <button
                 type="button"
@@ -146,6 +173,13 @@ export default function AnswerKeyFooterPanel() {
                 Cevap anahtarı ayarları
               </button>
             </div>
+          ) : null}
+
+          {options.includeAnswerKey && trialMode ? (
+            <p className={`text-xs ${t.labelMuted}`}>
+              Ayrı sayfada eklenir
+              {optikFormEnabled ? " (optik formdan sonra, en son sayfa)" : ""}.
+            </p>
           ) : null}
         </div>
 
@@ -196,13 +230,15 @@ export default function AnswerKeyFooterPanel() {
         </div>
       </CollapsibleCard>
 
-      <AnswerKeyModeModal
-        open={showAnswerKeyModal}
-        onClose={handleAnswerKeyCancel}
-        onConfirm={handleAnswerKeyConfirm}
-        currentMode={answerKeyMode}
-        themeColor={themeColor}
-      />
+      {!trialMode ? (
+        <AnswerKeyModeModal
+          open={showAnswerKeyModal}
+          onClose={handleAnswerKeyCancel}
+          onConfirm={handleAnswerKeyConfirm}
+          currentMode={answerKeyMode}
+          themeColor={themeColor}
+        />
+      ) : null}
 
       <OptikFormSettingsModal open={showOptikSettings} onClose={() => setShowOptikSettings(false)} />
     </>

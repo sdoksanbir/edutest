@@ -34,6 +34,11 @@ import { isClassicTestBannerHeader, normalizeHeaderStyleId } from './header-styl
 import { CLASSIC_BANNER_LINE_PT } from './pdf-description-utils.js'
 import { footerPageNumberCircleRadiusPt } from './footer-band-layout.js'
 import {
+  drawScratchGridOnPdfPage,
+  resolveScratchGridRectPt,
+  SCRATCH_PAD_BOTTOM_PT,
+} from './question-scratch-grid.js'
+import {
   watermarkActive,
   watermarkAngleDeg,
   watermarkLogoBase64,
@@ -44,11 +49,10 @@ import {
   formatPageNumberLabel,
   questionNumberColorMode,
   themePrimaryColor,
-  themeAccentColor,
   columnDividerColor,
   questionNumberFontPt,
 } from './visual-properties.js'
-import { drawSeparateAnswerKeyTablePdf, SEPARATE_AK, ensureSeparateAnswerKeyPages, separateAnswerKeyCapacity } from './separate-answer-key-table.js'
+import { drawSeparateAnswerKeyTablePdf, SEPARATE_AK, ANSWER_KEY_NAVY_HEX, ensureSeparateAnswerKeyPages, separateAnswerKeyCapacity } from './separate-answer-key-table.js'
 
 import {
   estimateQuestionNumberTextWidthPt,
@@ -224,7 +228,7 @@ function drawFooter(
         y: yAns,
         size: 9,
         font: fonts.bold,
-        color: stroke,
+        color: written ? rgb(0, 0, 0) : hexToRgbColor(ANSWER_KEY_NAVY_HEX),
       })
     }
   }
@@ -431,8 +435,6 @@ function drawAnswerKeyPage(
     width: contentW,
     items: chunk,
     fonts,
-    primaryHex: themePrimaryColor(payload),
-    accentHex: themeAccentColor(payload),
     title: 'Cevap Anahtarı',
   })
 }
@@ -501,11 +503,21 @@ async function drawQuestionsOnPage(
   const qByOrder = new Map(questions.map((q) => [Number(q.order_index ?? -1), q]))
   const geom = computeGeometry(payload, 1)
   const colW = geom.colW
+  const showScratch = payload.show_question_scratch_grid === true
 
   for (const item of pageItems) {
-    if (item.display_number != null && item.img_y_top_pt != null) {
+    const qEarly = qByOrder.get(item.order_index)
+    const frameEnabled = Boolean(
+      qEarly &&
+        typeof qEarly === 'object' &&
+        (qEarly as { fasikulFrame?: { enabled?: boolean } }).fasikulFrame?.enabled,
+    )
+    if (
+      !frameEnabled &&
+      item.display_number != null &&
+      item.img_y_top_pt != null
+    ) {
       const numText = questionNumberLabel(item.display_number)
-      const numTextW = fonts.bold.widthOfTextAtSize(numText, numFontPt)
       page.drawText(numText, {
         x: questionNumberLeftPt(item.x_pt, numOffsetPt),
         y: questionNumberBaselinePt(item.img_y_top_pt, numFontPt),
@@ -518,15 +530,17 @@ async function drawQuestionsOnPage(
 
     try {
       const image = await embedQuestionImage(pdf, item.image_base64)
-      const numTextW =
-        item.display_number != null
+      const hideNumSlot = frameEnabled
+      const numTextW = hideNumSlot
+        ? 0
+        : item.display_number != null
           ? fonts.bold.widthOfTextAtSize(
               questionNumberLabel(item.display_number),
               numFontPt,
             )
           : estimateQuestionNumberTextWidthPt(item.display_number, numFontPt)
 
-      const q = qByOrder.get(item.order_index)
+      const q = qEarly
       const size = getImageSizeFromBase64(item.image_base64)
       const metrics =
         q && size ? calculateQuestionDrawMetrics(q, layoutCtx, size) : null
@@ -545,8 +559,10 @@ async function drawQuestionsOnPage(
         counters.usedLockedLayoutCount += 1
       }
 
-      const x = item.x_pt + numOffsetPt + numTextW + numImageGapPt
-      const y = (item.img_y_top_pt ?? 0) - drawH
+      const x = item.x_pt + (hideNumSlot ? 0 : numOffsetPt + numTextW + numImageGapPt)
+      const layoutImgTop = item.img_y_top_pt ?? 0
+      const drawImgTop = layoutImgTop
+      const y = drawImgTop - drawH
       const questionNo = item.display_number ?? item.order_index + 1
       counters.renderedQuestionCount += 1
 
@@ -586,7 +602,7 @@ async function drawQuestionsOnPage(
         })
       }
 
-      console.error('[PDF_EXPORT:DRAW_IMAGE]', {
+      console.debug('[PDF_EXPORT:DRAW_IMAGE]', {
         exportId,
         questionNo,
         requestedScale: metrics?.requestedScale ?? null,
@@ -612,18 +628,95 @@ async function drawQuestionsOnPage(
       })
       counters.drawImageLogCount += 1
 
+      const frameRaw =
+        q && typeof q === 'object'
+          ? (q as {
+              fasikulFrame?: {
+                enabled?: boolean
+                fillColor?: string
+                fillOpacityPct?: number
+                cornerRadiusPx?: number
+                innerPaddingPx?: number
+              }
+            }).fasikulFrame
+          : undefined
+      const innerPad = Math.max(
+        0,
+        Math.min(drawW / 3, drawH / 3, Number(frameRaw?.innerPaddingPx) || 0),
+      )
+      if (frameRaw?.enabled && frameRaw.fillColor) {
+        const m = /^#?([0-9a-f]{6})$/i.exec(String(frameRaw.fillColor).trim())
+        if (m) {
+          const n = parseInt(m[1], 16)
+          const opacity = Math.max(
+            0,
+            Math.min(1, (Number(frameRaw.fillOpacityPct) || 100) / 100),
+          )
+          page.drawRectangle({
+            x,
+            y,
+            width: drawW,
+            height: drawH,
+            color: rgb(
+              ((n >> 16) & 255) / 255,
+              ((n >> 8) & 255) / 255,
+              (n & 255) / 255,
+            ),
+            opacity,
+            borderWidth: 0,
+          })
+        }
+      }
+
       page.drawImage(image, {
-        x,
-        y,
-        width: drawW,
-        height: drawH,
+        x: x + innerPad,
+        y: y + innerPad,
+        width: Math.max(1, drawW - innerPad * 2),
+        height: Math.max(1, drawH - innerPad * 2),
       })
     } catch (err) {
-      console.error('[PDF_EXPORT:DRAW_IMAGE] FAILED', {
+      console.debug('[PDF_EXPORT:DRAW_IMAGE] FAILED', {
         exportId,
         order_index: item.order_index,
         err: err instanceof Error ? err.message : String(err),
       })
+    }
+  }
+
+  if (showScratch) {
+    const midX = geom.page_w_pt / 2
+    const footerTopPt = geom.contentBottom
+    for (const item of pageItems) {
+      if (
+        item.img_x_pt == null ||
+        item.img_y_top_pt == null ||
+        item.img_w_pt == null ||
+        item.img_h_pt == null
+      ) {
+        continue
+      }
+      const currBottomPt = item.img_y_top_pt - item.img_h_pt
+      const isLeft = item.img_x_pt < midX
+      const below = pageItems.filter(
+        (l) =>
+          l.img_x_pt != null &&
+          l.img_y_top_pt != null &&
+          l.img_x_pt < midX === isLeft &&
+          (l.img_y_top_pt ?? 0) < (item.img_y_top_pt ?? 0),
+      )
+      const next = below.sort((a, b) => (b.img_y_top_pt ?? 0) - (a.img_y_top_pt ?? 0))[0]
+      const gapBottomPt = next?.img_y_top_pt ?? footerTopPt
+      const questionLeftPt = item.img_x_pt
+      const colRightPt = item.x_pt + item.w_pt
+      const padBottomPt = SCRATCH_PAD_BOTTOM_PT
+      const grid = resolveScratchGridRectPt({
+        xPt: questionLeftPt,
+        widthPt: Math.max(0, colRightPt - questionLeftPt),
+        questionBottomPt: currBottomPt,
+        gapBottomPt,
+        padBottomPt,
+      })
+      if (grid) drawScratchGridOnPdfPage(page, grid)
     }
   }
 }
@@ -656,7 +749,7 @@ export async function exportPdfFromPayload(
   void (QUALITY_ZOOM[String(payload.quality ?? 'high')] ?? 6)
 
   const exportId = String(payload.exportId ?? `exp_${Date.now()}`)
-  console.error('[PDF_EXPORT:RENDERER]', {
+  console.debug('[PDF_EXPORT:RENDERER]', {
     exportId,
     file: 'electron/services/pdf-export-renderer.ts',
     fn: 'exportPdfFromPayload',
@@ -680,7 +773,7 @@ export async function exportPdfFromPayload(
   let usedLockedLayoutPositions = false
   if (Array.isArray(locked) && locked.length > 0) {
     usedLockedLayoutPositions = true
-    console.error('[PDF_EXPORT:RENDERER] locked_layout positions', {
+    console.debug('[PDF_EXPORT:RENDERER] locked_layout positions', {
       exportId,
       lockedRows: locked.length,
       note: 'draw W/H still from calculateQuestionDrawMetrics',
@@ -733,7 +826,7 @@ export async function exportPdfFromPayload(
       } satisfies LayoutRow
     })
   } else {
-    console.error('[PDF_EXPORT:RENDERER] computeLayoutFromPayload', { exportId })
+    console.debug('[PDF_EXPORT:RENDERER] computeLayoutFromPayload', { exportId })
     ;({ layout } = computeLayoutFromPayload(payload))
   }
 
@@ -859,7 +952,7 @@ export async function exportPdfFromPayload(
     })),
     rendererFile: 'electron/services/pdf-export-renderer.ts#exportPdfFromPayload',
   }
-  console.error('[PDF_EXPORT:RENDERER] done', {
+  console.debug('[PDF_EXPORT:RENDERER] done', {
     exportId,
     equalizeRunId,
     stage: 'PDF_EXPORT',

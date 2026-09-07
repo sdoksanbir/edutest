@@ -3,6 +3,7 @@ import TestBanner from '../test-banner/TestBanner'
 import ExamBanner from '../exam-banner/ExamBanner'
 import LeafTestCorporateBanner from '../leaf-test-banner/LeafTestCorporateBanner'
 import LgsVerbalBanner from '../lgs-verbal-banner/LgsVerbalBanner'
+import LgsOfficialBanner from '../lgs-official-banner/LgsOfficialBanner'
 import { normalizeBannerTemplateId } from '../test-banner/testBanner.types'
 import { normalizeExamBannerTemplateId } from '../exam-banner/types'
 import type { HeaderConfig } from '../../utils/corporateHeaderLayout'
@@ -12,14 +13,17 @@ import { testBannerDataFromHeaderConfig } from '../../utils/testBannerFromHeader
 import { examBannerDataFromHeaderConfig } from '../../utils/examBannerFromHeaderConfig'
 import { leafTestBannerDataFromHeaderConfig } from '../../utils/leafTestBannerFromHeaderConfig'
 import { lgsVerbalBannerDataFromHeaderConfig } from '../../utils/lgsVerbalBannerFromHeaderConfig'
+import { lgsOfficialBannerDataFromSources } from '../../utils/lgsOfficialBannerFromHeaderConfig'
 import {
   testBannerBodyHeightPt,
   testBannerContentWidthPt,
   leafCorporateBannerHeaderBlockHeightPt,
   lgsVerbalBannerHeaderBlockHeightPt,
+  lgsOfficialBannerBodyHeightPt,
   mmToPdfPt,
 } from '../../utils/testBannerLayout'
 import { resolveThemeAccentHex, resolveThemePrimaryHex } from '../../utils/pageStructureHelpers'
+import { useEditorStore } from '../../store/editorStore'
 
 type Props = {
   pageNum: number
@@ -51,6 +55,10 @@ export default function PdfPreviewBannerOverlay({
   marginRightMm,
   scale,
 }: Props) {
+  const testName = useEditorStore((s) => s.testName)
+  const questions = useEditorStore((s) => s.questions)
+  const descriptionTexts = useEditorStore((s) => s.descriptionTexts)
+  const includeDescription = useEditorStore((s) => s.options.includeDescription)
   const testBannerData = useMemo(
     () => testBannerDataFromHeaderConfig(headerConfig),
     [headerConfig],
@@ -67,17 +75,30 @@ export default function PdfPreviewBannerOverlay({
     () => lgsVerbalBannerDataFromHeaderConfig(headerConfig),
     [headerConfig],
   )
+  const lgsOfficialData = useMemo(
+    () =>
+      lgsOfficialBannerDataFromSources({
+        headerConfig,
+        questionCount: questions.length || 20,
+        instructionTexts: includeDescription ? descriptionTexts : undefined,
+        testName,
+      }),
+    [headerConfig, questions.length, includeDescription, descriptionTexts, testName],
+  )
 
   if (pageNum !== 1 || !shouldShowTestBannerOverlay(headerStyleId, headerConfig)) return null
 
   const contentWpt = testBannerContentWidthPt(pageWpt, marginLeftMm, marginRightMm)
   const isLeafRef = headerConfig.examBannerTemplate === 'leaf-ref-corporate'
   const isLgsRef = headerConfig.examBannerTemplate === 'lgs-verbal-ref'
+  const isLgsOfficial = headerConfig.examBannerTemplate === 'lgs-official-ref'
   const bannerHpt = isLeafRef
     ? leafCorporateBannerHeaderBlockHeightPt()
     : isLgsRef
       ? lgsVerbalBannerHeaderBlockHeightPt(contentWpt)
-      : testBannerBodyHeightPt(contentWpt)
+      : isLgsOfficial
+        ? lgsOfficialBannerBodyHeightPt(contentWpt)
+        : testBannerBodyHeightPt(contentWpt)
   const mlPt = mmToPdfPt(marginLeftMm)
   const mtPt = mmToPdfPt(marginTopMm)
 
@@ -101,6 +122,12 @@ export default function PdfPreviewBannerOverlay({
           data={leafBannerData}
           className="pdf-preview-banner-overlay__banner"
           ariaLabel="Yaprak test başlık bannerı"
+        />
+      ) : isLgsOfficial ? (
+        <LgsOfficialBanner
+          data={lgsOfficialData}
+          className="pdf-preview-banner-overlay__banner"
+          ariaLabel="LGS resmi başlık bannerı"
         />
       ) : isLgsRef ? (
         <LgsVerbalBanner

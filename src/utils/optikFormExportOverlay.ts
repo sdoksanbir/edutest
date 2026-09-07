@@ -205,7 +205,7 @@ export async function buildOptikFormPdfOverlays(
   };
 
   if (input.placement === "separate_page") {
-    return renderSeparatePage(mq + (input.answerKeyPageCount ?? 0) + 1);
+    return renderSeparatePage(mq + 1);
   }
 
   if (input.placement !== "end_of_test") return [];
@@ -254,7 +254,7 @@ export async function buildOptikFormPdfOverlays(
 
   if (!fits) {
     // Sığmıyor — sorunun altına binmesin; ayrı sayfaya taşı
-    return renderSeparatePage(mq + (input.answerKeyPageCount ?? 0) + 1);
+    return renderSeparatePage(mq + 1);
   }
 
   const placed = resolveCompactOptikFormPlacement({

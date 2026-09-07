@@ -62,3 +62,32 @@ export function syncDisplayScaleProduct(
 ): number {
   return (finitePositive(manualScale) ?? 1) * (finitePositive(normalizationScale) ?? 1)
 }
+
+/** Referans/crop değişince eski otomatik eşitleme sonucunu kullanma. */
+export function resetFontNormalizationFields(q: QuestionScaleFields): {
+  manualScale: number
+  normalizationScale: 1
+  display_scale: number
+  detected_font_px: null
+  ocr_font_matched: false
+  font_line_px: undefined
+  font_equalize_diag: undefined
+} {
+  const manualScale = resolveManualScale(q)
+  return {
+    manualScale,
+    normalizationScale: 1,
+    display_scale: manualScale,
+    detected_font_px: null,
+    ocr_font_matched: false,
+    font_line_px: undefined,
+    font_equalize_diag: undefined,
+  }
+}
+
+export function nextFontMeasurementRevision(q: {
+  fontMeasurementRevision?: number | null
+}): number {
+  const current = Number(q.fontMeasurementRevision)
+  return Number.isFinite(current) && current >= 0 ? Math.floor(current) + 1 : 1
+}

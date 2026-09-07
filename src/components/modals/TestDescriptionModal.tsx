@@ -33,6 +33,8 @@ type Props = {
   /** 2+ sütunda kutuda dikey ayırıcı çizgiler */
   initialColumnDividers?: boolean;
   themeColor: string;
+  /** LGS vb. — yalnızca tek sütun editör; sütun sekmeleri / çizgi / etiket yok */
+  singleColumnOnly?: boolean;
 };
 
 export default function TestDescriptionModal({
@@ -43,8 +45,11 @@ export default function TestDescriptionModal({
   initialTexts,
   initialColumnDividers = false,
   themeColor,
+  singleColumnOnly = false,
 }: Props) {
-  const [columnCount, setColumnCount] = useState<ColumnCount>(initialColumnCount);
+  const [columnCount, setColumnCount] = useState<ColumnCount>(
+    singleColumnOnly ? 1 : initialColumnCount,
+  );
   const [texts, setTexts] = useState<string[]>(
     initialTexts.length >= 1 ? initialTexts : [""]
   );
@@ -52,21 +57,22 @@ export default function TestDescriptionModal({
 
   useEffect(() => {
     if (open) {
-      setColumnCount(initialColumnCount);
-      setColumnDividers(initialColumnDividers);
+      const cols: ColumnCount = singleColumnOnly ? 1 : initialColumnCount;
+      setColumnCount(cols);
+      setColumnDividers(singleColumnOnly ? false : initialColumnDividers);
       const t =
-        initialTexts.length >= initialColumnCount
-          ? initialTexts.slice(0, initialColumnCount)
+        initialTexts.length >= cols
+          ? initialTexts.slice(0, cols)
           : [
               ...initialTexts,
-              ...Array(initialColumnCount - initialTexts.length).fill(""),
+              ...Array(cols - initialTexts.length).fill(""),
             ];
       setTexts(t);
     }
-  }, [open, initialColumnCount, initialTexts, initialColumnDividers]);
+  }, [open, initialColumnCount, initialTexts, initialColumnDividers, singleColumnOnly]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || singleColumnOnly) return;
     setTexts((prev) => {
       if (columnCount > prev.length) {
         return [...prev, ...Array(columnCount - prev.length).fill("")];
@@ -74,7 +80,7 @@ export default function TestDescriptionModal({
       if (columnCount < prev.length) return prev.slice(0, columnCount);
       return prev;
     });
-  }, [columnCount, open]);
+  }, [columnCount, open, singleColumnOnly]);
 
   useEffect(() => {
     if (!open) return;
@@ -91,6 +97,11 @@ export default function TestDescriptionModal({
   if (!open) return null;
 
   const handleApply = () => {
+    if (singleColumnOnly) {
+      onConfirm(1, [texts[0] ?? ""], false);
+      onClose();
+      return;
+    }
     const dividers = columnCount >= 2 && columnDividers;
     onConfirm(columnCount, texts.slice(0, columnCount), dividers);
     onClose();
@@ -103,6 +114,8 @@ export default function TestDescriptionModal({
       return next;
     });
   };
+
+  const editorCount = singleColumnOnly ? 1 : columnCount;
 
   return createPortal(
     <div
@@ -117,61 +130,69 @@ export default function TestDescriptionModal({
           Yönerge ekle
         </h3>
 
-        <div className="mb-4">
-          <label className="mb-2 block text-sm font-medium text-slate-700">
-            Sütun sayısı
-          </label>
-          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-4 sm:gap-y-2">
-            <div className="flex flex-wrap gap-2">
-              {([1, 2, 3] as const).map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setColumnCount(n)}
-                  className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
-                    columnCount === n
-                      ? "border-transparent text-white"
-                      : "border-slate-300 bg-slate-50 text-slate-600 hover:bg-slate-100"
-                  }`}
-                  style={
-                    columnCount === n
-                      ? { backgroundColor: themeColor }
-                      : undefined
-                  }
-                >
-                  {n} Sütun
-                </button>
-              ))}
-            </div>
-            <label
-              className={`flex shrink-0 cursor-pointer items-center gap-2 text-sm ${
-                columnCount < 2 ? "text-slate-400" : "text-slate-700"
-              }`}
-            >
-              <input
-                type="checkbox"
-                checked={columnCount >= 2 && columnDividers}
-                disabled={columnCount < 2}
-                onChange={(e) => setColumnDividers(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-400"
-              />
-              Sütunlar arasında çizgi ekle
+        {!singleColumnOnly ? (
+          <div className="mb-4">
+            <label className="mb-2 block text-sm font-medium text-slate-700">
+              Sütun sayısı
             </label>
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-4 sm:gap-y-2">
+              <div className="flex flex-wrap gap-2">
+                {([1, 2, 3] as const).map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setColumnCount(n)}
+                    className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                      columnCount === n
+                        ? "border-transparent text-white"
+                        : "border-slate-300 bg-slate-50 text-slate-600 hover:bg-slate-100"
+                    }`}
+                    style={
+                      columnCount === n
+                        ? { backgroundColor: themeColor }
+                        : undefined
+                    }
+                  >
+                    {n} Sütun
+                  </button>
+                ))}
+              </div>
+              <label
+                className={`flex shrink-0 cursor-pointer items-center gap-2 text-sm ${
+                  columnCount < 2 ? "text-slate-400" : "text-slate-700"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={columnCount >= 2 && columnDividers}
+                  disabled={columnCount < 2}
+                  onChange={(e) => setColumnDividers(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-400"
+                />
+                Sütunlar arasında çizgi ekle
+              </label>
+            </div>
           </div>
-        </div>
+        ) : null}
 
         <div className="mb-4 flex max-h-[50vh] flex-col gap-3 overflow-y-auto">
-          {Array.from({ length: columnCount }, (_, i) => (
+          {Array.from({ length: editorCount }, (_, i) => (
             <div key={i} className="flex flex-col gap-1">
-              <label className="text-sm font-medium text-slate-600">
-                Sütun {i + 1}
-              </label>
+              {!singleColumnOnly ? (
+                <label className="text-sm font-medium text-slate-600">
+                  Sütun {i + 1}
+                </label>
+              ) : null}
               <div className="[&_.ql-container]:min-h-[120px] [&_.ql-editor]:min-h-[120px]">
                 <ReactQuill
                   theme="snow"
                   value={texts[i] ?? ""}
                   onChange={(v) => setTextAt(i, v)}
-                  placeholder={`Sütun ${i + 1} yönerge metni...`}
+                  placeholder={
+                    singleColumnOnly
+                      ? "Yönerge metni..."
+                      : `Sütun ${i + 1} yönerge metni...`
+                  }
                   modules={quillModules}
                   formats={quillFormats}
                   className="rounded-lg [&_.ql-container]:rounded-b-lg [&_.ql-editor]:text-slate-800 [&_.ql-toolbar]:rounded-t-lg"

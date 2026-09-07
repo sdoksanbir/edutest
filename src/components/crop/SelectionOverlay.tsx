@@ -4,7 +4,9 @@ import type { CropBox } from "../../types";
 
 import type { AnswerOption } from "../../types";
 
-import { normalizedRectToDisplayRect } from "../../utils/cropCoordUtils";
+import {
+  normalizedRectToDisplayRect,
+} from "../../utils/cropCoordUtils";
 
 import { normalizeContentType } from "../../utils/questionNumbering";
 
@@ -167,13 +169,11 @@ export default function SelectionOverlay({
             : null;
 
         const isEditing = editingSelectionId === sel.id;
-
         const isExplanation = normalizeContentType(sel.content_type) === "explanation";
 
         /** Eski dar=0.88 kırpmalar; yeni seçimler her zaman scale=1 → genis. */
         const activeLayout: CropLayoutMode =
           sel.display_scale != null && sel.display_scale < 0.95 ? "dar" : "genis";
-
         return (
 
           <div
@@ -197,8 +197,6 @@ export default function SelectionOverlay({
           >
 
             {!isEditing && <div className="tq-crop-selection-box absolute inset-0" />}
-
-
 
             {!isEditing && (
 

@@ -10,9 +10,19 @@ import {
   ColorSwatchPicker,
 } from "./ColorSwatchPicker";
 import TrialBannerMetaFields from "./TrialBannerMetaFields";
+import {
+  DEFAULT_TRIAL_YONERGE_TEXT,
+  defaultLgsYonergeHtml,
+} from "../../utils/trialYonergeDefaults";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import CollapsibleCard, { CollapseGroupProvider } from "./CollapsibleCard";
 import PdfPreviewPanelHeader from "./PdfPreviewPanelHeader";
+import {
+  defaultLgsPageDecor,
+  parseLgsPageDecor,
+  resolvePageDecorForBanner,
+  type LgsPageDecor,
+} from "../../utils/lgsPageDecor";
 import { useEditorStore, type WatermarkLayout } from "../../store/editorStore";
 import type { HeaderConfig } from "../../utils/corporateHeaderLayout";
 import type { HeaderLeftMode } from "../../utils/headerLeftColumn";
@@ -28,6 +38,7 @@ import {
 import {
   PRESET_HEADER_LOGOS,
   resolveHeaderLogoUrl,
+  resolveLgsOfficialLogoUrl,
   type PresetHeaderLogoId,
 } from "../../utils/presetHeaderLogos";
 import { isRecolorablePresetLogo } from "../../utils/presetLogoRecolor";
@@ -231,6 +242,16 @@ const TRIAL_HEADER_TEMPLATE_SLOTS: (
 )[] = [
   { kind: "osym", styleId: "style_2", label: "ÖSYM" },
   { kind: "lgs", label: "LGS" },
+];
+
+/** Fasikül — Standart + Minimal (test şablonlarıyla aynı yapı, ayarlar bağımsız) */
+const FASIKUL_HEADER_TEMPLATE_SLOTS: {
+  kind: "standart" | "minimal";
+  styleId: "style_1" | "style_2";
+  label: string;
+}[] = [
+  { kind: "standart", styleId: "style_1", label: "Standart" },
+  { kind: "minimal", styleId: "style_2", label: "Minimal" },
 ];
 
 const BANNER_EXTRA_FIELDS: {
@@ -973,7 +994,7 @@ function PublicationLineRow({
 export default function ThemeCustomizerSidebar({
   variant = "test",
 }: {
-  variant?: "test" | "written" | "trial";
+  variant?: "test" | "written" | "trial" | "fasikul";
 }) {
   const { tokens: ui, mode } = usePdfPreviewUi();
   const sectionBorder = mode === "light" ? "border-slate-200" : "border-[#30363d]";
@@ -986,9 +1007,14 @@ export default function ThemeCustomizerSidebar({
   const setThemeColor = useEditorStore((s) => s.setThemeColor);
   const setTrialTestNameBgColor = useEditorStore((s) => s.setTrialTestNameBgColor);
   const setAllowSlightOverflow = useEditorStore((s) => s.setAllowSlightOverflow);
+  const toggleOption = useEditorStore((s) => s.toggleOption);
+  const setDescriptionColumns = useEditorStore((s) => s.setDescriptionColumns);
+  const options = useEditorStore((s) => s.options);
+  const questions = useEditorStore((s) => s.questions);
   const [badgePanel, setBadgePanel] = useState<BannerRightSlot>("examType");
 
   const isTrial = variant === "trial";
+  const isFasikul = variant === "fasikul";
   const activeStyle = normalizeHeaderStyleId(headerStyleId);
   const useExamBanner = headerConfig.useExamBanner === true;
   const useYaprakBanner = headerConfig.useYaprakBanner === true && !useExamBanner;
@@ -996,6 +1022,8 @@ export default function ThemeCustomizerSidebar({
     useExamBanner && headerConfig.examBannerTemplate === "leaf-ref-corporate";
   const useLgsRefBanner =
     useExamBanner && headerConfig.examBannerTemplate === "lgs-verbal-ref";
+  const useLgsOfficialBanner =
+    useExamBanner && headerConfig.examBannerTemplate === "lgs-official-ref";
   const activeBannerTemplate = normalizeBannerTemplateId(headerConfig.bannerTemplate);
   const activeExamTemplate = normalizeExamBannerTemplateId(headerConfig.examBannerTemplate);
   const primaryColor = headerConfig.primaryColor || themeColor;
@@ -1046,10 +1074,22 @@ export default function ThemeCustomizerSidebar({
     });
   };
 
+  const applyTrialOsymYonerge = () => {
+    if (!options.includeDescription) toggleOption("includeDescription");
+    setDescriptionColumns(1, [DEFAULT_TRIAL_YONERGE_TEXT], false);
+  };
+
+  const applyTrialLgsYonerge = () => {
+    if (!options.includeDescription) toggleOption("includeDescription");
+    setDescriptionColumns(1, [defaultLgsYonergeHtml(questions.length || 20)], false);
+  };
+
   // Deneme: ÖSYM varsayılanı — yalnızca deneme paneli açıkken bir kez
   useEffect(() => {
     if (!isTrial) return;
-    if (useYaprakBanner || useExamBanner || activeStyle !== "style_2") {
+    // LGS / yaprak vb. seçiliyse ÖSYM’ye zorlama
+    if (useYaprakBanner || useExamBanner) return;
+    if (activeStyle !== "style_2") {
       applyClassicMinimalConfig(false);
       return;
     }
@@ -1058,6 +1098,7 @@ export default function ThemeCustomizerSidebar({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- yalnızca deneme açılışında şablonu sabitle
   }, [isTrial]);
+
   const logoSizePct = headerConfig.logoSizePct ?? 100;
   const showHeaderLeft = headerConfig.showHeaderLeft !== false;
   const headerLeftModeRaw = String(headerConfig.headerLeftMode ?? "logo");
@@ -1133,25 +1174,25 @@ export default function ThemeCustomizerSidebar({
   const effectiveLogoPrimary = logoUseThemeColors ? primaryColor : logoColorPrimary;
   const effectiveLogoSecondary = logoUseThemeColors ? accentColor : logoColorSecondary;
 
-  const showWatermark = useEditorStore((s) => s.showWatermark);
-  const showColumnDivider = useEditorStore((s) => s.showColumnDivider);
-  const showColumnDividerText = useEditorStore((s) => s.showColumnDividerText);
-  const columnDividerText = useEditorStore((s) => s.columnDividerText);
-  const columnDividerWidthPt = useEditorStore((s) => s.columnDividerWidthPt);
-  const centerLineBold = useEditorStore((s) => s.centerLineBold);
-  const centerLineItalic = useEditorStore((s) => s.centerLineItalic);
+  const storeShowWatermark = useEditorStore((s) => s.showWatermark);
+  const storeShowColumnDivider = useEditorStore((s) => s.showColumnDivider);
+  const storeShowColumnDividerText = useEditorStore((s) => s.showColumnDividerText);
+  const storeColumnDividerText = useEditorStore((s) => s.columnDividerText);
+  const storeColumnDividerWidthPt = useEditorStore((s) => s.columnDividerWidthPt);
+  const storeCenterLineBold = useEditorStore((s) => s.centerLineBold);
+  const storeCenterLineItalic = useEditorStore((s) => s.centerLineItalic);
   const setShowColumnDivider = useEditorStore((s) => s.setShowColumnDivider);
   const setColumnDividerText = useEditorStore((s) => s.setColumnDividerText);
   const setShowColumnDividerText = useEditorStore((s) => s.setShowColumnDividerText);
   const setColumnDividerWidthPt = useEditorStore((s) => s.setColumnDividerWidthPt);
   const setCenterLineBold = useEditorStore((s) => s.setCenterLineBold);
   const setCenterLineItalic = useEditorStore((s) => s.setCenterLineItalic);
-  const watermarkText = useEditorStore((s) => s.watermarkText);
-  const watermarkLayout = useEditorStore((s) => s.watermarkLayout);
-  const watermarkAngleDeg = useEditorStore((s) => s.watermarkAngleDeg);
-  const watermarkOpacity = useEditorStore((s) => s.watermarkOpacity);
-  const watermarkSize = useEditorStore((s) => s.watermarkSize);
-  const watermarkLogoUrl = useEditorStore((s) => s.watermarkLogoUrl);
+  const storeWatermarkText = useEditorStore((s) => s.watermarkText);
+  const storeWatermarkLayout = useEditorStore((s) => s.watermarkLayout);
+  const storeWatermarkAngleDeg = useEditorStore((s) => s.watermarkAngleDeg);
+  const storeWatermarkOpacity = useEditorStore((s) => s.watermarkOpacity);
+  const storeWatermarkSize = useEditorStore((s) => s.watermarkSize);
+  const storeWatermarkLogoUrl = useEditorStore((s) => s.watermarkLogoUrl);
   const setShowWatermark = useEditorStore((s) => s.setShowWatermark);
   const setWatermarkText = useEditorStore((s) => s.setWatermarkText);
   const setWatermarkLayout = useEditorStore((s) => s.setWatermarkLayout);
@@ -1159,13 +1200,13 @@ export default function ThemeCustomizerSidebar({
   const setWatermarkOpacity = useEditorStore((s) => s.setWatermarkOpacity);
   const setWatermarkSize = useEditorStore((s) => s.setWatermarkSize);
   const setWatermarkLogoUrl = useEditorStore((s) => s.setWatermarkLogoUrl);
-  const showPageFrame = useEditorStore((s) => s.showPageFrame);
-  const pageFrameColorMode = useEditorStore((s) => s.pageFrameColorMode);
-  const pageFrameColor = useEditorStore((s) => s.pageFrameColor);
-  const pageFrameWidthPt = useEditorStore((s) => s.pageFrameWidthPt);
-  const pageFrameInnerGapMm = useEditorStore((s) => s.pageFrameInnerGapMm);
-  const pageFrameCornerRadiusMm = useEditorStore((s) => s.pageFrameCornerRadiusMm);
-  const pageFrameLineStyle = useEditorStore((s) => s.pageFrameLineStyle);
+  const storeShowPageFrame = useEditorStore((s) => s.showPageFrame);
+  const storePageFrameColorMode = useEditorStore((s) => s.pageFrameColorMode);
+  const storePageFrameColor = useEditorStore((s) => s.pageFrameColor);
+  const storePageFrameWidthPt = useEditorStore((s) => s.pageFrameWidthPt);
+  const storePageFrameInnerGapMm = useEditorStore((s) => s.pageFrameInnerGapMm);
+  const storePageFrameCornerRadiusMm = useEditorStore((s) => s.pageFrameCornerRadiusMm);
+  const storePageFrameLineStyle = useEditorStore((s) => s.pageFrameLineStyle);
   const setShowPageFrame = useEditorStore((s) => s.setShowPageFrame);
   const setPageFrameColorMode = useEditorStore((s) => s.setPageFrameColorMode);
   const setPageFrameColor = useEditorStore((s) => s.setPageFrameColor);
@@ -1174,8 +1215,92 @@ export default function ThemeCustomizerSidebar({
   const setPageFrameCornerRadiusMm = useEditorStore((s) => s.setPageFrameCornerRadiusMm);
   const setPageFrameLineStyle = useEditorStore((s) => s.setPageFrameLineStyle);
 
+  const pageDecor = resolvePageDecorForBanner(
+    useLgsOfficialBanner,
+    headerConfig.lgsPageDecor,
+    {
+      showColumnDivider: storeShowColumnDivider,
+      columnDividerText: storeColumnDividerText,
+      columnDividerWidthPt: storeColumnDividerWidthPt,
+      showColumnDividerText: storeShowColumnDividerText,
+      centerLineBold: storeCenterLineBold,
+      centerLineItalic: storeCenterLineItalic,
+      showWatermark: storeShowWatermark,
+      watermarkText: storeWatermarkText,
+      watermarkLayout: storeWatermarkLayout,
+      watermarkAngleDeg: storeWatermarkAngleDeg,
+      watermarkOpacity: storeWatermarkOpacity,
+      watermarkSize: storeWatermarkSize,
+      watermarkLogoUrl: storeWatermarkLogoUrl,
+      showPageFrame: storeShowPageFrame,
+      pageFrameColorMode: storePageFrameColorMode,
+      pageFrameColor: storePageFrameColor,
+      pageFrameWidthPt: storePageFrameWidthPt,
+      pageFrameInnerGapMm: storePageFrameInnerGapMm,
+      pageFrameCornerRadiusMm: storePageFrameCornerRadiusMm,
+      pageFrameLineStyle: storePageFrameLineStyle,
+    },
+  );
+
+  const showWatermark = pageDecor.showWatermark;
+  const showColumnDivider = pageDecor.showColumnDivider;
+  const showColumnDividerText = pageDecor.showColumnDividerText;
+  const columnDividerText = pageDecor.columnDividerText;
+  const columnDividerWidthPt = pageDecor.columnDividerWidthPt;
+  const centerLineBold = pageDecor.centerLineBold;
+  const centerLineItalic = pageDecor.centerLineItalic;
+  const watermarkText = pageDecor.watermarkText;
+  const watermarkLayout = pageDecor.watermarkLayout;
+  const watermarkAngleDeg = pageDecor.watermarkAngleDeg;
+  const watermarkOpacity = pageDecor.watermarkOpacity;
+  const watermarkSize = pageDecor.watermarkSize;
+  const watermarkLogoUrl = pageDecor.watermarkLogoUrl;
+  const showPageFrame = pageDecor.showPageFrame;
+  const pageFrameColorMode = pageDecor.pageFrameColorMode;
+  const pageFrameColor = pageDecor.pageFrameColor;
+  const pageFrameWidthPt = pageDecor.pageFrameWidthPt;
+  const pageFrameInnerGapMm = pageDecor.pageFrameInnerGapMm;
+  const pageFrameCornerRadiusMm = pageDecor.pageFrameCornerRadiusMm;
+  const pageFrameLineStyle = pageDecor.pageFrameLineStyle;
+
+  const patchPageDecor = (partial: Partial<LgsPageDecor>) => {
+    if (useLgsOfficialBanner) {
+      updateHeaderConfig({
+        lgsPageDecor: {
+          ...parseLgsPageDecor(headerConfig.lgsPageDecor ?? defaultLgsPageDecor()),
+          ...partial,
+        },
+      });
+      return;
+    }
+    if (partial.showColumnDivider !== undefined) setShowColumnDivider(partial.showColumnDivider);
+    if (partial.columnDividerText !== undefined) setColumnDividerText(partial.columnDividerText);
+    if (partial.showColumnDividerText !== undefined)
+      setShowColumnDividerText(partial.showColumnDividerText);
+    if (partial.columnDividerWidthPt !== undefined)
+      setColumnDividerWidthPt(partial.columnDividerWidthPt);
+    if (partial.centerLineBold !== undefined) setCenterLineBold(partial.centerLineBold);
+    if (partial.centerLineItalic !== undefined) setCenterLineItalic(partial.centerLineItalic);
+    if (partial.showWatermark !== undefined) setShowWatermark(partial.showWatermark);
+    if (partial.watermarkText !== undefined) setWatermarkText(partial.watermarkText);
+    if (partial.watermarkLayout !== undefined) setWatermarkLayout(partial.watermarkLayout);
+    if (partial.watermarkAngleDeg !== undefined) setWatermarkAngleDeg(partial.watermarkAngleDeg);
+    if (partial.watermarkOpacity !== undefined) setWatermarkOpacity(partial.watermarkOpacity);
+    if (partial.watermarkSize !== undefined) setWatermarkSize(partial.watermarkSize);
+    if (partial.watermarkLogoUrl !== undefined) setWatermarkLogoUrl(partial.watermarkLogoUrl);
+    if (partial.showPageFrame !== undefined) setShowPageFrame(partial.showPageFrame);
+    if (partial.pageFrameColorMode !== undefined) setPageFrameColorMode(partial.pageFrameColorMode);
+    if (partial.pageFrameColor !== undefined) setPageFrameColor(partial.pageFrameColor);
+    if (partial.pageFrameWidthPt !== undefined) setPageFrameWidthPt(partial.pageFrameWidthPt);
+    if (partial.pageFrameInnerGapMm !== undefined)
+      setPageFrameInnerGapMm(partial.pageFrameInnerGapMm);
+    if (partial.pageFrameCornerRadiusMm !== undefined)
+      setPageFrameCornerRadiusMm(partial.pageFrameCornerRadiusMm);
+    if (partial.pageFrameLineStyle !== undefined) setPageFrameLineStyle(partial.pageFrameLineStyle);
+  };
+
   const handleColumnDividerTextChange = (text: string) => {
-    setColumnDividerText(text);
+    patchPageDecor({ columnDividerText: text });
   };
 
   const columnDividerTextActive = showColumnDivider && showColumnDividerText;
@@ -1183,7 +1308,7 @@ export default function ThemeCustomizerSidebar({
   const handleWatermarkLogoUpload = (file: File | undefined) => {
     if (!file || !/^image\/(png|jpe?g)$/i.test(file.type)) return;
     const reader = new FileReader();
-    reader.onload = () => setWatermarkLogoUrl(String(reader.result ?? ""));
+    reader.onload = () => patchPageDecor({ watermarkLogoUrl: String(reader.result ?? "") });
     reader.readAsDataURL(file);
   };
 
@@ -1197,6 +1322,29 @@ export default function ThemeCustomizerSidebar({
         updateHeaderConfig({ logoUrl: transparent, presetLogoId: "custom" });
       } catch {
         updateHeaderConfig({ logoUrl: raw, presetLogoId: "custom" });
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleLgsLogoUpload = (file: File | undefined) => {
+    if (!file || !/^image\/(png|jpe?g|webp)$/i.test(file.type)) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const raw = String(reader.result ?? "");
+      try {
+        const transparent = await removeWhiteBackgroundFromDataUrl(raw);
+        updateHeaderConfig({
+          lgsLogoUrl: transparent,
+          lgsPresetLogoId: "custom",
+          lgsShowLogo: true,
+        });
+      } catch {
+        updateHeaderConfig({
+          lgsLogoUrl: raw,
+          lgsPresetLogoId: "custom",
+          lgsShowLogo: true,
+        });
       }
     };
     reader.readAsDataURL(file);
@@ -1316,51 +1464,119 @@ export default function ThemeCustomizerSidebar({
         >
           <div className="pdf-preview-collapsible-section">
             <SectionHeading>Başlık şablonu</SectionHeading>
-            {isTrial ? (
+            {isFasikul ? (
               <div className="grid grid-cols-2 gap-1.5">
-                {TRIAL_HEADER_TEMPLATE_SLOTS.map((slot) => {
-                  const comingSoon = slot.kind === "lgs";
-                  const selected = !comingSoon && slot.kind === "osym" && isOsymTrialTemplate;
+                {FASIKUL_HEADER_TEMPLATE_SLOTS.map((slot) => {
+                  const selected =
+                    !useYaprakBanner && !useExamBanner && activeStyle === slot.styleId;
                   return (
                     <button
                       key={slot.kind}
                       type="button"
-                      disabled={comingSoon}
-                      title={comingSoon ? "Yakında" : undefined}
                       onClick={() => {
-                        if (comingSoon) return;
-                        applyClassicMinimalConfig(false);
+                        if (slot.kind === "standart") {
+                          setAllowSlightOverflow(false);
+                          applyHeaderStyleAndConfig("style_1", {
+                            useYaprakBanner: false,
+                            useExamBanner: false,
+                          });
+                          return;
+                        }
+                        applyClassicMinimalConfig(true);
                       }}
-                      className={`group relative pdf-preview-header-theme-card${selected ? " pdf-preview-header-theme-card--selected" : ""}${comingSoon ? " pdf-preview-header-theme-card--coming-soon cursor-not-allowed opacity-55" : ""}`}
+                      className={`group relative pdf-preview-header-theme-card${selected ? " pdf-preview-header-theme-card--selected" : ""}`}
                       aria-pressed={selected}
-                      aria-label={
-                        comingSoon
-                          ? `${slot.label} — Yakında`
-                          : `${slot.label} başlık şablonu`
-                      }
-                      aria-disabled={comingSoon}
+                      aria-label={`${slot.label} başlık şablonu`}
                     >
                       <div className="pdf-preview-header-theme-card__preview-wrap pdf-preview-header-theme-card__preview-wrap--schematic">
                         <ThemeHeaderPreview
-                          styleId="style_2"
+                          styleId={slot.styleId}
                           selected={selected}
                           accentColor={accentColor}
                           variant="schematic"
-                          schematicPreset="exam-sheet"
                         />
                         {selected ? (
                           <span className="pdf-preview-header-theme-card__check" aria-hidden>
                             <Check className="pdf-preview-header-theme-card__check-icon" strokeWidth={3} />
                           </span>
                         ) : null}
-                        {comingSoon ? (
-                          <span
-                            className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center rounded-md bg-slate-900/55 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
-                            aria-hidden
-                          >
-                            <span className="rounded bg-white/95 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-800 shadow">
-                              Yakında
-                            </span>
+                      </div>
+                      <span className="pdf-preview-header-theme-card__label">{slot.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : isTrial ? (
+              <div className="grid grid-cols-2 gap-1.5">
+                {TRIAL_HEADER_TEMPLATE_SLOTS.map((slot) => {
+                  const selected =
+                    slot.kind === "osym"
+                      ? isOsymTrialTemplate
+                      : useLgsOfficialBanner;
+                  return (
+                    <button
+                      key={slot.kind}
+                      type="button"
+                      onClick={() => {
+                        if (slot.kind === "osym") {
+                          applyClassicMinimalConfig(false);
+                          applyTrialOsymYonerge();
+                          return;
+                        }
+                        setAllowSlightOverflow(false);
+                        applyHeaderStyleAndConfig("style_1", {
+                          useYaprakBanner: false,
+                          useExamBanner: true,
+                          examBannerTemplate: "lgs-official-ref",
+                          primaryColor: "#39B54A",
+                          accentColor: "#E4F0D4",
+                          academicYear: "2026 - 2027 EĞİTİM - ÖĞRETİM YILI",
+                          examBannerTitle:
+                            "SINAVLA ÖĞRENCİ ALACAK ORTAÖĞRETİM KURUMLARINA İLİŞKİN MERKEZİ SINAV",
+                          subject:
+                            headerConfig.subject?.trim() || "MATEMATİK",
+                          lgsYearFillColor: "",
+                          lgsYearTextColor: "#000000",
+                          lgsYearFontPt: 17,
+                          lgsYearPadXPt: 18,
+                          lgsYearPadYPt: 8,
+                          lgsTitleFontPt: 19,
+                          lgsTitleTextColor: "#000000",
+                          lgsTitleBold: true,
+                          lgsSubjectFontPt: 24,
+                          lgsSubjectTextColor: "#000000",
+                          lgsSubjectBold: true,
+                          lgsSubjectBandWidthPt: 480,
+                          lgsInstructionFontPt: 15,
+                          lgsBookletType: "",
+                          lgsShowLogo: true,
+                          lgsLogoSizePct: 100,
+                          lgsPresetLogoId: headerConfig.lgsPresetLogoId || "5",
+                          lgsLogoUrl:
+                            headerConfig.lgsLogoUrl?.trim() ||
+                            PRESET_HEADER_LOGOS.find(
+                              (p) => p.id === (headerConfig.lgsPresetLogoId || "5"),
+                            )?.url ||
+                            "",
+                        });
+                        setThemeColor("#39B54A");
+                        applyTrialLgsYonerge();
+                      }}
+                      className={`group relative pdf-preview-header-theme-card${selected ? " pdf-preview-header-theme-card--selected" : ""}`}
+                      aria-pressed={selected}
+                      aria-label={`${slot.label} başlık şablonu`}
+                    >
+                      <div className="pdf-preview-header-theme-card__preview-wrap pdf-preview-header-theme-card__preview-wrap--schematic">
+                        <ThemeHeaderPreview
+                          styleId={slot.kind === "osym" ? "style_2" : "style_1"}
+                          selected={selected}
+                          accentColor={slot.kind === "lgs" ? "#39B54A" : accentColor}
+                          variant="schematic"
+                          schematicPreset={slot.kind === "osym" ? "exam-sheet" : "default"}
+                        />
+                        {selected ? (
+                          <span className="pdf-preview-header-theme-card__check" aria-hidden>
+                            <Check className="pdf-preview-header-theme-card__check-icon" strokeWidth={3} />
                           </span>
                         ) : null}
                       </div>
@@ -1406,7 +1622,7 @@ export default function ThemeCustomizerSidebar({
                         }
                       }
                     }}
-                    className={`group relative pdf-preview-header-theme-card${selected ? " pdf-preview-header-theme-card--selected" : ""}${comingSoon ? " pdf-preview-header-theme-card--coming-soon cursor-not-allowed opacity-55" : ""}`}
+                    className={`group relative pdf-preview-header-theme-card${selected ? " pdf-preview-header-theme-card--selected" : ""}${comingSoon ? " pdf-preview-header-theme-card--coming-soon" : ""}`}
                     aria-pressed={selected}
                     aria-label={
                       comingSoon
@@ -1427,18 +1643,11 @@ export default function ThemeCustomizerSidebar({
                           <Check className="pdf-preview-header-theme-card__check-icon" strokeWidth={3} />
                         </span>
                       ) : null}
-                      {comingSoon ? (
-                        <span
-                          className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center rounded-md bg-slate-900/55 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
-                          aria-hidden
-                        >
-                          <span className="rounded bg-white/95 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-800 shadow">
-                            Yakında
-                          </span>
-                        </span>
-                      ) : null}
                     </div>
-                    <span className="pdf-preview-header-theme-card__label">{slot.label}</span>
+                    <span className="pdf-preview-header-theme-card__label">
+                      {slot.label}
+                      {comingSoon ? " · Yakında" : ""}
+                    </span>
                   </button>
                 );
               })}
@@ -1466,7 +1675,7 @@ export default function ThemeCustomizerSidebar({
                   ariaLabel="Seçili banner canlı önizleme"
                 />
               </div>
-            ) : useExamBanner ? (
+            ) : useLgsOfficialBanner ? null : useExamBanner ? (
               <div className="test-banner-live-preview test-banner-live-preview--compact mt-2">
                 <ExamBanner
                   template={activeExamTemplate}
@@ -1485,16 +1694,7 @@ export default function ThemeCustomizerSidebar({
                   ariaLabel="Seçili banner canlı önizleme"
                 />
               </div>
-            ) : (
-              <div className="test-banner-live-preview test-banner-live-preview--compact mt-2">
-                <ThemeHeaderPreview
-                  styleId={activeStyle}
-                  selected
-                  accentColor={accentColor}
-                  variant="detailed"
-                />
-              </div>
-            )}
+            ) : null}
             {isClassicBanner ? (
               <p className={`mt-2 ${ui.labelMuted}`}>
                 {isOsymTrialTemplate
@@ -1549,7 +1749,7 @@ export default function ThemeCustomizerSidebar({
             }
             title="Başlık Rozeti"
             className="mb-0 pdf-preview-collapsible"
-            contentClassName="space-y-2.5"
+            contentClassName="space-y-0 pdf-preview-badge-sections"
             defaultOpen={
               isTrial ||
               (isClassicBanner ? bannerRightMode !== "hidden" : true)
@@ -2033,6 +2233,7 @@ export default function ThemeCustomizerSidebar({
           </CollapsibleCard>
         )}
 
+        {!isTrial && (
         <CollapsibleCard
           title="Başlık bilgileri"
           className="mb-0 pdf-preview-collapsible"
@@ -2099,7 +2300,15 @@ export default function ThemeCustomizerSidebar({
                 (f) => f.key === "topic" || f.key === "subTopic",
               );
               const otherFields = fields.filter(
-                (f) => f.key !== "subject" && f.key !== "topic" && f.key !== "subTopic",
+                (f) =>
+                  f.key !== "subject" &&
+                  f.key !== "topic" &&
+                  f.key !== "subTopic" &&
+                  !(
+                    isTrial &&
+                    f.key === "brandName" &&
+                    (activeStyle === "style_1" || isClassicBanner)
+                  ),
               );
 
               return (
@@ -2231,8 +2440,120 @@ export default function ThemeCustomizerSidebar({
             </div>
           )}
         </CollapsibleCard>
+        )}
 
-        {!isTrial && (
+        {useLgsOfficialBanner ? (
+        <CollapsibleCard
+          title="LGS Logo ayarları"
+          className="mb-0 pdf-preview-collapsible"
+          contentClassName="pdf-preview-theme-groups space-y-2"
+          defaultOpen
+        >
+          <div className="mb-2.5 flex items-center justify-between gap-2">
+            <span className={ui.labelStrong}>Logo ekle</span>
+            <PinkToggle
+              checked={headerConfig.lgsShowLogo !== false}
+              onChange={(v) => updateHeaderConfig({ lgsShowLogo: v })}
+              label="Logo ekle"
+            />
+          </div>
+          {headerConfig.lgsShowLogo === false ? (
+            <p className="text-[9px] text-slate-500">LGS banner logosu kapalı</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-5 gap-1">
+                {PRESET_HEADER_LOGOS.map(({ id, label, url }) => {
+                  const selected =
+                    (headerConfig.lgsPresetLogoId || "5") !== "custom" &&
+                    (headerConfig.lgsPresetLogoId || "5") === id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      title={label}
+                      onClick={() =>
+                        updateHeaderConfig({
+                          lgsPresetLogoId: id as PresetHeaderLogoId,
+                          lgsLogoUrl: url,
+                        })
+                      }
+                      className={`flex aspect-square items-center justify-center overflow-hidden rounded border p-0.5 transition ${
+                        selected
+                          ? "border-blue-500 bg-white ring-1 ring-blue-500"
+                          : "border-slate-700 bg-white/95 hover:border-slate-500"
+                      }`}
+                    >
+                      <ThemedPresetLogoImg
+                        url={url}
+                        presetId={id}
+                        primaryColor={primaryColor}
+                        accentColor={accentColor}
+                        alt={label}
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="flex h-12 min-w-0 flex-1 items-center justify-center overflow-hidden rounded border border-dashed border-slate-600 bg-white/95 px-2">
+                  {resolveLgsOfficialLogoUrl(headerConfig) ? (
+                    <img
+                      src={resolveLgsOfficialLogoUrl(headerConfig)}
+                      alt="LGS logosu"
+                      className="max-h-10 max-w-full object-contain"
+                    />
+                  ) : (
+                    <span className="truncate text-[9px] text-slate-500">Logo yok</span>
+                  )}
+                </div>
+                <input
+                  ref={headerLogoInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp"
+                  className="hidden"
+                  onChange={(e) => {
+                    handleLgsLogoUpload(e.target.files?.[0]);
+                    e.target.value = "";
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => headerLogoInputRef.current?.click()}
+                  className="shrink-0 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-[9px] font-semibold text-slate-200 transition hover:bg-slate-700"
+                >
+                  Özel Yükle
+                </button>
+              </div>
+              {(headerConfig.lgsPresetLogoId || "") === "custom" ? (
+                <p className="text-[9px] text-emerald-400/90">Özel logo yüklendi</p>
+              ) : null}
+              <div className="pdf-preview-slider-field">
+                <div className="pdf-preview-slider-field__meta">
+                  <span className={`pdf-preview-field-label ${ui.label}`}>Boyut</span>
+                  <span className={`shrink-0 tabular-nums ${ui.valueBadge}`}>
+                    %{headerConfig.lgsLogoSizePct ?? 100}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={HEADER_LOGO_SIZE_MIN_PCT}
+                  max={HEADER_LOGO_SIZE_MAX_PCT}
+                  step={1}
+                  value={headerConfig.lgsLogoSizePct ?? 100}
+                  onChange={(e) =>
+                    updateHeaderConfig({
+                      lgsLogoSizePct: clampHeaderLogoSizePct(Number(e.target.value)),
+                    })
+                  }
+                  className="pdf-preview-range"
+                  style={{ height: 4 }}
+                />
+              </div>
+            </>
+          )}
+        </CollapsibleCard>
+        ) : !isTrial ? (
         <CollapsibleCard
           title={isClassicBanner ? "Sol kutu (logo / kurum)" : "Logo ayarları"}
           className="mb-0 pdf-preview-collapsible"
@@ -2642,7 +2963,7 @@ export default function ThemeCustomizerSidebar({
                 </>
               )}
         </CollapsibleCard>
-        )}
+        ) : null}
 
         <CollapsibleCard
           title="Sütun çizgisi"
@@ -2655,7 +2976,7 @@ export default function ThemeCustomizerSidebar({
               <span className={ui.labelStrong}>Sütun çizgisi</span>
               <PinkToggle
                 checked={showColumnDivider}
-                onChange={setShowColumnDivider}
+                onChange={(v) => patchPageDecor({ showColumnDivider: v })}
                 label="Sütun çizgisini aç/kapat"
               />
             </div>
@@ -2663,7 +2984,7 @@ export default function ThemeCustomizerSidebar({
               <span className={ui.labelStrong}>Çizgi üstü yazı</span>
               <PinkToggle
                 checked={showColumnDividerText}
-                onChange={setShowColumnDividerText}
+                onChange={(v) => patchPageDecor({ showColumnDividerText: v })}
                 disabled={!showColumnDivider}
                 label="Çizgi üstü yazıyı aç/kapat"
               />
@@ -2680,7 +3001,7 @@ export default function ThemeCustomizerSidebar({
               <button
                 type="button"
                 disabled={!columnDividerTextActive}
-                onClick={() => setCenterLineBold(!centerLineBold)}
+                onClick={() => patchPageDecor({ centerLineBold: !centerLineBold })}
                 title="Kalın"
                 className={`flex h-7 w-7 shrink-0 items-center justify-center rounded text-[10px] font-bold transition disabled:opacity-40 ${
                   centerLineBold ? ui.segActive : ui.segInactive
@@ -2691,7 +3012,7 @@ export default function ThemeCustomizerSidebar({
               <button
                 type="button"
                 disabled={!columnDividerTextActive}
-                onClick={() => setCenterLineItalic(!centerLineItalic)}
+                onClick={() => patchPageDecor({ centerLineItalic: !centerLineItalic })}
                 title="İtalik"
                 className={`flex h-7 w-7 shrink-0 items-center justify-center rounded text-[10px] font-bold italic transition disabled:opacity-40 ${
                   centerLineItalic ? ui.segActive : ui.segInactive
@@ -2714,7 +3035,9 @@ export default function ThemeCustomizerSidebar({
                 step={0.1}
                 disabled={!showColumnDivider}
                 value={columnDividerWidthPt}
-                onChange={(e) => setColumnDividerWidthPt(Number(e.target.value))}
+                onChange={(e) =>
+                  patchPageDecor({ columnDividerWidthPt: Number(e.target.value) })
+                }
                 className="pdf-preview-range disabled:opacity-40"
                 style={{ height: 4 }}
               />
@@ -2732,7 +3055,7 @@ export default function ThemeCustomizerSidebar({
             <span className={ui.labelStrong}>Filigran ekle</span>
             <PinkToggle
               checked={showWatermark}
-              onChange={setShowWatermark}
+              onChange={(v) => patchPageDecor({ showWatermark: v })}
               label="Filigran ekle"
             />
           </div>
@@ -2740,7 +3063,7 @@ export default function ThemeCustomizerSidebar({
             <input
               type="text"
               value={watermarkText}
-              onChange={(e) => setWatermarkText(e.target.value)}
+              onChange={(e) => patchPageDecor({ watermarkText: e.target.value })}
               disabled={!showWatermark}
               placeholder="ANADOLU LİSESİ"
               className={`h-7 w-full uppercase ${ui.input} disabled:opacity-40`}
@@ -2751,7 +3074,7 @@ export default function ThemeCustomizerSidebar({
                   key={id}
                   active={watermarkLayout === id}
                   disabled={!showWatermark}
-                  onClick={() => setWatermarkLayout(id)}
+                  onClick={() => patchPageDecor({ watermarkLayout: id })}
                   className="py-1.5"
                 >
                   {label}
@@ -2773,7 +3096,9 @@ export default function ThemeCustomizerSidebar({
                   step={1}
                   disabled={!showWatermark}
                   value={watermarkAngleDeg}
-                  onChange={(e) => setWatermarkAngleDeg(Number(e.target.value))}
+                  onChange={(e) =>
+                    patchPageDecor({ watermarkAngleDeg: Number(e.target.value) })
+                  }
                   className="pdf-preview-range disabled:opacity-40"
                   style={{ height: 4 }}
                 />
@@ -2793,7 +3118,7 @@ export default function ThemeCustomizerSidebar({
                 step={1}
                 disabled={!showWatermark}
                 value={watermarkOpacity}
-                onChange={(e) => setWatermarkOpacity(Number(e.target.value))}
+                onChange={(e) => patchPageDecor({ watermarkOpacity: Number(e.target.value) })}
                 className="pdf-preview-range disabled:opacity-40"
                 style={{ height: 4 }}
               />
@@ -2812,7 +3137,7 @@ export default function ThemeCustomizerSidebar({
                 step={1}
                 disabled={!showWatermark}
                 value={watermarkSize}
-                onChange={(e) => setWatermarkSize(Number(e.target.value))}
+                onChange={(e) => patchPageDecor({ watermarkSize: Number(e.target.value) })}
                 className="pdf-preview-range disabled:opacity-40"
                 style={{ height: 4 }}
               />
@@ -2853,7 +3178,7 @@ export default function ThemeCustomizerSidebar({
                   <button
                     type="button"
                     disabled={!showWatermark}
-                    onClick={() => setWatermarkLogoUrl(null)}
+                    onClick={() => patchPageDecor({ watermarkLogoUrl: null })}
                     className={`shrink-0 px-1.5 py-1 ${ui.smallBtn} disabled:opacity-40`}
                     title="Logoyu kaldır"
                   >
@@ -2875,7 +3200,7 @@ export default function ThemeCustomizerSidebar({
             <span className={ui.labelStrong}>Sayfaya çerçeve ekle</span>
             <PinkToggle
               checked={showPageFrame}
-              onChange={setShowPageFrame}
+              onChange={(v) => patchPageDecor({ showPageFrame: v })}
               label="Sayfaya çerçeve ekle"
             />
           </div>
@@ -2894,7 +3219,9 @@ export default function ThemeCustomizerSidebar({
                 step={0.5}
                 disabled={!showPageFrame}
                 value={pageFrameInnerGapMm}
-                onChange={(e) => setPageFrameInnerGapMm(Number(e.target.value))}
+                onChange={(e) =>
+                  patchPageDecor({ pageFrameInnerGapMm: Number(e.target.value) })
+                }
                 className="pdf-preview-range disabled:opacity-40"
                 style={{ height: 4 }}
               />
@@ -2913,7 +3240,9 @@ export default function ThemeCustomizerSidebar({
                 step={0.5}
                 disabled={!showPageFrame}
                 value={pageFrameCornerRadiusMm}
-                onChange={(e) => setPageFrameCornerRadiusMm(Number(e.target.value))}
+                onChange={(e) =>
+                  patchPageDecor({ pageFrameCornerRadiusMm: Number(e.target.value) })
+                }
                 className="pdf-preview-range disabled:opacity-40"
                 style={{ height: 4 }}
               />
@@ -2932,7 +3261,7 @@ export default function ThemeCustomizerSidebar({
                     key={id}
                     active={pageFrameLineStyle === id}
                     disabled={!showPageFrame}
-                    onClick={() => setPageFrameLineStyle(id)}
+                    onClick={() => patchPageDecor({ pageFrameLineStyle: id })}
                     className="min-w-0 flex-1 py-1.5 text-[10px]"
                   >
                     {t}
@@ -2947,9 +3276,11 @@ export default function ThemeCustomizerSidebar({
               palette={PRIMARY_PALETTE}
               onThemeSelect={() => {
                 setThemeColor(primaryColor);
-                setPageFrameColorMode("theme");
+                patchPageDecor({ pageFrameColorMode: "theme" });
               }}
-              onCustomColorChange={setPageFrameColor}
+              onCustomColorChange={(c) =>
+                patchPageDecor({ pageFrameColor: c, pageFrameColorMode: "custom" })
+              }
               disabled={!showPageFrame}
             />
             <div className="pdf-preview-slider-field">
@@ -2966,7 +3297,9 @@ export default function ThemeCustomizerSidebar({
                 step={0.1}
                 disabled={!showPageFrame}
                 value={pageFrameWidthPt}
-                onChange={(e) => setPageFrameWidthPt(Number(e.target.value))}
+                onChange={(e) =>
+                  patchPageDecor({ pageFrameWidthPt: Number(e.target.value) })
+                }
                 className="pdf-preview-range disabled:opacity-40"
                 style={{ height: 4 }}
               />

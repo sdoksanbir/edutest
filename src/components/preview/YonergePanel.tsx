@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useEditorStore } from "../../store/editorStore";
-import { isCorporateHeader } from "../../utils/corporateHeaderLayout";
+import {
+  isCorporateHeader,
+  isLgsOfficialBannerConfig,
+} from "../../utils/corporateHeaderLayout";
 import {
   clampDescriptionBoxPadXPt,
   clampDescriptionBoxPadYPt,
@@ -9,6 +12,7 @@ import {
 } from "../../utils/descriptionBoxLayout";
 import {
   DEFAULT_TRIAL_YONERGE_TEXT,
+  defaultLgsYonergeHtml,
   isBlankDescriptionTexts,
 } from "../../utils/trialYonergeDefaults";
 import TestDescriptionModal from "../modals/TestDescriptionModal";
@@ -91,6 +95,8 @@ export default function YonergePanel({ trialMode = false }: { trialMode?: boolea
   const { tokens: t } = usePdfPreviewUi();
   const options = useEditorStore((s) => s.options);
   const headerStyleId = useEditorStore((s) => s.headerStyleId);
+  const headerConfig = useEditorStore((s) => s.headerConfig);
+  const questions = useEditorStore((s) => s.questions);
   const descriptionColumnCount = useEditorStore((s) => s.descriptionColumnCount);
   const descriptionTexts = useEditorStore((s) => s.descriptionTexts);
   const descriptionColumnDividers = useEditorStore((s) => s.descriptionColumnDividers);
@@ -102,11 +108,14 @@ export default function YonergePanel({ trialMode = false }: { trialMode?: boolea
   const setDescriptionColumns = useEditorStore((s) => s.setDescriptionColumns);
   const setDescriptionBoxPadYPt = useEditorStore((s) => s.setDescriptionBoxPadYPt);
   const setDescriptionBoxPadXPt = useEditorStore((s) => s.setDescriptionBoxPadXPt);
+  const updateHeaderConfig = useEditorStore((s) => s.updateHeaderConfig);
 
   const [showModal, setShowModal] = useState(false);
   const [modalKey, setModalKey] = useState(0);
   const trialInitRef = useRef(false);
-  const corporateTheme = isCorporateHeader(headerStyleId);
+  const lgsInitRef = useRef(false);
+  const isLgsOfficial = isLgsOfficialBannerConfig(headerConfig);
+  const corporateTheme = isCorporateHeader(headerStyleId) && !isLgsOfficial;
   const yonergeOn = options.includeDescription && !corporateTheme;
 
   useEffect(() => {
@@ -118,10 +127,31 @@ export default function YonergePanel({ trialMode = false }: { trialMode?: boolea
     trialInitRef.current = true;
     if (!options.includeDescription) toggleOption("includeDescription");
     if (isBlankDescriptionTexts(descriptionTexts)) {
-      setDescriptionColumns(1, [DEFAULT_TRIAL_YONERGE_TEXT], false);
+      setDescriptionColumns(
+        1,
+        [isLgsOfficial ? defaultLgsYonergeHtml(questions.length || 20) : DEFAULT_TRIAL_YONERGE_TEXT],
+        false,
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- yalnızca deneme paneli ilk açılışında
   }, [trialMode, corporateTheme]);
+
+  // LGS şablonu: tek sütun yönergeyi aç; boşsa görseldeki varsayılan
+  useEffect(() => {
+    if (!trialMode || !isLgsOfficial) {
+      lgsInitRef.current = false;
+      return;
+    }
+    if (lgsInitRef.current) return;
+    lgsInitRef.current = true;
+    if (!options.includeDescription) toggleOption("includeDescription");
+    if (isBlankDescriptionTexts(descriptionTexts)) {
+      setDescriptionColumns(1, [defaultLgsYonergeHtml(questions.length || 20)], false);
+    } else if ((descriptionColumnCount ?? 1) !== 1) {
+      setDescriptionColumns(1, descriptionTexts.slice(0, 1), false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- LGS şablonuna geçişte bir kez
+  }, [trialMode, isLgsOfficial]);
 
   const padY = clampDescriptionBoxPadYPt(descriptionBoxPadYPt ?? DESC_BOX_PAD_Y_DEFAULT_PT);
   const padX = clampDescriptionBoxPadXPt(descriptionBoxPadXPt ?? DESC_BOX_PAD_X_DEFAULT_PT);
@@ -139,7 +169,11 @@ export default function YonergePanel({ trialMode = false }: { trialMode?: boolea
       return;
     }
     if (trialMode && isBlankDescriptionTexts(descriptionTexts)) {
-      setDescriptionColumns(1, [DEFAULT_TRIAL_YONERGE_TEXT], false);
+      setDescriptionColumns(
+        1,
+        [isLgsOfficial ? defaultLgsYonergeHtml(questions.length || 20) : DEFAULT_TRIAL_YONERGE_TEXT],
+        false,
+      );
     }
     if (trialMode) {
       toggleOption("includeDescription");
@@ -182,26 +216,71 @@ export default function YonergePanel({ trialMode = false }: { trialMode?: boolea
         ) : yonergeOn ? (
           <>
             <p className={`mt-2 ${t.hint}`}>
-              {trialMode
-                ? "Başlık altındaki yönerge metnini düzenleyin. Sınav kodu, test adı ve kitapçık sağ panelde Başlık Rozeti altındadır."
-                : `İlk sayfa başlığının altında ${descriptionColumnCount} sütunlu yönerge kutusu gösterilir. Metin dikeyde ortalanır.`}
+              {isLgsOfficial
+                ? "LGS başlığındaki yönerge kutusunu düzenleyin (tek sütun)."
+                : trialMode
+                  ? "Başlık altındaki yönerge metnini düzenleyin. Sınav kodu, test adı ve kitapçık sağ panelde Başlık Rozeti altındadır."
+                  : `İlk sayfa başlığının altında ${descriptionColumnCount} sütunlu yönerge kutusu gösterilir. Metin dikeyde ortalanır.`}
             </p>
-            <div className="mt-2 space-y-2">
-              <PadSliderRow
-                label="Dikey iç boşluk"
-                value={padY}
-                min={2}
-                max={28}
-                onChange={(pt) => setDescriptionBoxPadYPt(clampDescriptionBoxPadYPt(pt))}
-              />
-              <PadSliderRow
-                label="Yatay iç boşluk"
-                value={padX}
-                min={2}
-                max={28}
-                onChange={(pt) => setDescriptionBoxPadXPt(clampDescriptionBoxPadXPt(pt))}
-              />
-            </div>
+            {isLgsOfficial ? (
+              <div className="mt-2 flex items-center justify-end gap-2">
+                <span className={`mr-auto text-[11px] ${t.label}`}>Yazı boyutu</span>
+                <div className="flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    disabled={(headerConfig.lgsInstructionFontPt ?? 15) <= 8}
+                    onClick={() =>
+                      updateHeaderConfig({
+                        lgsInstructionFontPt: Math.max(
+                          8,
+                          (headerConfig.lgsInstructionFontPt ?? 15) - 0.5,
+                        ),
+                      })
+                    }
+                    className={`flex h-6 w-6 items-center justify-center rounded text-xs ${t.smallBtn} disabled:opacity-40`}
+                    aria-label="Yönerge yazı boyutunu küçült"
+                  >
+                    −
+                  </button>
+                  <span className={`min-w-[2.25rem] text-center text-[11px] font-semibold tabular-nums ${t.valueBadge}`}>
+                    {headerConfig.lgsInstructionFontPt ?? 15}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={(headerConfig.lgsInstructionFontPt ?? 15) >= 22}
+                    onClick={() =>
+                      updateHeaderConfig({
+                        lgsInstructionFontPt: Math.min(
+                          22,
+                          (headerConfig.lgsInstructionFontPt ?? 15) + 0.5,
+                        ),
+                      })
+                    }
+                    className={`flex h-6 w-6 items-center justify-center rounded text-xs ${t.smallBtn} disabled:opacity-40`}
+                    aria-label="Yönerge yazı boyutunu büyüt"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-2 space-y-2">
+                <PadSliderRow
+                  label="Dikey iç boşluk"
+                  value={padY}
+                  min={2}
+                  max={28}
+                  onChange={(pt) => setDescriptionBoxPadYPt(clampDescriptionBoxPadYPt(pt))}
+                />
+                <PadSliderRow
+                  label="Yatay iç boşluk"
+                  value={padX}
+                  min={2}
+                  max={28}
+                  onChange={(pt) => setDescriptionBoxPadXPt(clampDescriptionBoxPadXPt(pt))}
+                />
+              </div>
+            )}
           </>
         ) : (
           <p className={`mt-2 ${t.hint}`}>
@@ -215,14 +294,15 @@ export default function YonergePanel({ trialMode = false }: { trialMode?: boolea
         open={showModal}
         onClose={() => setShowModal(false)}
         onConfirm={(columnCount, texts, dividers) => {
-          setDescriptionColumns(columnCount, texts, dividers);
+          setDescriptionColumns(isLgsOfficial ? 1 : columnCount, texts, isLgsOfficial ? false : dividers);
           if (!options.includeDescription) toggleOption("includeDescription");
           setShowModal(false);
         }}
-        initialColumnCount={descriptionColumnCount}
-        initialColumnDividers={descriptionColumnDividers}
+        initialColumnCount={isLgsOfficial ? 1 : descriptionColumnCount}
+        initialColumnDividers={isLgsOfficial ? false : descriptionColumnDividers}
         initialTexts={initialTexts}
         themeColor={themeColor}
+        singleColumnOnly={isLgsOfficial}
       />
     </>
   );

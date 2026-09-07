@@ -9,49 +9,29 @@ import type {
   QuestionItem,
   QuestionImageTextOverlay,
   CropBox,
+  FontReferenceV1,
+  QuestionCaptureMeta,
   SectionRange,
+  FasikulQuestionFrameSettings,
 } from "../types";
+import { normalizeFasikulQuestionFrame } from "../utils/fasikulQuestionFrame";
+import { clearQuestionFontMeasureForDiag } from "../utils/questionScaleDiagnostics";
 import {
-  clampTargetQuestionLinePt,
-  DEFAULT_TARGET_QUESTION_LINE_PT,
-  measureQuestionFontScale,
-  questionImageToDataUrl,
-  type FontMeasurementSource,
-} from "../utils/normalizeQuestionFont";
-import {
-  computePhysicalFontEqualize,
-  resolveQuestionPixelsPerPdfPoint,
-  OCR_MIN_CONFIDENCE,
-} from "../utils/fontPhysicalScale";
-import {
-  applyCommonFontTargetToQuestion,
-  computeCommonEffectiveTargetFontPt,
-  logCommonFontTargetSummary,
-  maxAppliedScaleForSingleColumn,
-  resolveNativeWidthPtForEqualize,
-  type PerQuestionCommonScaleResult,
-} from "../utils/commonFontTarget";
-import {
-  recordQuestionFontMeasureForDiag,
-  resetQuestionScaleDiagFlush,
-  getQuestionFontMeasureForDiag,
-} from "../utils/questionScaleDiagnostics";
-import {
-  beginEqualizeRun,
-  endEqualizeRun,
-  logEqualizeStageTable,
-  recordCommittedEqualizeRows,
-  assertEqualizeManualScaleInvariant,
-  type EqualizeCommittedRow,
-} from "../utils/equalizeRunDiagnostics";
-import { buildEqualizeCommitScaleFields } from "../utils/equalizeCommitScale";
-import {
-  resolveManualScale,
-  resolveNormalizationScale,
-  resolveRequestedScale,
   manualScaleForRequestedProduct,
+  nextFontMeasurementRevision,
+  resetFontNormalizationFields,
   syncDisplayScaleProduct,
 } from "../utils/questionScale";
+import {
+  LEGACY_LAYOUT_ZOOM,
+  nativeSizePtFromCapture,
+} from "../utils/questionCapture";
+import {
+  clampFontEqualizeScale,
+  estimateCanonicalFontHeightFromRgba,
+  loadImageDataFromBase64,
+} from "../utils/morphologyFontHeight";
+import { isRectContained } from "../utils/cropCoordUtils";
 import { compositeImageWithTextOverlays } from "../utils/compositeQuestionImage";
 import { api } from "../api/client";
 import {
@@ -76,14 +56,17 @@ import { normalizeHeaderStyleId } from "../utils/headerStyleIds";
 import {
   applyModuleLayout,
   captureModuleLayout,
+  defaultFasikulModuleLayout,
+  defaultLayoutForModule,
   defaultTestModuleLayout,
   defaultTrialModuleLayout,
-  parseModuleLayoutSnapshot,
+  ensureModuleLayouts,
+  pageDecorStorePatch,
   paperLayoutModuleFromTab,
   type ModuleLayoutSnapshot,
   type PaperLayoutModule,
 } from "../utils/moduleLayoutSnapshots";
-import { buildTestThemeDefaults } from "../utils/testThemeDefaults";
+import { buildFasikulThemeDefaults, buildTestThemeDefaults } from "../utils/testThemeDefaults";
 import {
   HEADER_INFO_KEYS,
   patchHeaderInfo,
@@ -104,6 +87,13 @@ import {
   applyOpticalFormSettings,
   type OpticalFormSettings,
 } from "../utils/opticalFormSettings";
+
+/** Draft hydrate / soft-compat — equalization feature removed */
+const DEFAULT_TARGET_QUESTION_LINE_PT = 10;
+function clampTargetQuestionLinePt(pt: number): number {
+  if (!Number.isFinite(pt)) return DEFAULT_TARGET_QUESTION_LINE_PT;
+  return Math.min(12, Math.max(8, Math.round(pt)));
+}
 
 export type SidebarTab = "written-paper" | "test-paper" | "trial-exam" | "fasikul-paper" | "settings";
 export type AnswerOption = "A" | "B" | "C" | "D" | "E";
@@ -157,6 +147,10 @@ type EditorState = {
   trialTestNameBgOpacityPct: number;
   /** Deneme: test adı kutusu arka plan rengi (varsayılan lacivert) */
   trialTestNameBgColor: string;
+  /** Deneme: kurum adı (test/yazılı brandName’den bağımsız) */
+  trialBrandName: string;
+  /** Deneme: kurum adı diğer sayfa başlığında görünsün mü */
+  trialBrandNameVisible: boolean;
   options: OptionFlags;
   /** Yazılı Kağıdı formu */
   examType: string;
@@ -337,6 +331,8 @@ type EditorState = {
   setTrialBookletColor: (color: string) => void;
   setTrialTestNameBgOpacityPct: (pct: number) => void;
   setTrialTestNameBgColor: (color: string) => void;
+  setTrialBrandName: (value: string) => void;
+  setTrialBrandNameVisible: (visible: boolean) => void;
   setExamType: (value: string) => void;
   setClassSection: (value: string) => void;
   setGroup: (value: string) => void;
@@ -485,12 +481,14 @@ type EditorState = {
       }
     >,
   ) => void;
-  /** OCR ile satır yüksekliğini ölçer; tüm testlerde aynı hedef puntoya ölçekler */
+  /**
+   * OpenCV-style morphology: gövde yazı yüksekliğini ölçer,
+   * tüm soruları hedef puntoya (normalizationScale) çeker; manualScale=1.
+   */
   applyQuestionLineHeightMatch: (opts?: {
     availWPt?: number;
     targetLinePt?: number;
-  }) => Promise<{ matched: number; total: number; equalizeRunId: string | null }>;
-  /** Eşitleme sürerken PDF export engeli */
+  }) => Promise<{ matched: number; total: number }>;
   fontEqualizeInProgress: boolean;
   /** Kağıt hazırla: Seçili soruya custom_gap_mm uygula */
   setQuestionCustomGapMm: (id: string, gapMm: number | null) => void;
@@ -514,11 +512,17 @@ type EditorState = {
       explanation_caption_box_width: ExplanationCaptionBoxWidth;
     }>
   ) => Promise<void>;
+  setQuestionFasikulFrame: (id: string, frame: FasikulQuestionFrameSettings) => void;
+  applyFasikulFrameToQuestions: (
+    questionIds: string[],
+    frame: FasikulQuestionFrameSettings,
+  ) => void;
   setSections: (sections: SectionRange[]) => void;
   addSection: (section: SectionRange) => void;
   updateSection: (index: number, section: SectionRange) => void;
   removeSection: (index: number) => void;
   updateQuestionImage: (id: string, imageBase64: string) => void;
+  setQuestionFontReference: (id: string, reference?: FontReferenceV1) => void;
   /** Silgi vb. sonrası tek katman; metin katmanlarını siler. */
   flattenQuestionImageToSingleLayer: (id: string, imageBase64: string) => void;
   addQuestionImageTextOverlay: (
@@ -536,6 +540,12 @@ type EditorState = {
   removeQuestionImageTextOverlay: (id: string, overlayId: string) => void;
   recomposeQuestionImage: (id: string) => Promise<void>;
   updateQuestionCrop: (id: string, crop: CropBox) => Promise<void>;
+  updateQuestionCropAndImage: (
+    id: string,
+    crop: CropBox,
+    imageBase64: string,
+    capture?: QuestionCaptureMeta,
+  ) => void;
   addQuestion: (item: QuestionItem) => void;
   /** Add multiple questions to working draft. In-memory only, sets isDirty. */
   addQuestionsToWorkingDraft: (items: QuestionItem[]) => void;
@@ -594,6 +604,8 @@ export type DraftFilePayload = {
     trialBookletColor?: string;
     trialTestNameBgOpacityPct?: number;
     trialTestNameBgColor?: string;
+    trialBrandName?: string;
+    trialBrandNameVisible?: boolean;
     options?: Partial<OptionFlags>;
     questionGapMm?: number;
     questionGapMinMm?: number;
@@ -613,10 +625,11 @@ export type DraftFilePayload = {
     headerConfig?: HeaderConfig;
     headerTemplates?: HeaderTemplate[];
     themeColor?: string;
-    activeLayoutModule?: "test" | "trial";
+    activeLayoutModule?: "test" | "trial" | "fasikul";
     moduleLayouts?: {
       test?: unknown;
       trial?: unknown;
+      fasikul?: unknown;
     };
     sections?: SectionRange[];
     testDescription?: string;
@@ -748,6 +761,29 @@ function syncVisualLegacyFields(state: {
   };
 }
 
+/** Sayfa dekoru değişince aktif modül anlığını güncelle (test/deneme/fasikül ayrımı) */
+function commitPageDecorPatch(
+  s: EditorState,
+  patch: Partial<EditorState>,
+  opts?: { syncLegacy?: boolean },
+): Partial<EditorState> {
+  const next = { ...s, ...patch, isDirty: true } as EditorState;
+  const legacy =
+    opts?.syncLegacy === false
+      ? {}
+      : syncVisualLegacyFields(next);
+  const merged = { ...next, ...legacy } as EditorState;
+  return {
+    ...patch,
+    ...legacy,
+    isDirty: true,
+    moduleLayouts: ensureModuleLayouts({
+      ...s.moduleLayouts,
+      [s.activeLayoutModule]: captureModuleLayout(merged),
+    }),
+  };
+}
+
 export const useEditorStore = create<EditorState>((set, get) => ({
   activeTab: "test-paper",
   tabBeforeSettings: null,
@@ -763,6 +799,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   trialBookletColor: "",
   trialTestNameBgOpacityPct: 100,
   trialTestNameBgColor: "#0A1931",
+  trialBrandName: "EDUMATH",
+  trialBrandNameVisible: true,
   examType: "1. Dönem 1. Yazılı",
   classSection: "",
   group: "Grup Yok",
@@ -801,11 +839,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   headerConfig: defaultHeaderConfig(),
   headerTemplates: [],
   themeColor: "#1E88E5",
-  fontEqualizeInProgress: false,
   activeLayoutModule: "test",
   moduleLayouts: {
     test: defaultTestModuleLayout(),
     trial: defaultTrialModuleLayout(),
+    fasikul: defaultFasikulModuleLayout(),
   },
   headerThemeEpoch: 0,
   paperSize: "A4 (210 x 297 mm)",
@@ -814,6 +852,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   orientation: "portrait",
   columns: 2,
   targetQuestionLinePt: DEFAULT_TARGET_QUESTION_LINE_PT,
+  fontEqualizeInProgress: false,
   allowSlightOverflow: false,
   marginTopMm: 10,
   marginBottomMm: 10,
@@ -906,20 +945,32 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (!nextMod) {
         return {
           activeTab: tab,
-          moduleLayouts: {
+          moduleLayouts: ensureModuleLayouts({
             ...state.moduleLayouts,
             [curMod]: captureModuleLayout(state),
-          },
+          }),
         };
       }
       if (nextMod === curMod) {
         return { activeTab: tab };
       }
-      const savedLayouts = {
+      const savedLayouts = ensureModuleLayouts({
         ...state.moduleLayouts,
         [curMod]: captureModuleLayout(state),
+      });
+      const applied = applyModuleLayout(
+        savedLayouts[nextMod] ?? defaultLayoutForModule(nextMod),
+      );
+      const decorPatch = pageDecorStorePatch(applied.pageDecor);
+      const options = {
+        ...state.options,
+        includeDescription: applied.optionsPatch.includeDescription,
       };
-      const applied = applyModuleLayout(savedLayouts[nextMod]!);
+      const withDecor = {
+        ...state,
+        ...decorPatch,
+        options,
+      };
       return {
         activeTab: tab,
         activeLayoutModule: nextMod,
@@ -934,10 +985,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         descriptionColumnDividers: applied.descriptionColumnDividers!,
         descriptionBoxPadYPt: applied.descriptionBoxPadYPt!,
         descriptionBoxPadXPt: applied.descriptionBoxPadXPt!,
-        options: {
-          ...state.options,
-          includeDescription: applied.optionsPatch.includeDescription,
-        },
+        options,
+        ...decorPatch,
+        ...syncVisualLegacyFields(withDecor),
       };
     }),
   syncActiveLayoutModule: (mod) =>
@@ -945,21 +995,35 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const curMod = state.activeLayoutModule;
       // Modül değişiyorsa canlıyı eski modüle kaydet; aynı modülde kayıtlı anlığı uygula
       // (canlıya sızmış diğer modül temasını ezmek için önce kaydetmeden uygula)
-      const savedLayouts =
+      const savedLayouts = ensureModuleLayouts(
         mod !== curMod
           ? {
               ...state.moduleLayouts,
               [curMod]: captureModuleLayout(state),
             }
-          : state.moduleLayouts;
-      const applied = applyModuleLayout(savedLayouts[mod]!);
+          : state.moduleLayouts,
+      );
+      const applied = applyModuleLayout(
+        savedLayouts[mod] ?? defaultLayoutForModule(mod),
+      );
       const styleChanged =
         mod !== curMod ||
         applied.headerStyleId !== state.headerStyleId ||
         (applied.headerConfig?.showClassicInfoBar !== false) !==
           (state.headerConfig.showClassicInfoBar !== false) ||
         !!applied.headerConfig?.useYaprakBanner !== !!state.headerConfig.useYaprakBanner ||
-        !!applied.headerConfig?.useExamBanner !== !!state.headerConfig.useExamBanner;
+        !!applied.headerConfig?.useExamBanner !== !!state.headerConfig.useExamBanner ||
+        !!applied.optionsPatch.includeDescription !== !!state.options.includeDescription;
+      const decorPatch = pageDecorStorePatch(applied.pageDecor);
+      const options = {
+        ...state.options,
+        includeDescription: applied.optionsPatch.includeDescription,
+      };
+      const withDecor = {
+        ...state,
+        ...decorPatch,
+        options,
+      };
       return {
         activeLayoutModule: mod,
         moduleLayouts: savedLayouts,
@@ -975,10 +1039,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         descriptionColumnDividers: applied.descriptionColumnDividers!,
         descriptionBoxPadYPt: applied.descriptionBoxPadYPt!,
         descriptionBoxPadXPt: applied.descriptionBoxPadXPt!,
-        options: {
-          ...state.options,
-          includeDescription: applied.optionsPatch.includeDescription,
-        },
+        options,
+        ...decorPatch,
+        ...syncVisualLegacyFields(withDecor),
       };
     }),
   setTabBeforeSettings: (tab) => set({ tabBeforeSettings: tab }),
@@ -1020,6 +1083,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       isDirty: true,
     }));
   },
+  setTrialBrandName: (value) => set({ trialBrandName: value, isDirty: true }),
+  setTrialBrandNameVisible: (visible) =>
+    set({ trialBrandNameVisible: !!visible, isDirty: true }),
   setExamType: (value) => set({ examType: value }),
   setClassSection: (value) => set({ classSection: value }),
   setGroup: (value) => set({ group: value }),
@@ -1156,8 +1222,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set({ ...applyOpticalFormSettings(settings), isDirty: true }),
   setFooterInfoText: (value) => set({ footerInfoText: value, isDirty: true }),
   setCenterLineText: (value) => set({ centerLineText: value }),
-  setCenterLineBold: (value) => set({ centerLineBold: value }),
-  setCenterLineItalic: (value) => set({ centerLineItalic: value }),
+  setCenterLineBold: (value) =>
+    set((s) => commitPageDecorPatch(s, { centerLineBold: value }, { syncLegacy: false })),
+  setCenterLineItalic: (value) =>
+    set((s) => commitPageDecorPatch(s, { centerLineItalic: value }, { syncLegacy: false })),
   setCenterLineTextDirection: (dir) => set({ centerLineTextDirection: dir }),
   setHeaderStyleId: (id) =>
     set((s) => ({
@@ -1274,11 +1342,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }),
   resetTestThemesToDefaults: () =>
     set((s) => {
-      const built = buildTestThemeDefaults(
+      const styleId =
         s.headerConfig.useYaprakBanner || s.headerConfig.useExamBanner
           ? "style_1"
-          : s.headerStyleId,
-      );
+          : s.headerStyleId;
+      const built =
+        s.activeLayoutModule === "fasikul"
+          ? buildFasikulThemeDefaults(styleId)
+          : buildTestThemeDefaults(styleId);
       const nextLive = {
         ...s,
         headerStyleId: built.headerStyleId,
@@ -1471,93 +1542,98 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setWatermarkEnabled: (enabled) => set({ watermarkEnabled: enabled }),
   setWatermarkSettings: (settings) => set({ watermarkSettings: settings }),
   setShowColumnDivider: (enabled) =>
-    set((s) => {
-      const next = { ...s, showColumnDivider: enabled, isDirty: true };
-      return { ...next, ...syncVisualLegacyFields(next) };
-    }),
+    set((s) => commitPageDecorPatch(s, { showColumnDivider: enabled })),
   setColumnDividerText: (text) =>
-    set((s) => {
-      const next = { ...s, columnDividerText: text, isDirty: true };
-      return { ...next, ...syncVisualLegacyFields(next) };
-    }),
+    set((s) => commitPageDecorPatch(s, { columnDividerText: text })),
   setColumnDividerColor: (color) => set({ columnDividerColor: color, isDirty: true }),
   setColumnDividerWidthPt: (pt) =>
-    set({
-      columnDividerWidthPt: Math.max(0.3, Math.min(4, Math.round(pt * 10) / 10)),
-      isDirty: true,
-    }),
+    set((s) =>
+      commitPageDecorPatch(
+        s,
+        {
+          columnDividerWidthPt: Math.max(0.3, Math.min(4, Math.round(pt * 10) / 10)),
+        },
+        { syncLegacy: false },
+      ),
+    ),
   setShowColumnDividerText: (enabled) =>
-    set((s) => {
-      const next = { ...s, showColumnDividerText: enabled, isDirty: true };
-      return { ...next, ...syncVisualLegacyFields(next) };
-    }),
+    set((s) => commitPageDecorPatch(s, { showColumnDividerText: enabled })),
   setShowWatermark: (enabled) =>
-    set((s) => {
-      const next = { ...s, showWatermark: enabled, isDirty: true };
-      return { ...next, ...syncVisualLegacyFields(next) };
-    }),
+    set((s) => commitPageDecorPatch(s, { showWatermark: enabled })),
   setWatermarkText: (text) =>
-    set((s) => {
-      const next = { ...s, watermarkText: text, isDirty: true };
-      return { ...next, ...syncVisualLegacyFields(next) };
-    }),
+    set((s) => commitPageDecorPatch(s, { watermarkText: text })),
   setWatermarkLayout: (layout) =>
-    set((s) => {
-      const next = { ...s, watermarkLayout: layout, isDirty: true };
-      return { ...next, ...syncVisualLegacyFields(next) };
-    }),
+    set((s) => commitPageDecorPatch(s, { watermarkLayout: layout })),
   setWatermarkAngleDeg: (deg) =>
-    set((s) => {
-      const next = {
-        ...s,
+    set((s) =>
+      commitPageDecorPatch(s, {
         watermarkAngleDeg: Math.max(-90, Math.min(90, Math.round(deg))),
-        isDirty: true,
-      };
-      return { ...next, ...syncVisualLegacyFields(next) };
-    }),
+      }),
+    ),
   setWatermarkOpacity: (pct) =>
-    set((s) => {
-      const next = {
-        ...s,
+    set((s) =>
+      commitPageDecorPatch(s, {
         watermarkOpacity: Math.max(0, Math.min(100, Math.round(pct))),
-        isDirty: true,
-      };
-      return { ...next, ...syncVisualLegacyFields(next) };
-    }),
+      }),
+    ),
   setWatermarkSize: (pct) =>
-    set((s) => {
-      const next = {
-        ...s,
+    set((s) =>
+      commitPageDecorPatch(s, {
         watermarkSize: Math.max(10, Math.min(100, Math.round(pct))),
-        isDirty: true,
-      };
-      return { ...next, ...syncVisualLegacyFields(next) };
-    }),
+      }),
+    ),
   setWatermarkLogoUrl: (url) =>
-    set((s) => {
-      const next = { ...s, watermarkLogoUrl: url, isDirty: true };
-      return { ...next, ...syncVisualLegacyFields(next) };
-    }),
-  setShowPageFrame: (enabled) => set({ showPageFrame: enabled, isDirty: true }),
-  setPageFrameColorMode: (mode) => set({ pageFrameColorMode: mode, isDirty: true }),
+    set((s) => commitPageDecorPatch(s, { watermarkLogoUrl: url })),
+  setShowPageFrame: (enabled) =>
+    set((s) =>
+      commitPageDecorPatch(s, { showPageFrame: enabled }, { syncLegacy: false }),
+    ),
+  setPageFrameColorMode: (mode) =>
+    set((s) =>
+      commitPageDecorPatch(s, { pageFrameColorMode: mode }, { syncLegacy: false }),
+    ),
   setPageFrameColor: (color) =>
-    set({ pageFrameColor: color, pageFrameColorMode: "custom", isDirty: true }),
+    set((s) =>
+      commitPageDecorPatch(
+        s,
+        { pageFrameColor: color, pageFrameColorMode: "custom" },
+        { syncLegacy: false },
+      ),
+    ),
   setPageFrameWidthPt: (pt) =>
-    set({
-      pageFrameWidthPt: Math.max(0.3, Math.min(6, Math.round(pt * 10) / 10)),
-      isDirty: true,
-    }),
+    set((s) =>
+      commitPageDecorPatch(
+        s,
+        {
+          pageFrameWidthPt: Math.max(0.3, Math.min(6, Math.round(pt * 10) / 10)),
+        },
+        { syncLegacy: false },
+      ),
+    ),
   setPageFrameInnerGapMm: (mm) =>
-    set({
-      pageFrameInnerGapMm: Math.max(0, Math.min(20, Math.round(mm * 10) / 10)),
-      isDirty: true,
-    }),
+    set((s) =>
+      commitPageDecorPatch(
+        s,
+        {
+          pageFrameInnerGapMm: Math.max(0, Math.min(20, Math.round(mm * 10) / 10)),
+        },
+        { syncLegacy: false },
+      ),
+    ),
   setPageFrameCornerRadiusMm: (mm) =>
-    set({
-      pageFrameCornerRadiusMm: Math.max(0, Math.min(15, Math.round(mm * 10) / 10)),
-      isDirty: true,
-    }),
-  setPageFrameLineStyle: (style) => set({ pageFrameLineStyle: style, isDirty: true }),
+    set((s) =>
+      commitPageDecorPatch(
+        s,
+        {
+          pageFrameCornerRadiusMm: Math.max(0, Math.min(15, Math.round(mm * 10) / 10)),
+        },
+        { syncLegacy: false },
+      ),
+    ),
+  setPageFrameLineStyle: (style) =>
+    set((s) =>
+      commitPageDecorPatch(s, { pageFrameLineStyle: style }, { syncLegacy: false }),
+    ),
   setQuestionAnswer: async (id, answer) => {
     const state = useEditorStore.getState();
     const q = state.questions.find((x) => x.id === id);
@@ -1625,14 +1701,44 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       console.warn("Electron soru deposu temizlenemedi:", e);
     });
   },
-  updateQuestionImage: (id, imageBase64) =>
+  updateQuestionImage: (id, imageBase64) => {
+    const q = get().questions.find((x) => x.id === id);
+    if (q) clearQuestionFontMeasureForDiag(q.order_index);
     set((s) => ({
       questions: s.questions.map((x) =>
-        x.id === id ? { ...x, image_base64: imageBase64 } : x
+        x.id === id
+          ? {
+              ...x,
+              image_base64: imageBase64,
+              fontMeasurementRevision: nextFontMeasurementRevision(x),
+              ...resetFontNormalizationFields(x),
+            }
+          : x
       ),
       isDirty: true,
-    })),
-  flattenQuestionImageToSingleLayer: (id, imageBase64) =>
+    }));
+  },
+  setQuestionFontReference: (id, reference) => {
+    const q = get().questions.find((x) => x.id === id);
+    if (!q) return;
+    clearQuestionFontMeasureForDiag(q.order_index);
+    set((s) => ({
+      questions: s.questions.map((x) =>
+        x.id === id
+          ? {
+              ...x,
+              fontReference: reference,
+              fontMeasurementRevision: nextFontMeasurementRevision(x),
+              ...resetFontNormalizationFields(x),
+            }
+          : x
+      ),
+      isDirty: true,
+    }));
+  },
+  flattenQuestionImageToSingleLayer: (id, imageBase64) => {
+    const q = get().questions.find((x) => x.id === id);
+    if (q) clearQuestionFontMeasureForDiag(q.order_index);
     set((s) => ({
       questions: s.questions.map((x) =>
         x.id === id
@@ -1641,11 +1747,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               image_base64: imageBase64,
               image_underlay_b64: undefined,
               image_text_overlays: undefined,
+              fontMeasurementRevision: nextFontMeasurementRevision(x),
+              ...resetFontNormalizationFields(x),
             }
           : x
       ),
       isDirty: true,
-    })),
+    }));
+  },
   addQuestionImageTextOverlay: (id, overlay, underlaySnapshotB64) => {
     const oid = overlay.id ?? globalThis.crypto?.randomUUID?.() ?? `ov-${Date.now()}`;
     const strip = (b: string) => b.replace(/^data:image\/png;base64,/, "");
@@ -1742,8 +1851,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         overlays.length === 0
           ? underlay.replace(/^data:image\/png;base64,/, "")
           : await compositeImageWithTextOverlays(underlay, overlays);
+      clearQuestionFontMeasureForDiag(q.order_index);
       set((s) => ({
-        questions: s.questions.map((x) => (x.id === id ? { ...x, image_base64: composite } : x)),
+        questions: s.questions.map((x) =>
+          x.id === id
+            ? {
+                ...x,
+                image_base64: composite,
+                fontMeasurementRevision: nextFontMeasurementRevision(x),
+                ...resetFontNormalizationFields(x),
+              }
+            : x
+        ),
         isDirty: true,
       }));
     } catch (e) {
@@ -1753,19 +1872,71 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   updateQuestionCrop: async (id, crop) => {
     const state = useEditorStore.getState();
     const q = state.questions.find((x) => x.id === id);
+    const fontReference =
+      q?.fontReference && isRectContained(q.fontReference.sourceRectNorm, crop)
+        ? q.fontReference
+        : undefined;
+    if (q) clearQuestionFontMeasureForDiag(q.order_index);
     if (q?.image_base64) {
       set((s) => ({
-        questions: s.questions.map((x) => (x.id === id ? { ...x, crop } : x)),
+        questions: s.questions.map((x) =>
+          x.id === id
+            ? {
+                ...x,
+                crop,
+                fontReference,
+                fontMeasurementRevision: nextFontMeasurementRevision(x),
+                ...resetFontNormalizationFields(x),
+              }
+            : x
+        ),
         isDirty: true,
       }));
       return;
     }
     try {
       const updated = await api.questions.updateCrop(id, crop);
-      set((s) => ({ questions: s.questions.map((x) => (x.id === id ? updated : x)), isDirty: true }));
+      set((s) => ({
+        questions: s.questions.map((x) =>
+          x.id === id
+            ? {
+                ...updated,
+                fontReference,
+                fontMeasurementRevision: nextFontMeasurementRevision(x),
+                ...resetFontNormalizationFields(x),
+              }
+            : x
+        ),
+        isDirty: true,
+      }));
     } catch (e) {
       console.error("Failed to update question crop:", e);
     }
+  },
+  updateQuestionCropAndImage: (id, crop, imageBase64, capture) => {
+    const q = get().questions.find((x) => x.id === id);
+    if (!q) return;
+    clearQuestionFontMeasureForDiag(q.order_index);
+    const fontReference =
+      q.fontReference && isRectContained(q.fontReference.sourceRectNorm, crop)
+        ? q.fontReference
+        : undefined;
+    set((s) => ({
+      questions: s.questions.map((x) =>
+        x.id === id
+          ? {
+              ...x,
+              crop,
+              image_base64: imageBase64,
+              capture: capture ?? x.capture,
+              fontReference,
+              fontMeasurementRevision: nextFontMeasurementRevision(x),
+              ...resetFontNormalizationFields(x),
+            }
+          : x
+      ),
+      isDirty: true,
+    }));
   },
   reorderQuestions: async (orderedIds) => {
     const state = useEditorStore.getState();
@@ -1807,7 +1978,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         isDirty: true,
       };
     }),
-  setQuestionDisplayScale: (id, scale) =>
+  setQuestionDisplayScale: (id, scale) => {
     set((s) => ({
       questions: s.questions.map((x) => {
         if (x.id !== id) return x;
@@ -1821,8 +1992,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         };
       }),
       isDirty: true,
-    })),
-  setQuestionsDisplayScale: (updates) =>
+    }));
+  },
+  setQuestionsDisplayScale: (updates) => {
     set((s) => ({
       questions: s.questions.map((x) => {
         if (updates[x.id] == null) return x;
@@ -1836,8 +2008,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         };
       }),
       isDirty: true,
-    })),
-  setQuestionsBulkScales: (updates) =>
+    }));
+  },
+  setQuestionsBulkScales: (updates) => {
     set((s) => ({
       questions: s.questions.map((x) => {
         const u = updates[x.id];
@@ -1862,7 +2035,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         };
       }),
       isDirty: true,
-    })),
+    }));
+  },
   setQuestionLayoutMode: (id, mode) =>
     set((s) => ({
       questions: s.questions.map((x) =>
@@ -1894,332 +2068,85 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       }),
       isDirty: true,
     })),
-  /**
-   * Yazı boyutunu hedef yüksekliğe çeker (üst %25 / alt %20 bant ölçümü).
-   * normalizationScale = targetQuestionLinePt / detectedFontHeightPt (fiziksel);
-   * manualScale sıfırlanır (1).
-   */
   applyQuestionLineHeightMatch: async (opts) => {
     const state = get();
     if (state.fontEqualizeInProgress) {
-      return { matched: 0, total: state.questions.length, equalizeRunId: null };
+      return { matched: 0, total: state.questions.length };
     }
     set({ fontEqualizeInProgress: true });
-    const equalizeRunId = beginEqualizeRun();
     try {
-    const target = clampTargetQuestionLinePt(
-      opts?.targetLinePt ?? state.targetQuestionLinePt ?? DEFAULT_TARGET_QUESTION_LINE_PT,
-    );
-    const questions = state.questions;
-    const withImages = questions.filter((q) => q.image_base64);
-    const withImage = withImages.length;
+      const target = clampTargetQuestionLinePt(
+        opts?.targetLinePt ?? state.targetQuestionLinePt ?? DEFAULT_TARGET_QUESTION_LINE_PT,
+      );
+      const withImage = state.questions.filter((q) => q.image_base64);
+      const updates: Record<
+        string,
+        { manualScale: number; normalizationScale: number; display_scale: number }
+      > = {};
+      const detectedById: Record<string, number> = {};
+      let matched = 0;
 
-    logEqualizeStageTable(
-      'BEFORE_EQUALIZE',
-      equalizeRunId,
-      [...questions]
-        .sort((a, b) => a.order_index - b.order_index)
-        .map((q) => ({
-          questionNo: q.order_index + 1,
-          questionId: q.id,
-          detectedFontPt: getQuestionFontMeasureForDiag(q.order_index)?.detected_font_pt ?? null,
-          normalizationScale: resolveNormalizationScale(q),
-          manualScale: resolveManualScale(q),
-          requestedScale: resolveRequestedScale(q),
-          measurementSource:
-            getQuestionFontMeasureForDiag(q.order_index)?.font_measurement_source ?? null,
-        })),
-      'eşitleme öncesi Zustand (henüz yeni ölçüm yok)',
-    );
+      for (const q of withImage) {
+        const imageData = await loadImageDataFromBase64(q.image_base64!);
+        if (!imageData) continue;
+        const measured = estimateCanonicalFontHeightFromRgba(
+          imageData.data,
+          imageData.width,
+          imageData.height,
+        );
+        if (!measured.ok) continue;
 
-    type MeasuredRow = {
-      id: string
-      orderIndex: number
-      confidence: number
-      rawDetectedAnalysisPx: number
-      sanitizedDetectedAnalysisPx: number
-      sourceImageWidthPx: number
-      originalFontHeightPx: number
-      detectedFontHeightPt: number
-      rawNormalizationScale: number
-      normalizationScale: number
-      measurementSource: FontMeasurementSource | undefined
-      anomaly: boolean
-      pixelsPerPdfPoint: number
-      fontMetadataSource: 'capture' | 'legacy-fallback'
-    }
+        const native = nativeSizePtFromCapture(
+          q.capture,
+          imageData.width,
+          imageData.height,
+          q.order_index,
+        );
+        const ppp =
+          native.pixelsPerPdfPoint > 0 ? native.pixelsPerPdfPoint : LEGACY_LAYOUT_ZOOM;
+        const detectedFontPt = measured.value.canonicalPx / ppp;
+        if (!(detectedFontPt > 0)) continue;
 
-    const measured = await Promise.all(
-      withImages.map(async (q): Promise<MeasuredRow | null> => {
-        try {
-          const measure = await measureQuestionFontScale(questionImageToDataUrl(q.image_base64!), {
-            debugId: String(q.order_index + 1),
-            targetLinePt: target,
-          });
-          if (
-            !measure.matched ||
-            measure.rawDetectedAnalysisPx == null ||
-            !(measure.rawDetectedAnalysisPx > 0) ||
-            !(measure.sourceImageWidthPx > 0)
-          ) {
-            return null;
+        let normalizationScale = clampFontEqualizeScale(target / detectedFontPt);
+        if (opts?.availWPt != null && opts.availWPt > 0 && native.nativeWidthPt > 0) {
+          const maxByWidth = opts.availWPt / native.nativeWidthPt;
+          if (Number.isFinite(maxByWidth) && maxByWidth > 0) {
+            normalizationScale = Math.min(normalizationScale, maxByWidth);
+            normalizationScale = clampFontEqualizeScale(normalizationScale);
           }
-
-          const { pixelsPerPdfPoint, metadataSource } = resolveQuestionPixelsPerPdfPoint(q);
-          const physical = computePhysicalFontEqualize({
-            rawDetectedAnalysisPx: measure.rawDetectedAnalysisPx,
-            sourceImageWidthPx: measure.sourceImageWidthPx,
-            pixelsPerPdfPoint,
-            targetQuestionLinePt: target,
-            analysisWidthPx: measure.analysisWidthPx,
-          });
-          if (!physical) return null;
-
-          return {
-            id: q.id,
-            orderIndex: q.order_index,
-            confidence: measure.confidence,
-            rawDetectedAnalysisPx: measure.rawDetectedAnalysisPx,
-            sanitizedDetectedAnalysisPx: physical.sanitizedDetectedAnalysisPx,
-            sourceImageWidthPx: measure.sourceImageWidthPx,
-            originalFontHeightPx: physical.originalFontHeightPx,
-            detectedFontHeightPt: physical.detectedFontHeightPt,
-            rawNormalizationScale: physical.rawNormalizationScale,
-            normalizationScale: physical.normalizationScale,
-            measurementSource: measure.measurementSource ?? measure.source,
-            anomaly: physical.anomaly,
-            pixelsPerPdfPoint,
-            fontMetadataSource: metadataSource,
-          };
-        } catch {
-          return null;
         }
-      }),
-    );
 
-    const usable = measured.filter((m): m is MeasuredRow => m != null);
-    if (usable.length === 0) {
-      endEqualizeRun();
-      return { matched: 0, total: withImage || questions.length, equalizeRunId };
-    }
-
-    logEqualizeStageTable(
-      'MEASUREMENT_COMPLETE',
-      equalizeRunId,
-      usable
-        .slice()
-        .sort((a, b) => a.orderIndex - b.orderIndex)
-        .map((m) => ({
-          questionNo: m.orderIndex + 1,
-          questionId: m.id,
-          detectedFontPt: +m.detectedFontHeightPt.toFixed(4),
-          measurementSource: m.measurementSource ?? null,
-          confidence: +m.confidence.toFixed(1),
-          sourceWidthPx: m.sourceImageWidthPx,
-          ppp: +m.pixelsPerPdfPoint.toFixed(4),
-          meta: m.fontMetadataSource,
-        })),
-      'ölçüm tamam — ortak hedef henüz uygulanmadı',
-    );
-
-    const availWPt =
-      opts?.availWPt != null && opts.availWPt > 0 ? opts.availWPt : Number.POSITIVE_INFINITY;
-
-    const qById = new Map(questions.map((q) => [q.id, q]));
-    const commonInputs = usable.map((m) => {
-      const q = qById.get(m.id);
-      const capture = q?.capture as
-        | { cropWidthPt?: number; cropWidthPx?: number }
-        | undefined
-        | null;
-      const nativeWidthPt = resolveNativeWidthPtForEqualize({
-        sourceImageWidthPx: m.sourceImageWidthPx,
-        pixelsPerPdfPoint: m.pixelsPerPdfPoint,
-        cropWidthPt: capture?.cropWidthPt,
-        cropWidthPx: capture?.cropWidthPx,
-      });
-      const maxAppliedScale = maxAppliedScaleForSingleColumn({
-        nativeWidthPt,
-        singleColumnAvailWPt: availWPt,
-      });
-      // Matched + fiziksel ölçüm = common min’e dahil; ölçümsüz avg fallback ayrı
-      const reliable = m.detectedFontHeightPt > 0 && !m.anomaly;
-      return {
-        questionId: m.id,
-        questionNo: m.orderIndex + 1,
-        detectedFontHeightPt: m.detectedFontHeightPt,
-        maxAppliedScale,
-        reliable,
-        isFallback: m.anomaly || m.confidence < OCR_MIN_CONFIDENCE,
-        nativeWidthPt,
-        row: m,
-      };
-    });
-
-    // Anomali / düşük güven: min hesabına alma (diag’da fallback)
-    const common = computeCommonEffectiveTargetFontPt(
-      target,
-      commonInputs.map((c) => ({
-        questionId: c.questionId,
-        questionNo: c.questionNo,
-        detectedFontHeightPt: c.detectedFontHeightPt,
-        maxAppliedScale: c.maxAppliedScale,
-        reliable: c.reliable && !c.isFallback,
-        isFallback: c.isFallback,
-      })),
-    );
-
-    const perQuestionResults: PerQuestionCommonScaleResult[] = commonInputs.map((c) =>
-      applyCommonFontTargetToQuestion({
-        questionId: c.questionId,
-        questionNo: c.questionNo,
-        detectedFontHeightPt: c.detectedFontHeightPt,
-        maxAppliedScale: c.maxAppliedScale,
-        userTargetFontPt: common.userTargetFontPt,
-        effectiveTargetFontPt: common.effectiveTargetFontPt,
-        reliable: c.reliable,
-        isFallback: c.isFallback,
-      }),
-    );
-
-    logCommonFontTargetSummary(common, perQuestionResults, equalizeRunId);
-
-    const resultById = new Map(perQuestionResults.map((r) => [r.questionId, r]));
-    const reliableScales = perQuestionResults
-      .filter((r) => r.reliable && r.normalizationScale > 0)
-      .map((r) => r.normalizationScale);
-    const avgReliable =
-      reliableScales.length > 0
-        ? reliableScales.reduce((a, b) => a + b, 0) / reliableScales.length
-        : perQuestionResults.length > 0
-          ? perQuestionResults.reduce((a, r) => a + r.normalizationScale, 0) /
-            perQuestionResults.length
-          : 1;
-
-    set({
-      questions: questions.map((q) => {
-        if (!q.image_base64) return q;
-        const row = usable.find((m) => m.id === q.id);
-        const commonRow = resultById.get(q.id);
-        const calculatedCommonTargetScale =
-          commonRow?.normalizationScale ?? avgReliable;
-        // Kesin alanlar: eski manualScale / display_scale spread ile geri gelmesin
-        const scaleFields = buildEqualizeCommitScaleFields(calculatedCommonTargetScale);
-        const detected_font_px = row?.sanitizedDetectedAnalysisPx ?? null;
-
-        recordQuestionFontMeasureForDiag({
-          orderIndex: q.order_index,
-          questionId: q.id,
-          detectedFontPx: detected_font_px,
-          detected_font_analysis_px: row?.sanitizedDetectedAnalysisPx ?? null,
-          detected_font_original_px: row?.originalFontHeightPx ?? null,
-          detected_font_pt: row?.detectedFontHeightPt ?? null,
-          font_measurement_source: row?.measurementSource ?? null,
-          font_measurement_confidence: row?.confidence ?? null,
-          normalization_scale_raw: commonRow?.rawNormalizationScale ?? null,
-          normalization_scale_clamped: scaleFields.normalizationScale,
-          pixels_per_pdf_point_used: row?.pixelsPerPdfPoint ?? null,
-          font_metadata_source: row?.fontMetadataSource ?? null,
-          targetLinePt: common.effectiveTargetFontPt,
-          requestedScale: scaleFields.display_scale,
-        });
-
-        return {
-          ...q,
-          // scaleFields en sonda — stale manualScale (örn. 0.9175) üzerine yazılır
-          ...scaleFields,
-          detected_font_px,
-          ocr_font_matched: false,
-          font_line_px: undefined,
-          font_equalize_diag: commonRow
-            ? {
-                userTargetFontPt: commonRow.userTargetFontPt,
-                effectiveTargetFontPt: commonRow.effectiveTargetFontPt,
-                detectedFontHeightPt: commonRow.detectedFontHeightPt,
-                maxAppliedScale: commonRow.maxAppliedScale,
-                maxAchievableFontPt: commonRow.maxAchievableFontPt,
-                rawNormalizationScale: commonRow.rawNormalizationScale,
-                normalizationScale: commonRow.normalizationScale,
-                finalFontHeightPt: commonRow.finalFontHeightPt,
-                fontTargetErrorPt: commonRow.fontTargetErrorPt,
-                targetReached: commonRow.targetReached,
-                targetLimitation: commonRow.targetLimitation,
-                limitingQuestionNo: common.limitingQuestionNo,
-              }
-            : undefined,
+        const manualScale = 1;
+        updates[q.id] = {
+          manualScale,
+          normalizationScale,
+          display_scale: syncDisplayScaleProduct(manualScale, normalizationScale),
         };
-      }),
-      targetQuestionLinePt: target,
-      isDirty: true,
-    });
+        detectedById[q.id] = measured.value.canonicalPx;
+        matched++;
+      }
 
-    // STATE_COMMITTED: yazıldıktan sonra store’u yeniden oku
-    const committedQs = get().questions;
-    const committedRows: EqualizeCommittedRow[] = committedQs
-      .filter((q) => q.image_base64)
-      .map((q) => {
-        const diag = getQuestionFontMeasureForDiag(q.order_index);
-        return {
-          questionId: q.id,
-          questionNo: q.order_index + 1,
-          orderIndex: q.order_index,
-          detectedFontPt: diag?.detected_font_pt ?? null,
-          normalizationScale: resolveNormalizationScale(q),
-          manualScale: resolveManualScale(q),
-          requestedScale: resolveRequestedScale(q),
-          measurementSource: diag?.font_measurement_source ?? null,
-        };
-      })
-      .sort((a, b) => a.questionNo - b.questionNo);
+      if (Object.keys(updates).length > 0) {
+        set((s) => ({
+          targetQuestionLinePt: target,
+          questions: s.questions.map((x) => {
+            const u = updates[x.id];
+            if (!u) return x;
+            return {
+              ...x,
+              ...u,
+              detected_font_px: detectedById[x.id] ?? x.detected_font_px,
+              ocr_font_matched: true,
+              fontMeasurementRevision: nextFontMeasurementRevision(x),
+            };
+          }),
+          isDirty: true,
+        }));
+      }
 
-    recordCommittedEqualizeRows(committedRows);
-
-    const reliableIds = new Set(
-      perQuestionResults.filter((r) => r.reliable && !r.isFallback).map((r) => r.questionId),
-    );
-    assertEqualizeManualScaleInvariant(
-      equalizeRunId,
-      committedRows.map((r) => {
-        const q = committedQs.find((x) => x.id === r.questionId);
-        return {
-          questionNo: r.questionNo,
-          questionId: r.questionId,
-          manualScale: r.manualScale,
-          normalizationScale: r.normalizationScale,
-          requestedScale: r.requestedScale,
-          display_scale: q?.display_scale ?? r.requestedScale,
-          reliable: reliableIds.has(r.questionId) || resultById.has(r.questionId),
-        };
-      }),
-    );
-
-    logEqualizeStageTable(
-      'STATE_COMMITTED',
-      equalizeRunId,
-      committedRows.map((r) => {
-        const fr = resultById.get(r.questionId);
-        return {
-          questionNo: r.questionNo,
-          questionId: r.questionId,
-          detectedFontPt: r.detectedFontPt != null ? +r.detectedFontPt.toFixed(4) : null,
-          effectiveTargetFontPt: fr ? +fr.effectiveTargetFontPt.toFixed(2) : null,
-          normalizationScale: +r.normalizationScale.toFixed(4),
-          manualScale: +r.manualScale.toFixed(4),
-          requestedScale: +r.requestedScale.toFixed(4),
-          finalFontHeightPt: fr ? +fr.finalFontHeightPt.toFixed(2) : null,
-          targetReached: fr?.targetReached ?? null,
-          measurementSource: r.measurementSource,
-        };
-      }),
-      `Zustand yeniden okundu | effectiveTarget=${common.effectiveTargetFontPt.toFixed(2)}pt`,
-    );
-
-    resetQuestionScaleDiagFlush();
-
-    return { matched: usable.length, total: withImage || questions.length, equalizeRunId };
+      return { matched, total: withImage.length || state.questions.length };
     } finally {
       set({ fontEqualizeInProgress: false });
-      // active run LAYOUT_REFRESHED / PDF_EXPORT için açık kalır; modal endEqualizeRun çağırır
     }
   },
   setQuestionCustomGapMm: (id, gapMm) =>
@@ -2300,6 +2227,26 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       }));
     }
   },
+  setQuestionFasikulFrame: (id, frame) => {
+    const normalized = normalizeFasikulQuestionFrame(frame);
+    set((s) => ({
+      questions: s.questions.map((x) =>
+        x.id === id ? { ...x, fasikulFrame: normalized } : x,
+      ),
+      isDirty: true,
+    }));
+  },
+  applyFasikulFrameToQuestions: (questionIds, frame) => {
+    const normalized = normalizeFasikulQuestionFrame(frame);
+    const idSet = new Set(questionIds);
+    if (idSet.size === 0) return;
+    set((s) => ({
+      questions: s.questions.map((x) =>
+        idSet.has(x.id) ? { ...x, fasikulFrame: normalized } : x,
+      ),
+      isDirty: true,
+    }));
+  },
   setSections: (sections) => set({ sections, isDirty: true }),
   addSection: (section) =>
     set((s) => ({ sections: [...s.sections, section], isDirty: true })),
@@ -2349,6 +2296,21 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         trialTestNameBgOpacityPct:
           es?.trialTestNameBgOpacityPct ?? state.trialTestNameBgOpacityPct,
         trialTestNameBgColor: es?.trialTestNameBgColor ?? state.trialTestNameBgColor,
+        trialBrandName:
+          es?.trialBrandName ??
+          es?.moduleLayouts?.trial?.headerConfig?.brandName ??
+          (es?.activeLayoutModule === "trial"
+            ? es?.headerConfig?.brandName
+            : undefined) ??
+          state.trialBrandName,
+        trialBrandNameVisible:
+          es?.trialBrandNameVisible ??
+          (es?.moduleLayouts?.trial?.headerConfig?.fieldHidden?.brandName === true
+            ? false
+            : es?.headerConfig?.fieldHidden?.brandName === true
+              ? false
+              : undefined) ??
+          state.trialBrandNameVisible,
         options: es?.options
           ? {
               ...state.options,
@@ -2393,7 +2355,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         themeColor: es?.themeColor ?? state.themeColor,
         activeLayoutModule: (() => {
           const fromEs = es?.activeLayoutModule;
-          if (fromEs === "test" || fromEs === "trial") return fromEs;
+          if (fromEs === "test" || fromEs === "trial" || fromEs === "fasikul") return fromEs;
           return paperLayoutModuleFromTab(es?.activeTab) ?? state.activeLayoutModule;
         })(),
         moduleLayouts: (() => {
@@ -2416,19 +2378,58 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               es?.descriptionColumnDividers ?? state.descriptionColumnDividers,
             descriptionBoxPadYPt: es?.descriptionBoxPadYPt ?? state.descriptionBoxPadYPt,
             descriptionBoxPadXPt: es?.descriptionBoxPadXPt ?? state.descriptionBoxPadXPt,
+            showColumnDivider: es?.showColumnDivider ?? state.showColumnDivider,
+            columnDividerText: es?.columnDividerText ?? state.columnDividerText,
+            columnDividerWidthPt: es?.columnDividerWidthPt ?? state.columnDividerWidthPt,
+            showColumnDividerText:
+              es?.showColumnDividerText ??
+              (es?.options?.addTextOnLine ?? state.showColumnDividerText),
+            centerLineBold: es?.centerLineBold ?? state.centerLineBold,
+            centerLineItalic: es?.centerLineItalic ?? state.centerLineItalic,
+            showWatermark: es?.showWatermark ?? state.showWatermark,
+            watermarkText: es?.watermarkText ?? state.watermarkText,
+            watermarkLayout: es?.watermarkLayout ?? state.watermarkLayout,
+            watermarkAngleDeg: es?.watermarkAngleDeg ?? state.watermarkAngleDeg,
+            watermarkOpacity: es?.watermarkOpacity ?? state.watermarkOpacity,
+            watermarkSize: es?.watermarkSize ?? state.watermarkSize,
+            watermarkLogoUrl: es?.watermarkLogoUrl ?? state.watermarkLogoUrl,
+            showPageFrame: es?.showPageFrame ?? state.showPageFrame,
+            pageFrameColorMode: es?.pageFrameColorMode ?? state.pageFrameColorMode,
+            pageFrameColor: es?.pageFrameColor ?? state.pageFrameColor,
+            pageFrameWidthPt: es?.pageFrameWidthPt ?? state.pageFrameWidthPt,
+            pageFrameInnerGapMm: es?.pageFrameInnerGapMm ?? state.pageFrameInnerGapMm,
+            pageFrameCornerRadiusMm:
+              es?.pageFrameCornerRadiusMm ?? state.pageFrameCornerRadiusMm,
+            pageFrameLineStyle: es?.pageFrameLineStyle ?? state.pageFrameLineStyle,
           });
           const tabMod = paperLayoutModuleFromTab(es?.activeTab);
           const raw = es?.moduleLayouts;
           if (raw && typeof raw === "object") {
-            return {
-              test: parseModuleLayoutSnapshot(raw.test, defaultTestModuleLayout()),
-              trial: parseModuleLayoutSnapshot(raw.trial, defaultTrialModuleLayout()),
-            };
+            const ensured = ensureModuleLayouts(raw);
+            if (tabMod) {
+              return { ...ensured, [tabMod]: liveSnap };
+            }
+            return ensured;
           }
           if (tabMod === "trial") {
-            return { test: defaultTestModuleLayout(), trial: liveSnap };
+            return {
+              test: defaultTestModuleLayout(),
+              trial: liveSnap,
+              fasikul: defaultFasikulModuleLayout(),
+            };
           }
-          return { test: liveSnap, trial: defaultTrialModuleLayout() };
+          if (tabMod === "fasikul") {
+            return {
+              test: defaultTestModuleLayout(),
+              trial: defaultTrialModuleLayout(),
+              fasikul: liveSnap,
+            };
+          }
+          return {
+            test: liveSnap,
+            trial: defaultTrialModuleLayout(),
+            fasikul: defaultFasikulModuleLayout(),
+          };
         })(),
         sections: es?.sections ?? state.sections,
         testDescription: es?.testDescription ?? state.testDescription,

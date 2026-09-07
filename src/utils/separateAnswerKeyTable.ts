@@ -2,6 +2,10 @@
  * Ayrı sayfa cevap anahtarı — şık tablo (önizleme canvas).
  */
 
+/** Cevap anahtarı sabit renkleri — tema renginden bağımsız */
+export const ANSWER_KEY_NAVY_HEX = "#0A1931";
+export const ANSWER_KEY_RED_HEX = "#DC2626";
+
 export const SEPARATE_AK = {
   HEADER_H_PT: 28,
   ROW_H_PT: 22,
@@ -99,7 +103,9 @@ export function drawSeparateAnswerKeyTableCanvas(params: {
   scale: number;
   items: SeparateAkItem[];
   title?: string;
-  primaryHex: string;
+  /** @deprecated Tema rengi yok sayılır — sabit lacivert/kırmızı */
+  primaryHex?: string;
+  /** @deprecated Tema rengi yok sayılır — sabit lacivert/kırmızı */
   accentHex?: string;
   pairsPerRow?: number;
 }): SeparateAkLayout {
@@ -111,8 +117,6 @@ export function drawSeparateAnswerKeyTableCanvas(params: {
     scale: s,
     items,
     title = "CEVAP ANAHTARI",
-    primaryHex,
-    accentHex = "#F34A2F",
   } = params;
 
   const layout = computeSeparateAnswerKeyLayout({
@@ -131,8 +135,8 @@ export function drawSeparateAnswerKeyTableCanvas(params: {
     pairsPerRow,
   } = layout;
 
-  const [pr, pg, pb] = hexToRgb(primaryHex);
-  const [ar, ag, ab] = hexToRgb(accentHex);
+  const [pr, pg, pb] = hexToRgb(ANSWER_KEY_NAVY_HEX);
+  const [ar, ag, ab] = hexToRgb(ANSWER_KEY_RED_HEX);
   const primary = `rgb(${pr},${pg},${pb})`;
   const accent = `rgb(${ar},${ag},${ab})`;
   const cornerR = SEPARATE_AK.CORNER_R_PT * s;

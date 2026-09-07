@@ -7,7 +7,6 @@ import {
   columnIndexFromQuestionXPt,
   computePageColumnBand,
   contentTopPtForColumn,
-  FOOTER_TOP_OFFSET_MM,
   mmToPdfPt,
   questionNumberImageGapPt,
   type LayoutGeometryInput,
@@ -31,8 +30,11 @@ import { buildOptikFormPdfOverlays } from "../../utils/optikFormExportOverlay";
 import { computeAnswerKeyLayout } from "../../utils/answerKeyLayout";
 import {
   DEFAULT_TRIAL_YONERGE_TEXT,
+  defaultLgsYonergeHtml,
   isBlankDescriptionTexts,
 } from "../../utils/trialYonergeDefaults";
+import { applyTrialBrandToHeaderConfig } from "../../utils/trialBrandName";
+import { resolvePageDecorForBanner } from "../../utils/lgsPageDecor";
 import ColumnOverlaySelector from "../pdf/ColumnOverlaySelector";
 import ColumnRedistributePopover, {
   type ColumnRedistributeMode,
@@ -51,7 +53,7 @@ import { bookletLetterFromGroup, buildWrittenPaperTitle } from "../../utils/writ
 import { buildPdfExportPayload } from "../../utils/buildPdfExportPayload";
 import { resolveThemedHeaderLogoUrl } from "../../utils/presetLogoRecolor";
 import { resolveLayoutFetchSkipImages } from "../../utils/pdfPreviewFetchOptions";
-import { isCorporateHeader } from "../../utils/corporateHeaderLayout";
+import { isCorporateHeader, isLgsOfficialBannerConfig } from "../../utils/corporateHeaderLayout";
 import { normalizeClassicBannerConfig } from "../../utils/classicBannerTopRow";
 import { normalizeHeaderStyleId } from "../../utils/headerStyles";
 import { pdfPreviewTheme as theme } from "../../styles/pdfPreviewTheme";
@@ -120,10 +122,11 @@ import {
   type BulkScaleStoreUpdate,
 } from "../../utils/bulkScaleSession";
 import {
-  checkEqualizeStateLayoutMismatch,
-  endEqualizeRun,
-  getEqualizeRunIdForLogs,
-  logEqualizeStageTable,
+  beginScaleInteraction,
+  getActiveEqualizeRunId,
+  isScaleInteractionStale,
+  rejectStaleScaleEvent,
+  type ScaleInteractionSnapshot,
 } from "../../utils/equalizeRunDiagnostics";
 import type { ColumnShiftDirection } from "../../utils/columnShift";
 import {
@@ -151,7 +154,7 @@ type PdfPreviewModalProps = {
   isOpen: boolean;
   onClose: () => void;
   /** Yazılı: başlık şablonu + öğretmen satırı; deneme: cevap anahtarı ayrı sayfa şablonu */
-  variant?: "test" | "written" | "trial";
+  variant?: "test" | "written" | "trial" | "fasikul";
 };
 
 function writtenFieldLinesPayload(lines: WrittenHeaderFieldLines) {
@@ -204,14 +207,15 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
   const navigate = useNavigate();
   const isWritten = variant === "written";
   const isTrial = variant === "trial";
+  const isFasikul = variant === "fasikul";
 
   const questions = useEditorStore((s) => s.questions);
   const testName = useEditorStore((s) => s.testName);
   const schoolName = useEditorStore((s) => s.schoolName);
   const options = useEditorStore((s) => s.options);
   const centerLineText = useEditorStore((s) => s.centerLineText);
-  const centerLineBold = useEditorStore((s) => s.centerLineBold);
-  const centerLineItalic = useEditorStore((s) => s.centerLineItalic);
+  const storeCenterLineBold = useEditorStore((s) => s.centerLineBold);
+  const storeCenterLineItalic = useEditorStore((s) => s.centerLineItalic);
   const centerLineTextDirection = useEditorStore((s) => s.centerLineTextDirection);
   const descriptionColumnCount = useEditorStore((s) => s.descriptionColumnCount);
   const descriptionTexts = useEditorStore((s) => s.descriptionTexts);
@@ -228,6 +232,8 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
   const trialBookletColor = useEditorStore((s) => s.trialBookletColor);
   const trialTestNameBgOpacityPct = useEditorStore((s) => s.trialTestNameBgOpacityPct);
   const trialTestNameBgColor = useEditorStore((s) => s.trialTestNameBgColor);
+  const trialBrandName = useEditorStore((s) => s.trialBrandName);
+  const trialBrandNameVisible = useEditorStore((s) => s.trialBrandNameVisible);
   const toggleOption = useEditorStore((s) => s.toggleOption);
   const setDescriptionColumns = useEditorStore((s) => s.setDescriptionColumns);
   const questionGapMm = useEditorStore((s) => s.questionGapMm);
@@ -273,11 +279,11 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     ],
   );
 
-  /** Test / Deneme — önizleme açılınca ve variant değişince doğru modül temasına kilitle */
+  /** Test / Deneme / Fasikül — önizleme açılınca ve variant değişince doğru modül temasına kilitle */
   useEffect(() => {
     if (!isOpen || isWritten) return;
-    syncActiveLayoutModule(isTrial ? "trial" : "test");
-  }, [isOpen, isWritten, isTrial, syncActiveLayoutModule]);
+    syncActiveLayoutModule(isTrial ? "trial" : isFasikul ? "fasikul" : "test");
+  }, [isOpen, isWritten, isTrial, isFasikul, syncActiveLayoutModule]);
 
   // Deneme: ilk açılışta yönergeyi aç + boşsa varsayılan metin (sonra switch serbest)
   const trialYonergeInitRef = useRef(false);
@@ -290,12 +296,29 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     trialYonergeInitRef.current = true;
     if (!options.includeDescription) toggleOption("includeDescription");
     if (isBlankDescriptionTexts(descriptionTexts)) {
-      setDescriptionColumns(1, [DEFAULT_TRIAL_YONERGE_TEXT], false);
+      const st = useEditorStore.getState();
+      const lgs = isLgsOfficialBannerConfig(st.headerConfig);
+      setDescriptionColumns(
+        1,
+        [lgs ? defaultLgsYonergeHtml(st.questions.length || 20) : DEFAULT_TRIAL_YONERGE_TEXT],
+        false,
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- yalnızca deneme önizleme ilk açılışında
   }, [isOpen, isTrial]);
 
-  const headerConfig = useEditorStore((s) => s.headerConfig);
+  const headerConfigRaw = useEditorStore((s) => s.headerConfig);
+  const headerConfig = useMemo(
+    () =>
+      isTrial
+        ? applyTrialBrandToHeaderConfig(
+            headerConfigRaw,
+            trialBrandName,
+            trialBrandNameVisible,
+          )
+        : headerConfigRaw,
+    [isTrial, headerConfigRaw, trialBrandName, trialBrandNameVisible],
+  );
   const themeColor = useEditorStore((s) => s.themeColor);
   const answerKeyMode = useEditorStore((s) => s.answerKeyMode);
   const optikFormEnabled = useEditorStore((s) => s.optikFormEnabled);
@@ -324,25 +347,98 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
   const setAllowSlightOverflow = useEditorStore((s) => s.setAllowSlightOverflow);
   const watermarkEnabled = useEditorStore((s) => s.watermarkEnabled);
   const watermarkSettings = useEditorStore((s) => s.watermarkSettings);
-  const showColumnDivider = useEditorStore((s) => s.showColumnDivider);
-  const columnDividerText = useEditorStore((s) => s.columnDividerText);
+  const storeShowColumnDivider = useEditorStore((s) => s.showColumnDivider);
+  const storeColumnDividerText = useEditorStore((s) => s.columnDividerText);
   const columnDividerColor = useEditorStore((s) => s.columnDividerColor);
-  const columnDividerWidthPt = useEditorStore((s) => s.columnDividerWidthPt);
-  const showColumnDividerText = useEditorStore((s) => s.showColumnDividerText);
-  const showWatermark = useEditorStore((s) => s.showWatermark);
-  const watermarkText = useEditorStore((s) => s.watermarkText);
-  const watermarkLayout = useEditorStore((s) => s.watermarkLayout);
-  const watermarkAngleDeg = useEditorStore((s) => s.watermarkAngleDeg);
-  const watermarkOpacity = useEditorStore((s) => s.watermarkOpacity);
-  const watermarkSize = useEditorStore((s) => s.watermarkSize);
-  const watermarkLogoUrl = useEditorStore((s) => s.watermarkLogoUrl);
-  const showPageFrame = useEditorStore((s) => s.showPageFrame);
-  const pageFrameColorMode = useEditorStore((s) => s.pageFrameColorMode);
-  const pageFrameColor = useEditorStore((s) => s.pageFrameColor);
-  const pageFrameWidthPt = useEditorStore((s) => s.pageFrameWidthPt);
-  const pageFrameInnerGapMm = useEditorStore((s) => s.pageFrameInnerGapMm);
-  const pageFrameCornerRadiusMm = useEditorStore((s) => s.pageFrameCornerRadiusMm);
-  const pageFrameLineStyle = useEditorStore((s) => s.pageFrameLineStyle);
+  const storeColumnDividerWidthPt = useEditorStore((s) => s.columnDividerWidthPt);
+  const storeShowColumnDividerText = useEditorStore((s) => s.showColumnDividerText);
+  const storeShowWatermark = useEditorStore((s) => s.showWatermark);
+  const storeWatermarkText = useEditorStore((s) => s.watermarkText);
+  const storeWatermarkLayout = useEditorStore((s) => s.watermarkLayout);
+  const storeWatermarkAngleDeg = useEditorStore((s) => s.watermarkAngleDeg);
+  const storeWatermarkOpacity = useEditorStore((s) => s.watermarkOpacity);
+  const storeWatermarkSize = useEditorStore((s) => s.watermarkSize);
+  const storeWatermarkLogoUrl = useEditorStore((s) => s.watermarkLogoUrl);
+  const storeShowPageFrame = useEditorStore((s) => s.showPageFrame);
+  const storePageFrameColorMode = useEditorStore((s) => s.pageFrameColorMode);
+  const storePageFrameColor = useEditorStore((s) => s.pageFrameColor);
+  const storePageFrameWidthPt = useEditorStore((s) => s.pageFrameWidthPt);
+  const storePageFrameInnerGapMm = useEditorStore((s) => s.pageFrameInnerGapMm);
+  const storePageFrameCornerRadiusMm = useEditorStore((s) => s.pageFrameCornerRadiusMm);
+  const storePageFrameLineStyle = useEditorStore((s) => s.pageFrameLineStyle);
+
+  const useLgsOfficialBanner =
+    headerConfig.useExamBanner === true &&
+    headerConfig.examBannerTemplate === "lgs-official-ref";
+  const pageDecor = useMemo(
+    () =>
+      resolvePageDecorForBanner(useLgsOfficialBanner, headerConfig.lgsPageDecor, {
+        showColumnDivider: storeShowColumnDivider,
+        columnDividerText: storeColumnDividerText,
+        columnDividerWidthPt: storeColumnDividerWidthPt,
+        showColumnDividerText: storeShowColumnDividerText,
+        centerLineBold: storeCenterLineBold,
+        centerLineItalic: storeCenterLineItalic,
+        showWatermark: storeShowWatermark,
+        watermarkText: storeWatermarkText,
+        watermarkLayout: storeWatermarkLayout,
+        watermarkAngleDeg: storeWatermarkAngleDeg,
+        watermarkOpacity: storeWatermarkOpacity,
+        watermarkSize: storeWatermarkSize,
+        watermarkLogoUrl: storeWatermarkLogoUrl,
+        showPageFrame: storeShowPageFrame,
+        pageFrameColorMode: storePageFrameColorMode,
+        pageFrameColor: storePageFrameColor,
+        pageFrameWidthPt: storePageFrameWidthPt,
+        pageFrameInnerGapMm: storePageFrameInnerGapMm,
+        pageFrameCornerRadiusMm: storePageFrameCornerRadiusMm,
+        pageFrameLineStyle: storePageFrameLineStyle,
+      }),
+    [
+      useLgsOfficialBanner,
+      headerConfig.lgsPageDecor,
+      storeShowColumnDivider,
+      storeColumnDividerText,
+      storeColumnDividerWidthPt,
+      storeShowColumnDividerText,
+      storeCenterLineBold,
+      storeCenterLineItalic,
+      storeShowWatermark,
+      storeWatermarkText,
+      storeWatermarkLayout,
+      storeWatermarkAngleDeg,
+      storeWatermarkOpacity,
+      storeWatermarkSize,
+      storeWatermarkLogoUrl,
+      storeShowPageFrame,
+      storePageFrameColorMode,
+      storePageFrameColor,
+      storePageFrameWidthPt,
+      storePageFrameInnerGapMm,
+      storePageFrameCornerRadiusMm,
+      storePageFrameLineStyle,
+    ],
+  );
+  const showColumnDivider = pageDecor.showColumnDivider;
+  const columnDividerText = pageDecor.columnDividerText;
+  const columnDividerWidthPt = pageDecor.columnDividerWidthPt;
+  const showColumnDividerText = pageDecor.showColumnDividerText;
+  const centerLineBold = pageDecor.centerLineBold;
+  const centerLineItalic = pageDecor.centerLineItalic;
+  const showWatermark = pageDecor.showWatermark;
+  const watermarkText = pageDecor.watermarkText;
+  const watermarkLayout = pageDecor.watermarkLayout;
+  const watermarkAngleDeg = pageDecor.watermarkAngleDeg;
+  const watermarkOpacity = pageDecor.watermarkOpacity;
+  const watermarkSize = pageDecor.watermarkSize;
+  const watermarkLogoUrl = pageDecor.watermarkLogoUrl;
+  const showPageFrame = pageDecor.showPageFrame;
+  const pageFrameColorMode = pageDecor.pageFrameColorMode;
+  const pageFrameColor = pageDecor.pageFrameColor;
+  const pageFrameWidthPt = pageDecor.pageFrameWidthPt;
+  const pageFrameInnerGapMm = pageDecor.pageFrameInnerGapMm;
+  const pageFrameCornerRadiusMm = pageDecor.pageFrameCornerRadiusMm;
+  const pageFrameLineStyle = pageDecor.pageFrameLineStyle;
   const marginTopMm = useEditorStore((s) => s.marginTopMm);
   const marginBottomMm = useEditorStore((s) => s.marginBottomMm);
   const marginLeftMm = useEditorStore((s) => s.marginLeftMm);
@@ -424,7 +520,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
   const [layout, setLayout] = useState<LayoutItem[]>([]);
   const [pageWpt, setPageWpt] = useState(595.28);
   const [pageHpt, setPageHpt] = useState(841.89);
-  const [quality, setQuality] = useState<"normal" | "high" | "best">("high");
+  const [quality, setQuality] = useState<"normal" | "high" | "best">("best");
   const [showThumbnailsPanel, setShowThumbnailsPanel] = useState(false);
   const [showLeftEditPanel, setShowLeftEditPanel] = useState(true);
   const [showRightThemePanel, setShowRightThemePanel] = useState(true);
@@ -460,9 +556,11 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     baseScale: number;
     baseLayout: LayoutItem[];
     placementOverrides: Record<string, LayoutPlacementOverride>;
+    interaction: ScaleInteractionSnapshot;
   } | null>(null);
   const bulkScaleSessionRef = useRef<{
     mode: "all" | "selected";
+    interaction: ScaleInteractionSnapshot;
     sessionStartPercent: number;
     entries: Array<{
       orderIndex: number;
@@ -473,6 +571,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
   } | null>(null);
   /** Preview pending — product + parçalar (yeniden çarpma yok) */
   const pendingDisplayScaleRef = useRef<Record<string, BulkPendingScale>>({});
+  const scaleInteractionByQuestionRef = useRef<Record<string, ScaleInteractionSnapshot>>({});
   /** Önizleme açılışındaki ölçek snapshot — “Orijinal haline dön”. */
   const originalQuestionScaleRef = useRef<
     Record<
@@ -522,13 +621,22 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
   }, [selectedQuestionOrders]);
 
   const applyPendingDisplayScales = useCallback((qs: QuestionItem[]) => {
-    // Eşitleme sırasında eski bulk pending, manualScale'i tekrar yazmasın
-    if (useEditorStore.getState().fontEqualizeInProgress) return qs;
     const pending = pendingDisplayScaleRef.current;
     if (Object.keys(pending).length === 0) return qs;
     return qs.map((x) => {
       const p = pending[x.id];
       if (!p) return x;
+      const interaction = scaleInteractionByQuestionRef.current[x.id];
+      if (getActiveEqualizeRunId() || isScaleInteractionStale(interaction)) {
+        rejectStaleScaleEvent({
+          questionId: x.id,
+          interaction,
+          eventType: "pending-scale-flush",
+          attemptedManualScale: p.manualScale,
+        });
+        delete pendingDisplayScaleRef.current[x.id];
+        return x;
+      }
       // Pending zaten doğru manual/requested taşır — eski state ile çarpma
       return {
         ...x,
@@ -987,6 +1095,8 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       if (target.closest("[data-column-overlay]")) return;
       if (target.closest("[data-question-size-control]")) return;
       if (target.closest("[data-column-shift-arrow]")) return;
+      if (target.closest("[data-fasikul-frame-trigger]")) return;
+      if (target.closest("[data-fasikul-frame-menu]")) return;
       if (target.closest("button")) return;
       if (target.closest("input")) return;
       if (target.closest("textarea")) return;
@@ -1262,14 +1372,24 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       );
       const exportHeaderStyleId = exportState.headerStyleId;
       const exportHeaderConfig = exportState.headerConfig;
+      // syncActiveLayoutModule ile aynı tick’te çağrılınca closure bayat kalabilir —
+      // başlık/yönerge geometrisi için her zaman güncel store.
       const exportIncludeDescription =
-        options.includeDescription && !isCorporateHeader(exportHeaderStyleId);
+        !!exportState.options.includeDescription &&
+        !isCorporateHeader(exportHeaderStyleId);
+      const exportDescriptionColumnCount = exportState.descriptionColumnCount ?? 1;
+      const exportDescriptionTexts = exportIncludeDescription
+        ? (exportState.descriptionTexts ?? [])
+        : [];
+      const exportDescriptionColumnDividers = !!exportState.descriptionColumnDividers;
+      const exportDescriptionBoxPadYPt = exportState.descriptionBoxPadYPt ?? 5;
+      const exportDescriptionBoxPadXPt = exportState.descriptionBoxPadXPt ?? 8;
       const payload = {
         title: isWritten ? testName?.trim() || "Yazılı" : testName?.trim() || "TEST",
         school_name: schoolName?.trim() || "",
-        include_answer_key: options.includeAnswerKey,
+        include_answer_key: exportState.options.includeAnswerKey,
         answer_key_mode:
-          (isWritten || isTrial) && options.includeAnswerKey
+          (isWritten || isTrial) && exportState.options.includeAnswerKey
             ? "separate_page"
             : answerKeyMode ?? "per_page",
         columns,
@@ -1358,11 +1478,11 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         sections: sections.length > 0 ? sections : undefined,
         skip_images: skipImages,
         include_description: exportIncludeDescription,
-        description_column_count: descriptionColumnCount ?? 1,
-        description_texts: exportIncludeDescription ? (descriptionTexts ?? []) : [],
-        description_column_dividers: descriptionColumnDividers,
-        description_box_pad_y_pt: descriptionBoxPadYPt ?? 5,
-        description_box_pad_x_pt: descriptionBoxPadXPt ?? 8,
+        description_column_count: exportDescriptionColumnCount,
+        description_texts: exportDescriptionTexts,
+        description_column_dividers: exportDescriptionColumnDividers,
+        description_box_pad_y_pt: exportDescriptionBoxPadYPt,
+        description_box_pad_x_pt: exportDescriptionBoxPadXPt,
         add_text_on_line:
           exportState.showColumnDividerText &&
           exportState.showColumnDivider &&
@@ -1439,13 +1559,13 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         writtenPaperTitle: isWritten ? writtenTitleForPreview : undefined,
         writtenPaperFieldLines: isWritten ? writtenHeaderFieldLines : emptyWrittenHeaderFieldLines(),
         writtenPaperFieldHidden: isWritten ? writtenHeaderFieldHidden : emptyWrittenHeaderFieldHidden(),
-        includeDescription: options.includeDescription,
-        descriptionColumnCount: descriptionColumnCount ?? 1,
-        descriptionTexts: descriptionTexts ?? [],
-        descriptionBoxPadYPt,
-        descriptionBoxPadXPt,
+        includeDescription: exportIncludeDescription,
+        descriptionColumnCount: exportDescriptionColumnCount,
+        descriptionTexts: exportDescriptionTexts,
+        descriptionBoxPadYPt: exportDescriptionBoxPadYPt,
+        descriptionBoxPadXPt: exportDescriptionBoxPadXPt,
         trialDescriptionMetaBar: false,
-        headerStyleId,
+        headerStyleId: exportHeaderStyleId,
         headerConfig: {
           ...normalizeClassicBannerConfig(exportHeaderConfig),
           showClassicInfoBar: exportHeaderConfig.showClassicInfoBar !== false,
@@ -1737,6 +1857,31 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       });
   }, [sections, isOpen, layoutReady, questions.length, fetchLayout, clearLayoutYTopOverrides]);
 
+  /** Üst modül değişince ana sayfaya dönme — önizleme açık kalsın, layout’u yenile */
+  const prevPreviewVariantRef = useRef(variant);
+  useEffect(() => {
+    if (!isOpen) {
+      prevPreviewVariantRef.current = variant;
+      return;
+    }
+    if (prevPreviewVariantRef.current === variant) return;
+    prevPreviewVariantRef.current = variant;
+    if (questions.length === 0) return;
+    clearLayoutYTopOverrides();
+    layoutLiveRef.current = null;
+    setLoading(true);
+    setError(null);
+    fetchLayout()
+      .then(() => {
+        setLayoutReady(true);
+        setLoading(false);
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : "Önizleme güncellenemedi");
+        setLoading(false);
+      });
+  }, [variant, isOpen, questions.length, fetchLayout, clearLayoutYTopOverrides]);
+
   /** Yazılı başlık alanları değişince soru yerleşimini yeniden hesapla (export ile aynı y_top) */
   const writtenHeaderLayoutSigRef = useRef("");
   useEffect(() => {
@@ -1784,6 +1929,9 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     }
     if (!layoutReady || isWritten || questions.length === 0) return;
     const showInfo = headerConfig.showClassicInfoBar !== false;
+    const descTextSig = (descriptionTexts ?? [])
+      .map((t) => `${String(t).length}:${String(t).slice(0, 24)}`)
+      .join("¦");
     const sig = [
       headerThemeEpoch,
       headerStyleId,
@@ -1794,22 +1942,17 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       String(descriptionColumnCount ?? 1),
       String(descriptionBoxPadYPt ?? 5),
       String(descriptionBoxPadXPt ?? 8),
+      descTextSig,
       String(headerConfig.logoSizePct ?? 100),
       String(headerConfig.logoPadYPt ?? 2),
       String(headerConfig.headerLeftMode ?? ""),
       String(headerConfig.institutionBadgeHeightPt ?? 18),
       String(headerConfig.testNoHeightPt ?? 18),
-      isTrial ? "trial" : "test",
+      isTrial ? "trial" : isFasikul ? "fasikul" : "test",
     ].join("|");
     if (headerThemeFetchSigRef.current === sig) return;
-    const isFirst = headerThemeFetchSigRef.current === "";
     headerThemeFetchSigRef.current = sig;
-    // İlk layoutReady: açılış fetchLayout’u zaten çalışır; yalnızca çiz
-    if (isFirst) {
-      scheduleAllPreviewRedraw();
-      return;
-    }
-    // Stale canlı layout’u at — motor sonucu gelsin
+    // Açılış fetch’i ile aynı tick’te tema/yönerge değişmiş olabilir; her zaman motoru yenile
     layoutLiveRef.current = null;
     clearLayoutYTopOverrides();
     void fetchLayout(undefined, undefined, { silent: true, ignoreYOverrides: true })
@@ -1824,6 +1967,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     layoutReady,
     isWritten,
     isTrial,
+    isFasikul,
     questions.length,
     headerThemeEpoch,
     headerStyleId,
@@ -1837,6 +1981,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     headerConfig.testNoHeightPt,
     options.includeDescription,
     descriptionColumnCount,
+    descriptionTexts,
     descriptionBoxPadYPt,
     descriptionBoxPadXPt,
     fetchLayout,
@@ -2430,6 +2575,21 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       if (!q) return;
 
       const session = scalePreviewSessionRef.current;
+      const interaction =
+        session?.orderIndex === orderIndex
+          ? session.interaction
+          : scaleInteractionByQuestionRef.current[q.id];
+      if (getActiveEqualizeRunId() || isScaleInteractionStale(interaction)) {
+        rejectStaleScaleEvent({
+          questionId: q.id,
+          interaction,
+          eventType: "single-scale-persist",
+          attemptedManualScale: (sizePct / 100) / resolveNormalizationScale(q),
+        });
+        delete pendingDisplayScaleRef.current[q.id];
+        scalePreviewSessionRef.current = null;
+        return;
+      }
       const baseItem =
         session?.orderIndex === orderIndex
           ? session.baseItem
@@ -2575,21 +2735,45 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       const effectiveScale = () => pendingRequestedScale(q.id, resolveRequestedScale(q));
 
       if (phase === "start") {
+        if (getActiveEqualizeRunId()) {
+          rejectStaleScaleEvent({
+            questionId: q.id,
+            interaction: null,
+            eventType: "single-scale-start-during-equalize",
+          });
+          return;
+        }
         const baseItem = layoutRef.current.find((l) => l.order_index === orderIndex);
         if (!baseItem) return;
         clearLayoutLivePreview();
         const exportState = useEditorStore.getState();
+        const interaction = beginScaleInteraction();
+        scaleInteractionByQuestionRef.current[q.id] = interaction;
         scalePreviewSessionRef.current = {
           orderIndex,
           baseItem: JSON.parse(JSON.stringify(baseItem)) as LayoutItem,
           baseScale: effectiveScale(),
           baseLayout: JSON.parse(JSON.stringify(layoutRef.current)) as LayoutItem[],
           placementOverrides: { ...exportState.layoutPlacementOverridesByQuestionId },
+          interaction,
         };
         return;
       }
 
       if (phase === "cancel") {
+        const interaction =
+          scalePreviewSessionRef.current?.interaction ??
+          scaleInteractionByQuestionRef.current[q.id];
+        if (getActiveEqualizeRunId() || isScaleInteractionStale(interaction)) {
+          rejectStaleScaleEvent({
+            questionId: q.id,
+            interaction,
+            eventType: "single-scale-cancel",
+          });
+          delete pendingDisplayScaleRef.current[q.id];
+          scalePreviewSessionRef.current = null;
+          return;
+        }
         delete pendingDisplayScaleRef.current[q.id];
         const session = scalePreviewSessionRef.current;
         if (session?.orderIndex === orderIndex) {
@@ -2605,6 +2789,16 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
 
       let session = scalePreviewSessionRef.current;
       if (!session || session.orderIndex !== orderIndex) {
+        const interaction = scaleInteractionByQuestionRef.current[q.id];
+        if (getActiveEqualizeRunId() || isScaleInteractionStale(interaction)) {
+          rejectStaleScaleEvent({
+            questionId: q.id,
+            interaction,
+            eventType: `single-scale-${phase}`,
+          });
+          delete pendingDisplayScaleRef.current[q.id];
+          return;
+        }
         const baseItem = layoutRef.current.find((l) => l.order_index === orderIndex);
         if (!baseItem) return;
         const exportState = useEditorStore.getState();
@@ -2614,8 +2808,19 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
           baseScale: effectiveScale(),
           baseLayout: JSON.parse(JSON.stringify(layoutRef.current)) as LayoutItem[],
           placementOverrides: { ...exportState.layoutPlacementOverridesByQuestionId },
+          interaction,
         };
         scalePreviewSessionRef.current = session;
+      }
+      if (getActiveEqualizeRunId() || isScaleInteractionStale(session.interaction)) {
+        rejectStaleScaleEvent({
+          questionId: q.id,
+          interaction: session.interaction,
+          eventType: `single-scale-${phase}`,
+        });
+        delete pendingDisplayScaleRef.current[q.id];
+        scalePreviewSessionRef.current = null;
+        return;
       }
 
       const clamped = clampDisplayScalePctToColumn(
@@ -2701,11 +2906,17 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
   );
 
   const startAllQuestionsScaleSession = useCallback(() => {
+    if (getActiveEqualizeRunId()) return;
     beginBulkScaleRun();
     const qs = applyPendingDisplayScales(useEditorStore.getState().questions);
     const entries = buildBulkScaleEntries(qs.map((q) => q.order_index));
+    const interaction = beginScaleInteraction();
+    for (const entry of entries) {
+      scaleInteractionByQuestionRef.current[entry.questionId] = interaction;
+    }
     bulkScaleSessionRef.current = {
       mode: "all",
+      interaction,
       sessionStartPercent: DISPLAY_SCALE_NEUTRAL_PCT,
       entries,
     };
@@ -2716,6 +2927,18 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     (pct: number, mode: "all" | "selected", setSlider: (value: number) => void) => {
       const session = bulkScaleSessionRef.current;
       if (!session || session.mode !== mode) return;
+      if (getActiveEqualizeRunId() || isScaleInteractionStale(session.interaction)) {
+        for (const entry of session.entries) {
+          rejectStaleScaleEvent({
+            questionId: entry.questionId,
+            interaction: session.interaction,
+            eventType: `bulk-scale-${mode}-preview`,
+          });
+          delete pendingDisplayScaleRef.current[entry.questionId];
+        }
+        bulkScaleSessionRef.current = null;
+        return;
+      }
       const clamped = clampDisplayScalePct(pct);
       const relativeFactor = bulkRelativeFactor(clamped, session.sessionStartPercent);
       setSlider(clamped);
@@ -2748,10 +2971,6 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
 
   const commitBulkScale = useCallback(
     (pct: number, mode: "all" | "selected", resetSlider: () => void) => {
-      if (useEditorStore.getState().fontEqualizeInProgress) {
-        resetSlider();
-        return;
-      }
       const session = bulkScaleSessionRef.current;
       const pendingSnapshot = { ...pendingDisplayScaleRef.current };
 
@@ -2761,10 +2980,25 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         if (pendingIds.length > 0) {
           const updates: Record<string, BulkScaleStoreUpdate> = {};
           for (const id of pendingIds) {
-            updates[id] = storeUpdateFromPending(pendingSnapshot[id]!);
+            const interaction = scaleInteractionByQuestionRef.current[id];
+            const pending = pendingSnapshot[id]!;
+            if (getActiveEqualizeRunId() || isScaleInteractionStale(interaction)) {
+              rejectStaleScaleEvent({
+                questionId: id,
+                interaction,
+                eventType: `bulk-scale-${mode}-pending-commit`,
+                attemptedManualScale: pending.manualScale,
+              });
+              continue;
+            }
+            updates[id] = storeUpdateFromPending(pending);
+          }
+          pendingDisplayScaleRef.current = {};
+          if (Object.keys(updates).length === 0) {
+            resetSlider();
+            return;
           }
           setQuestionsBulkScales(updates);
-          pendingDisplayScaleRef.current = {};
           const after = useEditorStore.getState().questions;
           logBulkScaleStateReadback(
             after
@@ -2784,6 +3018,19 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         } else {
           resetSlider();
         }
+        return;
+      }
+      if (getActiveEqualizeRunId() || isScaleInteractionStale(session.interaction)) {
+        for (const entry of session.entries) {
+          rejectStaleScaleEvent({
+            questionId: entry.questionId,
+            interaction: session.interaction,
+            eventType: `bulk-scale-${mode}-commit`,
+          });
+          delete pendingDisplayScaleRef.current[entry.questionId];
+        }
+        bulkScaleSessionRef.current = null;
+        resetSlider();
         return;
       }
 
@@ -2876,6 +3123,19 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         resetSlider();
         return;
       }
+      if (getActiveEqualizeRunId() || isScaleInteractionStale(session.interaction)) {
+        for (const entry of session.entries) {
+          rejectStaleScaleEvent({
+            questionId: entry.questionId,
+            interaction: session.interaction,
+            eventType: `bulk-scale-${mode}-cancel`,
+          });
+          delete pendingDisplayScaleRef.current[entry.questionId];
+        }
+        bulkScaleSessionRef.current = null;
+        resetSlider();
+        return;
+      }
       setLayout((prev) => {
         let next = prev;
         for (const entry of session.entries) {
@@ -2909,10 +3169,16 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
   );
 
   const startSelectedQuestionsScaleSession = useCallback(() => {
+    if (getActiveEqualizeRunId()) return;
     beginBulkScaleRun();
     const entries = buildBulkScaleEntries(selectedQuestionOrders);
+    const interaction = beginScaleInteraction();
+    for (const entry of entries) {
+      scaleInteractionByQuestionRef.current[entry.questionId] = interaction;
+    }
     bulkScaleSessionRef.current = {
       mode: "selected",
+      interaction,
       sessionStartPercent: DISPLAY_SCALE_NEUTRAL_PCT,
       entries,
     };
@@ -2961,32 +3227,6 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       2 -
       Math.max(0, mmToPdfPt(questionNumberLeftOffsetMm));
 
-    // Sütun yerleşimini eşitleme sonrası sabitle (sola yığılmayı azaltır).
-    const freeze: Record<
-      string,
-      { page_num: number; column_index: number; insert_at: "top" | "bottom" }
-    > = {};
-    const qByOrder = new Map(questions.map((q) => [q.order_index, q]));
-    for (const item of layoutRef.current) {
-      if (item.kind === "answer_key_page") continue;
-      const q = qByOrder.get(item.order_index);
-      if (!q) continue;
-      const pageBand = computePageColumnBand({
-        ...layoutGeometryInput,
-        pageNum: item.page_num,
-        columns,
-      });
-      freeze[q.id] = {
-        page_num: item.page_num,
-        column_index: columnIndexFromQuestionXPt(item.x_pt, pageBand),
-        insert_at: "bottom",
-      };
-    }
-    if (Object.keys(freeze).length > 0) {
-      mergeLayoutPlacementOverridesByQuestionId(freeze);
-    }
-
-    // Eşitleme ÖNCE: stale bulk pending / session temizle (manualScale geri yazmasın)
     bulkScaleSessionRef.current = null;
     pendingDisplayScaleRef.current = {};
     scalePreviewSessionRef.current = null;
@@ -2998,67 +3238,12 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       targetLinePt: useEditorStore.getState().targetQuestionLinePt,
     });
 
-    // Eski dikey pin’ler küçülen sorularda 50+ mm boşluk bırakıyordu
     clearLayoutYTopOverrides();
-
-    // Emniyet: eşitleme sonrası tekrar temizle
     bulkScaleSessionRef.current = null;
     pendingDisplayScaleRef.current = {};
     scalePreviewSessionRef.current = null;
 
-    const qsAfter = useEditorStore.getState().questions;
-    const layoutData = await fetchLayout(undefined, qsAfter, {
-      silent: true,
-    });
-    const equalizeRunId = result.equalizeRunId ?? getEqualizeRunIdForLogs();
-    const qByOrderAfter = new Map(qsAfter.map((q) => [q.order_index, q]));
-    // Tercihen layout-engine scale_diag; yoksa state ürünü
-    const layoutSource = layoutData?.layout ?? layoutRef.current;
-    const layoutRows = layoutSource
-      .filter((item) => item.kind !== "answer_key_page" && item.img_w_pt != null)
-      .map((item) => {
-        const q = qByOrderAfter.get(item.order_index);
-        const fromDiag = Number(item.scale_diag?.requestedScale);
-        const requestedScale =
-          Number.isFinite(fromDiag) && fromDiag > 0
-            ? fromDiag
-            : q
-              ? resolveRequestedScale(q)
-              : 1;
-        return {
-          questionNo: (item.display_number ?? item.order_index + 1) as number,
-          orderIndex: item.order_index,
-          questionId: q?.id ?? "",
-          requestedScale: +requestedScale.toFixed(4),
-          normalizationScale: q ? +resolveNormalizationScale(q).toFixed(4) : null,
-          manualScale: q ? +resolveManualScale(q).toFixed(4) : null,
-          appliedScale:
-            item.scale_diag?.appliedScale != null
-              ? +Number(item.scale_diag.appliedScale).toFixed(4)
-              : null,
-          drawWidth: item.img_w_pt ?? null,
-          drawHeight: item.img_h_pt ?? null,
-        };
-      });
-
-    logEqualizeStageTable(
-      "LAYOUT_REFRESHED",
-      equalizeRunId,
-      layoutRows,
-      "fetchLayout sonrası — STATE_COMMITTED ile karşılaştırılır",
-    );
-    checkEqualizeStateLayoutMismatch(
-      equalizeRunId,
-      layoutRows.map((r) => ({
-        questionNo: r.questionNo,
-        orderIndex: r.orderIndex,
-        requestedScale: r.requestedScale,
-        normalizationScale: r.normalizationScale,
-        manualScale: r.manualScale,
-      })),
-    );
-    endEqualizeRun();
-
+    await fetchLayout(undefined, useEditorStore.getState().questions, { silent: true });
     clearLayoutLivePreview();
     scheduleAllPreviewRedraw();
     return result;
@@ -3071,7 +3256,6 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     questionNumberStart,
     questionNumberFontPt,
     questionNumberLeftOffsetMm,
-    mergeLayoutPlacementOverridesByQuestionId,
     clearLayoutYTopOverrides,
     clearLayoutLivePreview,
     scheduleAllPreviewRedraw,
@@ -3188,6 +3372,8 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     setError(null);
     setLayoutReady(false);
     setLayout([]);
+    layoutLiveRef.current = null;
+    clearLayoutYTopOverrides();
     setSelectedQuestion(0);
     setSelectedQuestionOrders([0]);
     if (questions.length > 0) {
@@ -3226,7 +3412,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         });
     }
     setZoom(1);
-  }, [isOpen, questions.length, questionGapMm, fetchLayout]);
+  }, [isOpen, questions.length, questionGapMm, fetchLayout, clearLayoutYTopOverrides]);
 
   const handleGeneratePreview = () => {
     setLoading(true);
@@ -3305,12 +3491,25 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     // Eşitleme sırasında pending flush, manualScale=1’i bozmasın.
     const pending = pendingDisplayScaleRef.current;
     const ids = Object.keys(pending);
-    if (ids.length > 0 && !useEditorStore.getState().fontEqualizeInProgress) {
+    if (ids.length > 0) {
       const updates: Record<string, BulkScaleStoreUpdate> = {};
       for (const id of ids) {
-        updates[id] = storeUpdateFromPending(pending[id]!);
+        const interaction = scaleInteractionByQuestionRef.current[id];
+        const item = pending[id]!;
+        if (getActiveEqualizeRunId() || isScaleInteractionStale(interaction)) {
+          rejectStaleScaleEvent({
+            questionId: id,
+            interaction,
+            eventType: "pdf-export-pending-scale-flush",
+            attemptedManualScale: item.manualScale,
+          });
+          continue;
+        }
+        updates[id] = storeUpdateFromPending(item);
       }
-      setQuestionsBulkScales(updates);
+      if (Object.keys(updates).length > 0) {
+        setQuestionsBulkScales(updates);
+      }
       pendingDisplayScaleRef.current = {};
     }
     const s = useEditorStore.getState();
@@ -3385,28 +3584,34 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       orientation: s.orientation,
       watermarkEnabled: s.watermarkEnabled,
       watermarkSettings: s.watermarkSettings,
-      showColumnDivider: s.showColumnDivider,
-      columnDividerText: s.columnDividerText,
+      showColumnDivider: pageDecor.showColumnDivider,
+      columnDividerText: pageDecor.columnDividerText,
       columnDividerColor: s.columnDividerColor,
-      columnDividerWidthPt: s.columnDividerWidthPt,
-      showColumnDividerText: s.showColumnDividerText,
-      showWatermark: s.showWatermark,
-      watermarkText: s.watermarkText,
-      watermarkLayout: s.watermarkLayout,
-      watermarkAngleDeg: s.watermarkAngleDeg,
-      watermarkOpacity: s.watermarkOpacity,
-      watermarkSize: s.watermarkSize,
-      watermarkLogoUrl: s.watermarkLogoUrl,
-      showPageFrame: s.showPageFrame,
-      pageFrameColorMode: s.pageFrameColorMode,
-      pageFrameColor: s.pageFrameColor,
-      pageFrameWidthPt: s.pageFrameWidthPt,
-      pageFrameInnerGapMm: s.pageFrameInnerGapMm,
-      pageFrameCornerRadiusMm: s.pageFrameCornerRadiusMm,
-      pageFrameLineStyle: s.pageFrameLineStyle,
+      columnDividerWidthPt: pageDecor.columnDividerWidthPt,
+      showColumnDividerText: pageDecor.showColumnDividerText,
+      showWatermark: pageDecor.showWatermark,
+      watermarkText: pageDecor.watermarkText,
+      watermarkLayout: pageDecor.watermarkLayout,
+      watermarkAngleDeg: pageDecor.watermarkAngleDeg,
+      watermarkOpacity: pageDecor.watermarkOpacity,
+      watermarkSize: pageDecor.watermarkSize,
+      watermarkLogoUrl: pageDecor.watermarkLogoUrl,
+      showPageFrame: pageDecor.showPageFrame,
+      pageFrameColorMode: pageDecor.pageFrameColorMode,
+      pageFrameColor: pageDecor.pageFrameColor,
+      pageFrameWidthPt: pageDecor.pageFrameWidthPt,
+      pageFrameInnerGapMm: pageDecor.pageFrameInnerGapMm,
+      pageFrameCornerRadiusMm: pageDecor.pageFrameCornerRadiusMm,
+      pageFrameLineStyle: pageDecor.pageFrameLineStyle,
       themeColor: s.themeColor,
       headerStyleId: s.headerStyleId,
-      headerConfig: s.headerConfig,
+      headerConfig: isTrial
+        ? applyTrialBrandToHeaderConfig(
+            s.headerConfig,
+            s.trialBrandName,
+            s.trialBrandNameVisible,
+          )
+        : s.headerConfig,
       quality,
       sections: s.sections,
       includeDescription,
@@ -3416,12 +3621,12 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       descriptionBoxPadYPt: s.descriptionBoxPadYPt ?? 5,
       descriptionBoxPadXPt: s.descriptionBoxPadXPt ?? 8,
       addTextOnLine:
-        s.showColumnDividerText &&
-        s.showColumnDivider &&
-        !!s.columnDividerText.trim(),
-      centerLineText: s.columnDividerText,
-      centerLineBold: s.centerLineBold,
-      centerLineItalic: s.centerLineItalic,
+        pageDecor.showColumnDividerText &&
+        pageDecor.showColumnDivider &&
+        !!pageDecor.columnDividerText.trim(),
+      centerLineText: pageDecor.columnDividerText,
+      centerLineBold: pageDecor.centerLineBold,
+      centerLineItalic: pageDecor.centerLineItalic,
       centerLineTextDirection: s.centerLineTextDirection ?? "up",
       headerBottomGapMm: s.headerBottomGapMm,
       otherPageHeaderBottomGapMm: s.otherPageHeaderBottomGapMm,
@@ -3434,6 +3639,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       pageNumberingEnabled: s.pageNumberingEnabled,
       pageNumberStart: s.pageNumberStart,
       pageNumberFormat: s.pageNumberFormat,
+      showQuestionScratchGrid: isFasikul,
       writtenBlock: isWritten
         ? {
             written_paper_header: true,
@@ -3486,6 +3692,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     trialBookletColor,
     trialTestNameBgOpacityPct,
     trialTestNameBgColor,
+    pageDecor,
   ]);
 
   const buildLiveExportPayloadAsync = useCallback(async () => {
@@ -3528,7 +3735,13 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
           answerKeyPageCount: answerKeyPages,
           offsetYPt: s.optikFormOffsetYPt ?? 0,
           headerStyleId: s.headerStyleId,
-          headerConfig: s.headerConfig,
+          headerConfig: isTrial
+            ? applyTrialBrandToHeaderConfig(
+                s.headerConfig,
+                s.trialBrandName,
+                s.trialBrandNameVisible,
+              )
+            : s.headerConfig,
           headerBottomGapMm: s.headerBottomGapMm,
           otherPageHeaderBottomGapMm: s.otherPageHeaderBottomGapMm,
           writtenPaperHeader: isWritten,
@@ -3719,10 +3932,6 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
 
   const handleSavePdf = async () => {
     if (questions.length === 0) return;
-    if (useEditorStore.getState().fontEqualizeInProgress) {
-      setSaveError("Yazı eşitleme bitmeden PDF kaydedilemez.");
-      return;
-    }
     setSavingPdf(true);
     setSaveError(null);
     setSaveAlert(null);
@@ -3749,11 +3958,9 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       }
 
       const exportId = `exp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      const equalizeRunId = getEqualizeRunIdForLogs();
       const bulkScaleRunId = getBulkScaleRunId();
       console.error("[PDF_EXPORT:UI]", {
         exportId,
-        equalizeRunId,
         bulkScaleRunId,
         stage: "PDF_EXPORT",
         file: "src/components/modals/PdfPreviewModal.tsx",
@@ -3766,7 +3973,6 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       });
       console.error("[PDF_EXPORT:UI] export summary", {
         exportId: diagnostics.exportId,
-        equalizeRunId,
         bulkScaleRunId,
         stage: "PDF_EXPORT",
         renderedQuestionCount: diagnostics.renderedQuestionCount,
@@ -3853,7 +4059,6 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       </h1>
       <AppTopBar
         className="pdf-preview-top-bar"
-        onModuleSelect={() => onClose()}
         leftSlot={
           <button
             type="button"
@@ -3937,7 +4142,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
 
           {!isWritten && <YonergePanel trialMode={isTrial} />}
 
-          <AnswerKeyFooterPanel />
+          <AnswerKeyFooterPanel trialMode={isTrial} />
 
           <AlignmentSpacingSliders
             headerBottomGapMm={headerBottomGapMm}
@@ -3974,7 +4179,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
             onQuestionNumberImageGapCancel={handleQuestionNumberImageGapCancel}
           />
 
-          {!isWritten && (
+          {!isWritten && !isTrial && (
             <button
               type="button"
               onClick={() => setSectionModalOpen(true)}
@@ -4002,7 +4207,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
           )}
         </div>
 
-        {!isWritten && (
+        {!isWritten && !isTrial && (
           <SectionAddModal
             isOpen={sectionModalOpen}
             onClose={() => setSectionModalOpen(false)}
@@ -4210,6 +4415,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                         pageFrameCornerRadiusMm={pageFrameCornerRadiusMm}
                                 pageFrameLineStyle={pageFrameLineStyle}
                                 writtenPaperHeader={isWritten}
+                                showQuestionScratchGrid={isFasikul}
                                 writtenPaperTitle={isWritten ? writtenTitleForPreview : undefined}
                                 writtenPaperFieldLines={
                                   isWritten ? writtenHeaderFieldLines : emptyWrittenHeaderFieldLines()
@@ -4306,6 +4512,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                                 onRegisterRedraw={(redraw) =>
                                   registerVerticalOverlayRedraw(pageNum, redraw)
                                 }
+                                fasikulFrameControls={isFasikul}
                               />
                               <OptikFormDragOverlay
                                 enabled={
@@ -4577,6 +4784,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                         pageFrameCornerRadiusMm={pageFrameCornerRadiusMm}
                         pageFrameLineStyle={pageFrameLineStyle}
                         writtenPaperHeader={isWritten}
+                        showQuestionScratchGrid={isFasikul}
                         writtenPaperTitle={isWritten ? writtenTitleForPreview : undefined}
                         writtenPaperFieldLines={isWritten ? writtenHeaderFieldLines : emptyWrittenHeaderFieldLines()}
                         writtenPaperFieldLabels={isWritten ? writtenHeaderFieldLabels : emptyWrittenHeaderFieldLabels()}

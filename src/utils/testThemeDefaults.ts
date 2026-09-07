@@ -19,6 +19,10 @@ import { SUBJECT_PILL_TEXT_OFFSET_Y_DEFAULT_PT } from "./modernCorporateHeaderSh
 /** Minimal ders adı arka plan — lacivert */
 const MINIMAL_SUBJECT_PILL_FILL_DEFAULT = "#0A1931";
 
+/** Fasikül varsayılan renkleri — test modülünden bağımsız */
+export const FASIKUL_THEME_PRIMARY = "#0A1931";
+export const FASIKUL_THEME_ACCENT = "#DC2626";
+
 export type TestThemeDefaultsResult = {
   headerStyleId: HeaderStyleId;
   headerConfig: HeaderConfig;
@@ -94,5 +98,25 @@ export function buildTestThemeDefaults(
       badgeByStyle,
     },
     themeColor: primary,
+  };
+}
+
+/** Fasikül — Standart / Minimal fabrika ayarı (lacivert + kırmızı) */
+export function buildFasikulThemeDefaults(
+  activeStyleId: string | undefined,
+): TestThemeDefaultsResult {
+  const built = buildTestThemeDefaults(activeStyleId);
+  return {
+    ...built,
+    themeColor: FASIKUL_THEME_PRIMARY,
+    headerConfig: {
+      ...built.headerConfig,
+      primaryColor: FASIKUL_THEME_PRIMARY,
+      accentColor: FASIKUL_THEME_ACCENT,
+      subjectPillFillColor:
+        built.headerStyleId === "style_2"
+          ? FASIKUL_THEME_PRIMARY
+          : built.headerConfig.subjectPillFillColor,
+    },
   };
 }

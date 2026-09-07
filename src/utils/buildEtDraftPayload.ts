@@ -1,6 +1,6 @@
 import type { DraftFilePayload } from "../store/editorStore";
 import { useEditorStore } from "../store/editorStore";
-import { captureModuleLayout } from "./moduleLayoutSnapshots";
+import { captureModuleLayout, ensureModuleLayouts } from "./moduleLayoutSnapshots";
 
 export const ET_DRAFT_FORMAT = "edutest-draft";
 export const ET_DRAFT_VERSION = 1;
@@ -13,10 +13,10 @@ export function buildEtDraftPayload(name: string): DraftFilePayload & {
 } {
   const s = useEditorStore.getState();
   const safeName = name.trim() || s.persistedDraftName || s.testName?.trim() || "taslak";
-  const moduleLayouts = {
+  const moduleLayouts = ensureModuleLayouts({
     ...s.moduleLayouts,
     [s.activeLayoutModule]: captureModuleLayout(s),
-  };
+  });
 
   return {
     format: ET_DRAFT_FORMAT,
@@ -47,6 +47,8 @@ export function buildEtDraftPayload(name: string): DraftFilePayload & {
       trialBookletColor: s.trialBookletColor,
       trialTestNameBgOpacityPct: s.trialTestNameBgOpacityPct,
       trialTestNameBgColor: s.trialTestNameBgColor,
+      trialBrandName: s.trialBrandName,
+      trialBrandNameVisible: s.trialBrandNameVisible,
       options: { ...s.options },
       questionGapMm: s.questionGapMm,
       questionGapMinMm: s.questionGapMinMm,

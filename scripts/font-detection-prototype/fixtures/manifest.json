@@ -1,0 +1,122 @@
+[
+  {
+    "file": "y4_Q1_3a0ba901e691.png",
+    "sourceDraft": "y4.et",
+    "orderIndex": 0,
+    "questionId": "b8d97125-e551-4dd5-9c5c-8438a407b32a",
+    "width": 3801,
+    "height": 3873
+  },
+  {
+    "file": "y4_Q2_79d9a6caef77.png",
+    "sourceDraft": "y4.et",
+    "orderIndex": 1,
+    "questionId": "b0292109-20f3-4ba3-ad5c-3033cf16c90c",
+    "width": 3801,
+    "height": 2522
+  },
+  {
+    "file": "y4_Q3_f13740e1eb17.png",
+    "sourceDraft": "y4.et",
+    "orderIndex": 2,
+    "questionId": "895a91a0-6b26-4d9f-b99e-bdfe660a8bf2",
+    "width": 3653,
+    "height": 1472
+  },
+  {
+    "file": "y4_Q4_9710e7815331.png",
+    "sourceDraft": "y4.et",
+    "orderIndex": 3,
+    "questionId": "2b2715d1-f7bc-4dbb-8777-8aa1662711f4",
+    "width": 1908,
+    "height": 2109
+  },
+  {
+    "file": "y4_Q5_eb82b8b75780.png",
+    "sourceDraft": "y4.et",
+    "orderIndex": 4,
+    "questionId": "17c3dfa1-3edc-47b2-be3c-408fc07cacf7",
+    "width": 1867,
+    "height": 1832
+  },
+  {
+    "file": "y4_Q6_c7c2186818c7.png",
+    "sourceDraft": "y4.et",
+    "orderIndex": 5,
+    "questionId": "a4f5afc9-510d-48e1-93f5-5d795606252a",
+    "width": 3183,
+    "height": 2698
+  },
+  {
+    "file": "y4_Q7_cc542f6177f4.png",
+    "sourceDraft": "y4.et",
+    "orderIndex": 6,
+    "questionId": "29799f9a-3084-4846-91b7-3fad2e70b671",
+    "width": 3152,
+    "height": 2473
+  },
+  {
+    "file": "y4_Q8_75e0de1f0756.png",
+    "sourceDraft": "y4.et",
+    "orderIndex": 7,
+    "questionId": "61774536-27db-4185-b678-f96217c0ff4c",
+    "width": 1346,
+    "height": 1374
+  },
+  {
+    "file": "y4_Q9_ee31549d4712.png",
+    "sourceDraft": "y4.et",
+    "orderIndex": 8,
+    "questionId": "1c8d0ff4-2fee-498a-8580-19bef5bb5a84",
+    "width": 1346,
+    "height": 1284
+  },
+  {
+    "file": "t1_Q1_4c8f38a6f541.png",
+    "sourceDraft": "t1.et",
+    "orderIndex": 0,
+    "questionId": "1b92a3a9-346a-40b3-9eb6-03fb15fdf5c2",
+    "width": 1889,
+    "height": 1179
+  },
+  {
+    "file": "t1_Q2_92f6d7db7a53.png",
+    "sourceDraft": "t1.et",
+    "orderIndex": 1,
+    "questionId": "f5e082f6-7cb2-4560-bbd1-1eab27b903b9",
+    "width": 1857,
+    "height": 1236
+  },
+  {
+    "file": "t1_Q3_89540ca4b7ad.png",
+    "sourceDraft": "t1.et",
+    "orderIndex": 2,
+    "questionId": "61730a9b-0787-4e9a-94eb-30613455d7cd",
+    "width": 1881,
+    "height": 1254
+  },
+  {
+    "file": "t1_Q4_1f9e8f3e5437.png",
+    "sourceDraft": "t1.et",
+    "orderIndex": 3,
+    "questionId": "d361b8f8-02d9-464d-b3fe-2e632a7014ed",
+    "width": 1492,
+    "height": 1928
+  },
+  {
+    "file": "t1_Q5_943fcd86e1e1.png",
+    "sourceDraft": "t1.et",
+    "orderIndex": 4,
+    "questionId": "ce506e78-3de4-4966-b4eb-9ea35e9474c4",
+    "width": 1342,
+    "height": 1378
+  },
+  {
+    "file": "t1_Q8_bbc1e9ca9a06.png",
+    "sourceDraft": "t1.et",
+    "orderIndex": 7,
+    "questionId": "53e5e8c6-a03e-4bbb-b92e-5dd7843b8cf9",
+    "width": 1720,
+    "height": 1182
+  }
+]

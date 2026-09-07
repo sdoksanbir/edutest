@@ -1643,6 +1643,7 @@
   position: relative;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0.625rem;
   width: 100%;
   min-height: 2.875rem;
@@ -1656,6 +1657,7 @@
   font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.04em;
+  text-transform: uppercase;
   cursor: pointer;
   box-shadow:
     0 3px 12px rgb(15 23 42 / 0.28),
@@ -1791,8 +1793,9 @@
 .tq-dash-prepare-btn__label {
   position: relative;
   z-index: 1;
-  flex: 1 1 auto;
-  text-align: left;
+  flex: 0 1 auto;
+  text-align: center;
+  text-transform: uppercase;
   text-shadow: 0 1px 2px rgb(29 78 216 / 0.35);
 }
 

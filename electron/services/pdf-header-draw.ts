@@ -27,10 +27,13 @@ import {
   drawThemeFirstPageHeaderPdf,
   drawThemeRunningHeaderPdfFromPayload,
 } from './theme-header-draw.js'
+import { drawLgsOfficialBannerPdf } from './lgs-official-banner-draw.js'
 import {
   classicBannerSubjectText,
   otherPageHeaderLeftText,
   otherPageHeaderRightText,
+  trialOsymOtherPageLeftText,
+  trialOsymOtherPageRightText,
   visibleSubTopicText,
   visibleTopicText,
 } from './header-field-visibility.js'
@@ -627,13 +630,20 @@ function drawOtherPageBanner(
   const styleId = String(payload.header_style_id ?? '')
   const topicPt = getHeaderFieldFontPt('topic', styleId, config, 'running')
   const brandPt = getHeaderFieldFontPt('brandName', styleId, config, 'running')
+  const trial = parseTrialBanner(payload)
 
-  let titleStr = otherPageHeaderLeftText(config).slice(0, 80)
+  let titleStr = (
+    trial
+      ? trialOsymOtherPageLeftText(trial.examCode)
+      : otherPageHeaderLeftText(config)
+  ).slice(0, 80)
   while (titleStr.length > 1 && fonts.bold.widthOfTextAtSize(titleStr, topicPt) > halfW - padX) {
     titleStr = titleStr.slice(0, -1)
   }
 
-  let schoolStr = otherPageHeaderRightText(config).slice(0, 80)
+  let schoolStr = (
+    trial ? trialOsymOtherPageRightText(config) : otherPageHeaderRightText(config)
+  ).slice(0, 80)
   while (schoolStr.length > 0 && fonts.bold.widthOfTextAtSize(schoolStr, brandPt) > halfW - padX) {
     schoolStr = schoolStr.slice(0, -1)
   }
@@ -643,7 +653,11 @@ function drawOtherPageBanner(
   const midY = boxY + BANNER_H_PT / 2
   const bandH = Math.max(topicPt, brandPt) + 2 * padV
   const yWhiteBottom = midY - bandH / 2
-  const topicColor = hexToRgbColor(headerFieldColor(config, 'topic', '#262626'))
+  const topicColor = hexToRgbColor(
+    trial && trial.examCodeColor
+      ? trial.examCodeColor
+      : headerFieldColor(config, 'topic', '#262626'),
+  )
   const brandColor = hexToRgbColor(headerFieldColor(config, 'brandName', '#262626'))
 
   if (titleStr) {
@@ -704,7 +718,24 @@ export async function drawPageHeader(
 
   if (pageNum === 1) {
     if (isCorporateHeader(String(payload.header_style_id ?? ''))) {
-      await drawThemeFirstPageHeaderPdf(pdf, page, payload, geom, mt, fonts)
+      const cfg = parseHeaderConfig(payload.header_config)
+      if (cfg.useExamBanner === true && cfg.examBannerTemplate === 'lgs-official-ref') {
+        const trial = parseTrialBanner(payload)
+        const descTexts = Array.isArray(payload.description_texts)
+          ? (payload.description_texts as unknown[]).map((t) => String(t ?? ''))
+          : []
+        if (!(cfg.subject || '').trim() && trial?.testName) {
+          cfg.subject = trial.testName
+        }
+        await drawLgsOfficialBannerPdf(pdf, page, cfg, geom, mt, fonts, {
+          questionCount: Array.isArray(payload.questions)
+            ? (payload.questions as unknown[]).length
+            : 20,
+          instructionTexts: descTexts,
+        })
+      } else {
+        await drawThemeFirstPageHeaderPdf(pdf, page, payload, geom, mt, fonts)
+      }
     } else {
       await drawPage1Style3Banner(pdf, page, payload, geom, mt, theme, themeHex, fonts)
     }

@@ -11,16 +11,21 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import type { CropBox } from "../../types";
+import type { CropBox, FontReferenceV1, QuestionItem } from "../../types";
 import type { AnswerOption } from "../../types";
 import {
   loadPdfFromFile,
   renderPageToDataUrl,
-  renderPageWithCaptureMeta,
+  renderPdfCropToBase64,
   cropImageToBase64,
   CROP_EXPORT_DPI,
+  CROP_PREVIEW_DPI,
 } from "../../utils/pdfClient";
-import { buildQuestionCaptureMeta } from "../../utils/questionCapture";
+import {
+  buildQuestionCaptureMeta,
+  inspectQuestionCaptureSync,
+  syncQuestionCaptureToBitmap,
+} from "../../utils/questionCapture";
 import type { QuestionCaptureMeta } from "../../types";
 import {
   listLocalPdfs,
@@ -82,6 +87,7 @@ type PendingSelection = {
   /** Local PDF store id (kaydetme için doc erişimi) */
   localPdfId?: string;
   localFilename?: string;
+  fontReference?: FontReferenceV1;
 };
 
 export default function CropWorkspace() {
@@ -96,13 +102,15 @@ export default function CropWorkspace() {
   const setQuestionDisplayScale = useEditorStore((s) => s.setQuestionDisplayScale);
   const reorderQuestions = useEditorStore((s) => s.reorderQuestions);
   const updateQuestionCrop = useEditorStore((s) => s.updateQuestionCrop);
-  const updateQuestionImage = useEditorStore((s) => s.updateQuestionImage);
+  const updateQuestionCropAndImage = useEditorStore((s) => s.updateQuestionCropAndImage);
 
   const [localPdfs, setLocalPdfs] = useState<LocalPdfEntry[]>([]);
   const [localImages, setLocalImages] = useState<LocalImageEntry[]>([]);
   /** local:id - combo değeri */
   const [selectedSource, setSelectedSource] = useState<string>("");
   const [localPageDataUrls, setLocalPageDataUrls] = useState<Record<string, string>>({});
+  const localPageDataUrlsRef = useRef(localPageDataUrls);
+  localPageDataUrlsRef.current = localPageDataUrls;
   const [localPdfLoading, setLocalPdfLoading] = useState(false);
   const [localImageLoading, setLocalImageLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -118,7 +126,8 @@ export default function CropWorkspace() {
   const pdfPageIndicesRef = useRef<Record<string, number>>({});
   /** Zoom: 100 = 1:1 natural size. Tek source of truth. */
   const [zoom, setZoom] = useState(100);
-  const DISPLAY_DPI = CROP_EXPORT_DPI;
+  /** Ekran önizlemesi düşük DPI; kırpma CROP_EXPORT_DPI ile yapılır. */
+  const DISPLAY_DPI = CROP_PREVIEW_DPI;
   const [pendingSelections, setPendingSelections] = useState<PendingSelection[]>([]);
   const [showSelectionsPanel, setShowSelectionsPanel] = useState(false);
 
@@ -225,12 +234,18 @@ export default function CropWorkspace() {
   useEffect(() => {
     if (!selectedLocalPdf || currentPage < 1 || currentPage > selectedLocalPdf.pageCount) return;
     const cacheKey = `${selectedLocalPdf.id}:${currentPage}:${DISPLAY_DPI}`;
-    if (localPageDataUrls[cacheKey]) return;
+    if (localPageDataUrlsRef.current[cacheKey]) return;
     let cancelled = false;
     renderPageToDataUrl(selectedLocalPdf.doc, currentPage, DISPLAY_DPI)
       .then((dataUrl) => {
-        if (!cancelled)
-          setLocalPageDataUrls((prev) => ({ ...prev, [cacheKey]: dataUrl }));
+        if (cancelled) return;
+        if (!dataUrl || dataUrl.length < 64) {
+          setError("PDF sayfası boş render edildi");
+          return;
+        }
+        setLocalPageDataUrls((prev) =>
+          prev[cacheKey] ? prev : { ...prev, [cacheKey]: dataUrl },
+        );
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : "Sayfa render edilemedi");
@@ -238,7 +253,7 @@ export default function CropWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [selectedLocalPdf, currentPage, localPageDataUrls, DISPLAY_DPI]);
+  }, [selectedLocalPdf, currentPage, DISPLAY_DPI]);
 
   // Local resim: dataUrl zaten hazır, cache'e yaz (tek sayfa)
   useEffect(() => {
@@ -281,6 +296,7 @@ export default function CropWorkspace() {
         isLocal,
         localPdfId: localPdfId ?? (q as { localPdfId?: string }).localPdfId,
         localFilename,
+        fontReference: q.fontReference,
       };
     });
     const stored = getStoredPendingSelectionsForValidDocuments([]) as PendingSelection[];
@@ -474,57 +490,15 @@ export default function CropWorkspace() {
     if (!imgRef.current) return;
     const w = imgRef.current.naturalWidth;
     const h = imgRef.current.naturalHeight;
-    if (w <= 0 || h <= 0) return;
+    // Bozuk / boş render (1x1 vb.) → beyaz ekran olmasın
+    if (w < 8 || h < 8) {
+      setError("PDF sayfası görüntülenemedi (boş render). Yeniden deneyin.");
+      setImgLoaded(false);
+      return;
+    }
     setNaturalImageSize({ w, h });
     setImgLoaded(true);
   }, []);
-
-  /** Kesim kaynağı: tam DPI sayfa önbelleği — ekran zoom’undan bağımsız. */
-  const resolveCropSource = useCallback(
-    async (
-      sel: PendingSelection,
-    ): Promise<{ source: HTMLImageElement | string; capture?: QuestionCaptureMeta } | null> => {
-      if (!sel.localPdfId) return null;
-
-      const imgEntry = getLocalImage(sel.localPdfId);
-      if (imgEntry) return { source: imgEntry.dataUrl };
-
-      const cacheKey = `${sel.localPdfId}:${sel.page_number}:${DISPLAY_DPI}`;
-      const cached = localPageDataUrls[cacheKey];
-      const pdfEntry = getLocalPdf(sel.localPdfId);
-      if (!pdfEntry) return null;
-
-      if (cached) {
-        const info = await renderPageWithCaptureMeta(pdfEntry.doc, sel.page_number, DISPLAY_DPI);
-        const capture = buildQuestionCaptureMeta({
-          sourcePageWidthPt: info.sourcePageWidthPt,
-          sourcePageHeightPt: info.sourcePageHeightPt,
-          viewportScale: info.viewportScale,
-          devicePixelRatio: info.devicePixelRatio,
-          cropNorm: sel.crop,
-          pageWidthPx: info.pageWidthPx,
-          pageHeightPx: info.pageHeightPx,
-        });
-        return { source: cached, capture };
-      }
-
-      const info = await renderPageWithCaptureMeta(pdfEntry.doc, sel.page_number, DISPLAY_DPI);
-      setLocalPageDataUrls((prev) =>
-        prev[cacheKey] ? prev : { ...prev, [cacheKey]: info.dataUrl },
-      );
-      const capture = buildQuestionCaptureMeta({
-        sourcePageWidthPt: info.sourcePageWidthPt,
-        sourcePageHeightPt: info.sourcePageHeightPt,
-        viewportScale: info.viewportScale,
-        devicePixelRatio: info.devicePixelRatio,
-        cropNorm: sel.crop,
-        pageWidthPx: info.pageWidthPx,
-        pageHeightPx: info.pageHeightPx,
-      });
-      return { source: info.dataUrl, capture };
-    },
-    [localPageDataUrls, DISPLAY_DPI],
-  );
 
   /** Tek seçimi ana editöre anında ekler (local PDF/resim) */
   const addSelectionToEditor = useCallback(
@@ -532,42 +506,61 @@ export default function CropWorkspace() {
       const t0 = performance.now();
       const existing = useEditorStore.getState().questions;
       const orderIndex = existing.length;
-      if (!sel.localPdfId) return;
+      if (!sel.localPdfId) return false;
 
       try {
-        const resolved = await resolveCropSource(sel);
-        if (!resolved) return;
-
         const tCrop = performance.now();
-        const imageBase64 = await cropImageToBase64(resolved.source, sel.crop);
-        const cropMs = performance.now() - tCrop;
-        const rawB64 = imageBase64.includes(",") ? imageBase64.split(",", 2)[1]! : imageBase64;
+        let rawB64: string;
+        let capture: QuestionCaptureMeta | undefined;
 
-        let capture = resolved.capture;
-        if (capture) {
-          // Gerçek kırpılmış PNG boyutuyla px alanlarını hizala
-          try {
-            const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-              const el = new Image();
-              el.onload = () => resolve(el);
-              el.onerror = reject;
-              el.src = imageBase64.startsWith("data:") ? imageBase64 : `data:image/png;base64,${rawB64}`;
-            });
-            if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-              capture = {
-                ...capture,
-                cropWidthPx: img.naturalWidth,
-                cropHeightPx: img.naturalHeight,
-                cropWidthPt: img.naturalWidth / capture.pixelsPerPdfPoint,
-                cropHeightPt: img.naturalHeight / capture.pixelsPerPdfPoint,
-              };
-            }
-          } catch {
-            /* capture tahmini kalır */
+        const imgEntry = getLocalImage(sel.localPdfId);
+        if (imgEntry) {
+          const imageBase64 = await cropImageToBase64(imgEntry.dataUrl, sel.crop);
+          rawB64 = imageBase64.includes(",") ? imageBase64.split(",", 2)[1]! : imageBase64;
+        } else {
+          const pdfEntry = getLocalPdf(sel.localPdfId);
+          if (!pdfEntry) {
+            setError("Kaynak PDF bulunamadı. Dosyayı yeniden ekleyin.");
+            return false;
+          }
+          // Tam sayfa dataURL→Image yüklemeden doğrudan canvas’tan kırp (OOM önler)
+          const cropped = await renderPdfCropToBase64(
+            pdfEntry.doc,
+            sel.page_number,
+            sel.crop,
+            CROP_EXPORT_DPI,
+          );
+          rawB64 = cropped.imageBase64;
+          capture = buildQuestionCaptureMeta({
+            sourcePageWidthPt: cropped.sourcePageWidthPt,
+            sourcePageHeightPt: cropped.sourcePageHeightPt,
+            viewportScale: cropped.viewportScale,
+            devicePixelRatio: cropped.devicePixelRatio,
+            cropNorm: sel.crop,
+            pageWidthPx: cropped.pageWidthPx,
+            pageHeightPx: cropped.pageHeightPx,
+          });
+          capture = syncQuestionCaptureToBitmap(
+            capture,
+            cropped.cropWidthPx,
+            cropped.cropHeightPx,
+          );
+          if (import.meta.env.DEV) {
+            console.debug(
+              "[CROP_CAPTURE_SYNC]",
+              inspectQuestionCaptureSync(
+                sel.id,
+                capture,
+                cropped.cropWidthPx,
+                cropped.cropHeightPx,
+              ),
+            );
           }
         }
 
-        const qItem = {
+        const cropMs = performance.now() - tCrop;
+
+        const qItem: QuestionItem = {
           id: sel.id,
           pdf_id: "",
           page_number: sel.page_number,
@@ -579,10 +572,12 @@ export default function CropWorkspace() {
           display_scale: sel.display_scale ?? 1,
           manualScale: 1,
           normalizationScale: 1,
+          fontMeasurementRevision: 0,
           layoutMode: "single-column",
           capture,
           image_base64: rawB64,
           localPdfId: sel.localPdfId,
+          fontReference: sel.fontReference,
         };
         addQuestionsToWorkingDraft([qItem]);
         setLocalSourceForQuestion(sel.id, sel.localPdfId, sel.page_number);
@@ -593,11 +588,19 @@ export default function CropWorkspace() {
               (capture ? ` ppp=${capture.pixelsPerPdfPoint.toFixed(3)}` : " CAPTURE_MISSING"),
           );
         }
+        return true;
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Soru eklenemedi");
+        const msg =
+          e instanceof Error
+            ? e.message
+            : typeof e === "string"
+              ? e
+              : "Soru eklenemedi";
+        setError(msg || "Soru eklenemedi");
+        return false;
       }
     },
-    [addQuestionsToWorkingDraft, resolveCropSource],
+    [addQuestionsToWorkingDraft],
   );
 
   /** Dar/Geniş UI korunur; piksel küçültme yok (eski 0.88 DPI kaybı kaldırıldı). */
@@ -611,7 +614,7 @@ export default function CropWorkspace() {
     setInlineLayout("dar");
   }, []);
 
-  const addSelection = (answer: AnswerOption | null, layout: CropLayoutMode) => {
+  const addSelection = async (answer: AnswerOption | null, layout: CropLayoutMode) => {
     if (!selectedLocalPdf && !selectedLocalImage) return;
     const percentCrop = pendingAddPercentCropRef.current;
     if (!percentCrop || percentCrop.width <= 0 || percentCrop.height <= 0) return;
@@ -662,11 +665,11 @@ export default function CropWorkspace() {
       console.debug(`[crop-perf] ui=${(performance.now() - t0).toFixed(1)}ms`);
     }
 
-    void addSelectionToEditor(newSel);
+    await addSelectionToEditor(newSel);
   };
 
   const handleAnswerPicked = (answer: AnswerOption | null) => {
-    addSelection(answer, inlineLayout);
+    void addSelection(answer, inlineLayout);
   };
 
   const handleAnswerChange = (sel: PendingSelection, answer: AnswerOption | null) => {
@@ -698,7 +701,12 @@ export default function CropWorkspace() {
       setStoredPendingSelections(renumbered.filter((s) => !s.backendId));
       await removeQuestion(sel.id);
     },
-    [editingSelectionId, pendingSelections, removeQuestion, renumberSelections]
+    [
+      editingSelectionId,
+      pendingSelections,
+      removeQuestion,
+      renumberSelections,
+    ]
   );
 
   /** Ana sayfa ile aynı: tüm soruları + kırpma listesini temizle */
@@ -760,16 +768,57 @@ export default function CropWorkspace() {
 
     if (sel.isLocal && (selectedLocalPdf || selectedLocalImage)) {
       try {
-        const pageDataUrl = selectedLocalImage
-          ? (localPageDataUrls[`${selectedLocalImage.id}:1`] ?? selectedLocalImage.dataUrl)
-          : localPageDataUrls[`${selectedLocalPdf!.id}:${currentPage}:${DISPLAY_DPI}`];
-        if (pageDataUrl) {
+        if (selectedLocalImage) {
+          const pageDataUrl =
+            localPageDataUrls[`${selectedLocalImage.id}:1`] ?? selectedLocalImage.dataUrl;
+          if (!pageDataUrl) throw new Error("Kırpma kaynak görüntüsü bulunamadı.");
           const base64 = await cropImageToBase64(pageDataUrl, cropToUse);
           const clean = base64.replace(/^data:[^;]+;base64,/, "");
-          updateQuestionImage(sel.id, clean);
+          updateQuestionCropAndImage(sel.id, cropToUse, clean);
+          return;
         }
+
+        if (!selectedLocalPdf) throw new Error("Kırpma kaynak görüntüsü bulunamadı.");
+
+        const cropped = await renderPdfCropToBase64(
+          selectedLocalPdf.doc,
+          sel.page_number,
+          cropToUse,
+          CROP_EXPORT_DPI,
+        );
+        let capture = buildQuestionCaptureMeta({
+          sourcePageWidthPt: cropped.sourcePageWidthPt,
+          sourcePageHeightPt: cropped.sourcePageHeightPt,
+          viewportScale: cropped.viewportScale,
+          devicePixelRatio: cropped.devicePixelRatio,
+          cropNorm: cropToUse,
+          pageWidthPx: cropped.pageWidthPx,
+          pageHeightPx: cropped.pageHeightPx,
+        });
+        capture = syncQuestionCaptureToBitmap(
+          capture,
+          cropped.cropWidthPx,
+          cropped.cropHeightPx,
+        );
+        if (import.meta.env.DEV) {
+          console.debug(
+            "[CROP_CAPTURE_SYNC]",
+            inspectQuestionCaptureSync(
+              sel.id,
+              capture,
+              cropped.cropWidthPx,
+              cropped.cropHeightPx,
+            ),
+          );
+        }
+        updateQuestionCropAndImage(sel.id, cropToUse, cropped.imageBase64, capture);
+        return;
       } catch (e) {
         console.error("Local soru kırpma güncellenemedi:", e);
+        setPendingSelections((prev) =>
+          prev.map((item) => (item.id === sel.id ? { ...item, crop: sel.crop } : item)),
+        );
+        return;
       }
     }
     await updateQuestionCrop(sel.id, cropToUse);
@@ -810,7 +859,7 @@ export default function CropWorkspace() {
     [editingSelectionId]
   );
 
-  // Sayfa değişti: crop sıfırla, img loaded beklenir. canonicalNaturalSize = baseNaturalBySourceRef
+  // Sayfa değişti: crop sıfırla. data URL’lerde onLoad kaçabildiği için complete kontrolü yapılır.
   useEffect(() => {
     setEditingSelectionId(null);
     setCrop(undefined);
@@ -819,6 +868,30 @@ export default function CropWorkspace() {
     editingCropRef.current = null;
     setImgLoaded(false);
     setNaturalImageSize(null);
+
+    if (!pageUrl) return;
+
+    let cancelled = false;
+    const markLoadedIfReady = () => {
+      if (cancelled) return;
+      const img = imgRef.current;
+      if (!img || !img.complete) return;
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      if (w < 8 || h < 8) return;
+      setNaturalImageSize({ w, h });
+      setImgLoaded(true);
+    };
+
+    // Sync data URL / cache: onLoad çoğu zaman effect’ten önce biter
+    markLoadedIfReady();
+    const raf = requestAnimationFrame(markLoadedIfReady);
+    const t = window.setTimeout(markLoadedIfReady, 0);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      window.clearTimeout(t);
+    };
   }, [pageUrl]);
 
   // İlk sayfa yüklendiğinde natural size cache'le; sayfa değişince aynı base kullan
@@ -838,17 +911,36 @@ export default function CropWorkspace() {
   const ZOOM_MAX = 400;
   const ZOOM_STEP = 10;
 
-  // PDF değiştiğinde: saklı zoom varsa kullan, yoksa %100 (gerçek boyut) ile aç
+  // PDF değiştiğinde: saklı zoom varsa kullan; yoksa yükseklik sığdır (fit height)
   useLayoutEffect(() => {
     if (!selectedSource || !pageUrl) return;
     const storedZoom = getZoomForSource(selectedSource);
     if (storedZoom != null) {
       setZoom(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, storedZoom)));
-      return;
     }
-    setZoom(100);
-    setZoomForSource(selectedSource, 100);
   }, [selectedSource, pageUrl]);
+
+  // İlk açılışta (kayıtlı zoom yoksa) sayfa yüksekliği ekrana sığsın
+  useEffect(() => {
+    if (!selectedSource || !pageUrl) return;
+    if (!viewerSize || !hasCanonicalSize || !canonicalNaturalSize) return;
+    if (getZoomForSource(selectedSource) != null) return;
+    const availH = Math.max(1, viewerSize.h - VIEWER_PADDING);
+    const zoomVal = computeFitZoomByHeight(
+      availH,
+      canonicalNaturalSize.w,
+      canonicalNaturalSize.h,
+    );
+    const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoomVal));
+    setZoom(clamped);
+    setZoomForSource(selectedSource, clamped);
+  }, [
+    selectedSource,
+    pageUrl,
+    viewerSize,
+    hasCanonicalSize,
+    canonicalNaturalSize,
+  ]);
 
   const zoomIn = useCallback(() => {
     setZoom((z) => {
@@ -1072,6 +1164,10 @@ export default function CropWorkspace() {
                   </div>
                 </div>
               </div>
+            ) : !pageUrl ? (
+              <div className="flex min-h-full min-w-full items-center justify-center">
+                <span className="text-slate-400">Sayfa yükleniyor…</span>
+              </div>
             ) : (
               <div
                 className="flex shrink-0 items-start justify-center overflow-visible"
@@ -1087,10 +1183,11 @@ export default function CropWorkspace() {
                   style={{
                     width: displayedSize.w,
                     height: displayedSize.h,
+                    backgroundColor: "#ffffff",
                   }}
                 >
                 {!imgLoaded && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-slate-900/80">
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-900/80">
                     <span className="text-slate-400">Yükleniyor…</span>
                   </div>
                 )}

@@ -16,6 +16,7 @@ test-*.pdf
 
 # Tesseract yerel varlıklar (scripts/copy-tesseract-assets.mjs / postinstall)
 public/tesseract/
+public/pdfjs/
 
 # Secrets / OAuth (do not commit real credentials)
 **/gcp-oauth.keys.json
@@ -33,3 +34,6 @@ public/tesseract/
 *.njsproj
 *.sln
 *.sw?
+
+# electron-builder output
+release/

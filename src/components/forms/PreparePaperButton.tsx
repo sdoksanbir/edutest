@@ -80,7 +80,7 @@ export default function PreparePaperButton({ variant = "default", children }: Pr
 
             </span>
 
-            <span className="tq-dash-prepare-btn__label">Kağıdı Hazırla</span>
+            <span className="tq-dash-prepare-btn__label">KAĞIDI HAZIRLA</span>
 
           </>
 
@@ -103,7 +103,9 @@ export default function PreparePaperButton({ variant = "default", children }: Pr
             ? "trial"
             : activeTab === "written-paper"
               ? "written"
-              : "test"
+              : activeTab === "fasikul-paper"
+                ? "fasikul"
+                : "test"
         }
 
       />

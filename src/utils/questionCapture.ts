@@ -25,6 +25,20 @@ export type NativeSizePtResult = {
   metadataSource: 'capture' | 'legacy-fallback'
 }
 
+export type CaptureSyncDiagnostics = {
+  questionId: string
+  naturalWidth: number
+  naturalHeight: number
+  cropWidthPx: number
+  cropHeightPx: number
+  cropWidthPt: number
+  cropHeightPt: number
+  pixelsPerPdfPoint: number
+  pppFromWidth: number
+  pppFromHeight: number
+  captureSyncOk: boolean
+}
+
 export function pixelsPerPdfPointFromViewport(
   viewportScale: number,
   devicePixelRatio: number = 1,
@@ -61,6 +75,56 @@ export function buildQuestionCaptureMeta(opts: {
     cropWidthPt,
     cropHeightPt,
     pixelsPerPdfPoint: ppp,
+  }
+}
+
+/** Yeni crop bitmap boyutlarını mevcut PDF ölçeğiyle atomik capture metadata'ya çevirir. */
+export function syncQuestionCaptureToBitmap(
+  capture: QuestionCaptureMeta,
+  naturalWidth: number,
+  naturalHeight: number,
+): QuestionCaptureMeta {
+  const width = Math.max(1, Math.floor(naturalWidth))
+  const height = Math.max(1, Math.floor(naturalHeight))
+  const ppp = Number(capture.pixelsPerPdfPoint)
+  if (!(ppp > 0)) return capture
+  return {
+    ...capture,
+    cropWidthPx: width,
+    cropHeightPx: height,
+    cropWidthPt: width / ppp,
+    cropHeightPt: height / ppp,
+  }
+}
+
+export function inspectQuestionCaptureSync(
+  questionId: string,
+  capture: QuestionCaptureMeta,
+  naturalWidth: number,
+  naturalHeight: number,
+  tolerance = 1e-6,
+): CaptureSyncDiagnostics {
+  const pppFromWidth =
+    capture.cropWidthPt > 0 ? naturalWidth / capture.cropWidthPt : 0
+  const pppFromHeight =
+    capture.cropHeightPt > 0 ? naturalHeight / capture.cropHeightPt : 0
+  const captureSyncOk =
+    capture.cropWidthPx === naturalWidth &&
+    capture.cropHeightPx === naturalHeight &&
+    Math.abs(pppFromWidth - capture.pixelsPerPdfPoint) <= tolerance &&
+    Math.abs(pppFromHeight - capture.pixelsPerPdfPoint) <= tolerance
+  return {
+    questionId,
+    naturalWidth,
+    naturalHeight,
+    cropWidthPx: capture.cropWidthPx,
+    cropHeightPx: capture.cropHeightPx,
+    cropWidthPt: capture.cropWidthPt,
+    cropHeightPt: capture.cropHeightPt,
+    pixelsPerPdfPoint: capture.pixelsPerPdfPoint,
+    pppFromWidth,
+    pppFromHeight,
+    captureSyncOk,
   }
 }
 

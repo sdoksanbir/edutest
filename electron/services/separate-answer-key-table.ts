@@ -5,6 +5,10 @@
 
 import { rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib'
 
+/** Cevap anahtarı sabit renkleri — tema renginden bağımsız */
+export const ANSWER_KEY_NAVY_HEX = '#0A1931'
+export const ANSWER_KEY_RED_HEX = '#DC2626'
+
 export const SEPARATE_AK = {
   HEADER_H_PT: 28,
   ROW_H_PT: 22,
@@ -116,6 +120,15 @@ export function ensureSeparateAnswerKeyPages(
     marginBottomMm: Number(payload.margin_bottom_mm ?? 10),
   })
   const maxQ = Math.max(1, ...questions.map((l) => l.page_num || 1))
+  /** Optik ayrı sayfa(lar) cevap anahtarından önce — overlay page_num > maxQ */
+  const overlays = Array.isArray(payload.optik_form_overlays)
+    ? (payload.optik_form_overlays as Array<Record<string, unknown>>)
+    : []
+  const optikExtraPages = new Set(
+    overlays
+      .map((o) => Number(o.page_num ?? 0))
+      .filter((n) => Number.isFinite(n) && n > maxQ),
+  ).size
   const ml = Number(questions[0]?.x_pt ?? 40)
   const w = Number(questions[0]?.w_pt ?? 200)
   const out = [...questions]
@@ -123,7 +136,7 @@ export function ensureSeparateAnswerKeyPages(
     out.push({
       kind: 'answer_key_page',
       order_index: -1,
-      page_num: maxQ + 1 + i,
+      page_num: maxQ + optikExtraPages + 1 + i,
       x_pt: ml,
       y_top_pt: pageHpt - mmToPt(Number(payload.margin_top_mm ?? 10)),
       w_pt: w,
@@ -198,7 +211,9 @@ export function drawSeparateAnswerKeyTablePdf(params: {
   width: number
   items: Array<{ num: number; answer: string }>
   fonts: { regular: PDFFont; bold: PDFFont }
-  primaryHex: string
+  /** @deprecated Tema rengi yok sayılır — sabit lacivert/kırmızı */
+  primaryHex?: string
+  /** @deprecated Tema rengi yok sayılır — sabit lacivert/kırmızı */
   accentHex?: string
   title?: string
   pairsPerRow?: number
@@ -210,8 +225,6 @@ export function drawSeparateAnswerKeyTablePdf(params: {
     width,
     items,
     fonts,
-    primaryHex,
-    accentHex = '#F34A2F',
     title = 'CEVAP ANAHTARI',
   } = params
   const pairs = Math.max(1, params.pairsPerRow ?? SEPARATE_AK.PAIRS_PER_ROW)
@@ -220,8 +233,8 @@ export function drawSeparateAnswerKeyTablePdf(params: {
   const rh = SEPARATE_AK.ROW_H_PT
   const th = hh + rowCount * rh + SEPARATE_AK.BOTTOM_PAD_PT
   const yBottom = yTop - th
-  const primary = hexToRgb(primaryHex)
-  const accent = hexToRgb(accentHex)
+  const primary = hexToRgb(ANSWER_KEY_NAVY_HEX)
+  const accent = hexToRgb(ANSWER_KEY_RED_HEX)
   const pw = width / pairs
   const barH = SEPARATE_AK.ACCENT_BAR_PT
   const cornerR = SEPARATE_AK.CORNER_R_PT

@@ -9,14 +9,13 @@ import { stripDataUrlPrefix, resolveWatermarkAngleDeg } from "./visualProperties
 import { resolveThemePrimaryHex } from "./pageStructureHelpers";
 import { resolveRequestedScale } from "./questionScale";
 import { getAllFontEqualizeDiagsForExport } from "./questionScaleDiagnostics";
-import { getEqualizeRunIdForLogs } from "./equalizeRunDiagnostics";
 
 export type PdfExportPayloadContext = {
   questions: QuestionItem[];
   layout: LayoutItem[];
   baseLayout: LayoutItem[];
   columns: number;
-  /** Sabit hedef yazı puntosu (eşitleme); varsayılan 10 */
+  /** Sabit hedef yazı puntosu (eski taslak alanı); varsayılan 10 */
   targetQuestionLinePt?: number;
   /** false: katı sütun ezmesi; true/undefined: %80 native taban */
   allowSlightOverflow?: boolean;
@@ -111,6 +110,8 @@ export type PdfExportPayloadContext = {
    * false: layout’u payload’dan yeniden hesapla.
    */
   lockPreviewLayout?: boolean;
+  /** Fasikül: soru altı kareli çözüm alanı */
+  showQuestionScratchGrid?: boolean;
   /** Deneme: sağ alt “Diğer sayfaya geçiniz / TEST BİTTİ” */
   showFooterNavHints?: boolean;
   lastQuestionPage?: number;
@@ -166,6 +167,7 @@ function mapQuestionsForExport(questions: QuestionItem[]) {
     layout_mode: q.layoutMode ?? 'single-column',
     ocr_font_matched: q.ocr_font_matched,
     font_line_px: q.font_line_px,
+    fasikulFrame: q.fasikulFrame,
   }));
 }
 
@@ -236,8 +238,6 @@ export function buildPdfExportPayload(ctx: PdfExportPayloadContext): Record<stri
     target_font_pt: d.targetFontPt,
   }));
 
-  const equalize_run_id = getEqualizeRunIdForLogs();
-
   return {
     title: ctx.title,
     school_name: ctx.schoolName,
@@ -264,12 +264,12 @@ export function buildPdfExportPayload(ctx: PdfExportPayloadContext): Record<stri
     questions: mapQuestionsForExport(ctx.questions),
     preview_draw_metrics,
     font_equalize_diag,
-    equalize_run_id: equalize_run_id ?? undefined,
     ...(lockedLayout && lockedLayout.length > 0 ? { locked_layout: lockedLayout } : {}),
     sections: ctx.sections.length > 0 ? ctx.sections : undefined,
     include_description: ctx.includeDescription,
     description_column_count: ctx.descriptionColumnCount,
-    description_texts: ctx.includeDescription ? ctx.descriptionTexts : [],
+    /** LGS banner yönergesi include_description kapalı olsa da metni okuyabilsin */
+    description_texts: ctx.descriptionTexts ?? [],
     description_column_dividers: ctx.descriptionColumnDividers,
     description_box_pad_y_pt: ctx.descriptionBoxPadYPt ?? 5,
     description_box_pad_x_pt: ctx.descriptionBoxPadXPt ?? 8,
@@ -351,6 +351,7 @@ export function buildPdfExportPayload(ctx: PdfExportPayloadContext): Record<stri
     page_frame_inner_gap_mm: ctx.pageFrameInnerGapMm,
     page_frame_corner_radius_mm: ctx.pageFrameCornerRadiusMm,
     page_frame_line_style: ctx.pageFrameLineStyle,
+    show_question_scratch_grid: ctx.showQuestionScratchGrid === true,
     ...(ctx.optikFormOverlays && ctx.optikFormOverlays.length > 0
       ? { optik_form_overlays: ctx.optikFormOverlays }
       : {}),

@@ -11,6 +11,28 @@ if (typeof window !== "undefined") {
   pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 }
 
+
+/** public/pdfjs asset folder URL with trailing slash (absolute for worker fetch). */
+function pdfjsAssetDirUrl(subdir: string): string {
+  const base = import.meta.env.BASE_URL || "./"
+  const clean = subdir.replace(/^\/+/, "").replace(/\/+$/, "")
+  const path = `${base}pdfjs/${clean}/`
+  if (typeof window === "undefined") return path
+  return new URL(path, window.location.href).href
+}
+
+function pdfjsDocumentOptions(data: ArrayBuffer) {
+  return {
+    data,
+    // Required for JPEG2000 (OpenJPEG) / JBIG2 decode
+    wasmUrl: pdfjsAssetDirUrl("wasm"),
+    cMapUrl: pdfjsAssetDirUrl("cmaps"),
+    cMapPacked: true,
+    standardFontDataUrl: pdfjsAssetDirUrl("standard_fonts"),
+    useSystemFonts: true,
+  }
+}
+
 export interface LocalPdfDoc {
   doc: pdfjsLib.PDFDocumentProxy;
   pageCount: number;
@@ -27,19 +49,48 @@ export async function loadPdfFromFile(file: File): Promise<LocalPdfDoc> {
 }
 
 export async function loadPdfFromBytes(data: ArrayBuffer): Promise<LocalPdfDoc> {
-  const loadingTask = pdfjsLib.getDocument({ data });
+  const loadingTask = pdfjsLib.getDocument(pdfjsDocumentOptions(data));
   const doc = await loadingTask.promise;
   return { doc, pageCount: doc.numPages, filename: "document.pdf" };
 }
 
 /**
- * Editöre eklenen kırpmalar ve layout-engine LAYOUT_ZOOM ile aynı yoğunluk.
- * 600 DPI → zoom = 600/72 ≈ 8.333
+ * Editöre eklenen kırpma bitmap yoğunluğu (baskı kalitesi).
+ * Layout-engine LEGACY_LAYOUT_ZOOM (600/72) ile uyumlu; capture.viewportScale taşır.
+ * Not: 720+ tam sayfa PNG dataURL bellek taşması / Image yükleme hatasına yol açabiliyor.
  */
 export const CROP_EXPORT_DPI = 600
 
-/** Varsayılan render yoğunluğu — crop / layout ile aynı (600). */
+/**
+ * Crop ekranı önizlemesi — düşük DPI (bellek / açılış).
+ * Kırpma kalitesi CROP_EXPORT_DPI ile ayrı üretilir.
+ */
+export const CROP_PREVIEW_DPI = 144
+
+/** Varsayılan render yoğunluğu — kırpma/export ile aynı. */
 export const DEFAULT_PDF_RENDER_DPI = CROP_EXPORT_DPI
+
+/** Tek canvas için güvenli üst sınır (~A4 @ 600 DPI ≈ 35M; 720 ≈ 50M riskli). */
+const MAX_PAGE_CANVAS_PIXELS = 36_000_000
+
+function clampDpiForPage(pageWidthPt: number, pageHeightPt: number, dpi: number): number {
+  const safe = Number.isFinite(dpi) && dpi > 0 ? dpi : DEFAULT_PDF_RENDER_DPI
+  const scale = safe / 72
+  const area = pageWidthPt * scale * pageHeightPt * scale
+  if (!(area > MAX_PAGE_CANVAS_PIXELS)) return safe
+  const factor = Math.sqrt(MAX_PAGE_CANVAS_PIXELS / area)
+  return Math.max(CROP_PREVIEW_DPI, Math.floor(safe * factor))
+}
+
+function canvasToPngDataUrl(canvas: HTMLCanvasElement): string {
+  try {
+    const url = canvas.toDataURL("image/png")
+    if (!url || url.length < 32) throw new Error("empty")
+    return url
+  } catch {
+    throw new Error("Sayfa görüntüsü oluşturulamadı (bellek veya canvas limiti). Daha küçük bir alan deneyin.")
+  }
+}
 
 /**
  * PDF sayfasını canvas'a render edip data URL (PNG) olarak döndür.
@@ -67,34 +118,46 @@ export type PageRenderCaptureInfo = {
   pixelsPerPdfPoint: number
 }
 
-export async function renderPageWithCaptureMeta(
+type PageCanvasRender = Omit<PageRenderCaptureInfo, "dataUrl"> & {
+  canvas: HTMLCanvasElement
+}
+
+async function renderPageToCanvas(
   doc: pdfjsLib.PDFDocumentProxy,
   pageNumber: number,
   dpi: number = DEFAULT_PDF_RENDER_DPI,
-): Promise<PageRenderCaptureInfo> {
+): Promise<PageCanvasRender> {
   const page = await doc.getPage(pageNumber)
   const baseViewport = page.getViewport({ scale: 1 })
-  const viewportScale = dpi / 72
+  const safeDpi = clampDpiForPage(baseViewport.width, baseViewport.height, dpi)
+  const viewportScale = safeDpi / 72
   const viewport = page.getViewport({ scale: viewportScale })
   const devicePixelRatio = 1
 
-  const canvas = document.createElement('canvas')
-  const pageWidthPx = Math.floor(viewport.width)
-  const pageHeightPx = Math.floor(viewport.height)
+  const canvas = document.createElement("canvas")
+  const pageWidthPx = Math.max(1, Math.floor(viewport.width))
+  const pageHeightPx = Math.max(1, Math.floor(viewport.height))
   canvas.width = pageWidthPx
   canvas.height = pageHeightPx
-  const ctx = canvas.getContext('2d')
-  if (!ctx) throw new Error('Canvas 2d context unavailable')
+  if (canvas.width !== pageWidthPx || canvas.height !== pageHeightPx) {
+    throw new Error("PDF sayfası çok büyük; tarayıcı canvas limiti aşıldı.")
+  }
+  const ctx = canvas.getContext("2d", { alpha: false })
+  if (!ctx) throw new Error("Canvas 2d context unavailable")
 
+  // PDF şeffaf olabilir; beyaz zemin olmadan boş / bozuk görünür
+  ctx.fillStyle = "#ffffff"
+  ctx.fillRect(0, 0, pageWidthPx, pageHeightPx)
+
+  // pdf.js 6: canvas parametresi yeterli; canvasContext ile birlikte vermeyin
   await page.render({
     canvas,
-    canvasContext: ctx,
     viewport,
-    intent: dpi >= 300 ? 'print' : 'display',
+    intent: safeDpi >= 300 ? "print" : "display",
   }).promise
 
   return {
-    dataUrl: canvas.toDataURL('image/png'),
+    canvas,
     sourcePageWidthPt: baseViewport.width,
     sourcePageHeightPt: baseViewport.height,
     viewportScale,
@@ -102,6 +165,86 @@ export async function renderPageWithCaptureMeta(
     pageWidthPx,
     pageHeightPx,
     pixelsPerPdfPoint: viewportScale * devicePixelRatio,
+  }
+}
+
+export async function renderPageWithCaptureMeta(
+  doc: pdfjsLib.PDFDocumentProxy,
+  pageNumber: number,
+  dpi: number = DEFAULT_PDF_RENDER_DPI,
+): Promise<PageRenderCaptureInfo> {
+  const rendered = await renderPageToCanvas(doc, pageNumber, dpi)
+  const dataUrl = canvasToPngDataUrl(rendered.canvas)
+  return {
+    dataUrl,
+    sourcePageWidthPt: rendered.sourcePageWidthPt,
+    sourcePageHeightPt: rendered.sourcePageHeightPt,
+    viewportScale: rendered.viewportScale,
+    devicePixelRatio: rendered.devicePixelRatio,
+    pageWidthPx: rendered.pageWidthPx,
+    pageHeightPx: rendered.pageHeightPx,
+    pixelsPerPdfPoint: rendered.pixelsPerPdfPoint,
+  }
+}
+
+export type PdfCropRenderResult = {
+  /** data:image/png;base64,... */
+  dataUrl: string
+  /** virgülden sonraki ham base64 */
+  imageBase64: string
+  sourcePageWidthPt: number
+  sourcePageHeightPt: number
+  viewportScale: number
+  devicePixelRatio: number
+  pageWidthPx: number
+  pageHeightPx: number
+  pixelsPerPdfPoint: number
+  cropWidthPx: number
+  cropHeightPx: number
+}
+
+/**
+ * PDF sayfasını render edip normalize crop’u aynı canvas’tan keser.
+ * Tam sayfa dataURL → Image yükleme döngüsünü atlar (OOM / “Soru eklenemedi” önler).
+ */
+export async function renderPdfCropToBase64(
+  doc: pdfjsLib.PDFDocumentProxy,
+  pageNumber: number,
+  norm: { x: number; y: number; width: number; height: number },
+  dpi: number = DEFAULT_PDF_RENDER_DPI,
+): Promise<PdfCropRenderResult> {
+  const rendered = await renderPageToCanvas(doc, pageNumber, dpi)
+  const { canvas: pageCanvas, pageWidthPx, pageHeightPx } = rendered
+
+  const sx = Math.floor(norm.x * pageWidthPx)
+  const sy = Math.floor(norm.y * pageHeightPx)
+  const sw = Math.max(1, Math.floor(norm.width * pageWidthPx))
+  const sh = Math.max(1, Math.floor(norm.height * pageHeightPx))
+
+  const cropCanvas = document.createElement("canvas")
+  cropCanvas.width = sw
+  cropCanvas.height = sh
+  const ctx = cropCanvas.getContext("2d", { alpha: false })
+  if (!ctx) throw new Error("Canvas 2d context unavailable")
+  ctx.fillStyle = "#ffffff"
+  ctx.fillRect(0, 0, sw, sh)
+  ctx.drawImage(pageCanvas, sx, sy, sw, sh, 0, 0, sw, sh)
+
+  const dataUrl = canvasToPngDataUrl(cropCanvas)
+  const imageBase64 = dataUrl.includes(",") ? dataUrl.split(",", 2)[1]! : dataUrl
+
+  return {
+    dataUrl,
+    imageBase64,
+    sourcePageWidthPt: rendered.sourcePageWidthPt,
+    sourcePageHeightPt: rendered.sourcePageHeightPt,
+    viewportScale: rendered.viewportScale,
+    devicePixelRatio: rendered.devicePixelRatio,
+    pageWidthPx,
+    pageHeightPx,
+    pixelsPerPdfPoint: rendered.pixelsPerPdfPoint,
+    cropWidthPx: sw,
+    cropHeightPx: sh,
   }
 }
 
@@ -130,7 +273,7 @@ function cropImageElementToBase64(
   if (!ctx) throw new Error("Canvas 2d context unavailable");
 
   ctx.drawImage(imageEl, sx, sy, sw, sh, 0, 0, sw, sh);
-  return canvas.toDataURL("image/png");
+  return canvasToPngDataUrl(canvas);
 }
 
 export async function cropImageToBase64(
@@ -145,7 +288,7 @@ export async function cropImageToBase64(
     const el = new Image();
     el.crossOrigin = "anonymous";
     el.onload = () => resolve(el);
-    el.onerror = reject;
+    el.onerror = () => reject(new Error("Kırpma kaynağı yüklenemedi"));
     el.src = img;
   });
 

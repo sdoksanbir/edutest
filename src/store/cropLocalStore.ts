@@ -4,6 +4,7 @@
  */
 
 import type { PDFDocumentProxy } from "pdfjs-dist";
+import type { FontReferenceV1 } from "../types";
 
 export type LocalPdfEntry = {
   id: string;
@@ -31,6 +32,7 @@ export type StoredPendingSelection = {
   isLocal?: boolean;
   localPdfId?: string;
   localFilename?: string;
+  fontReference?: FontReferenceV1;
 };
 
 const pdfStore = new Map<string, LocalPdfEntry>();

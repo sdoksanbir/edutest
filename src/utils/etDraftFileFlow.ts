@@ -85,12 +85,35 @@ async function applyLoadedDraft(draft: DraftFilePayload) {
 
 /** Popup yok — doğrudan .et dosya seçici. */
 export async function loadEtDraftFromComputer(): Promise<{ ok: boolean; canceled?: boolean }> {
+  const picked = await pickEtDraftFileFromComputer();
+  if (!picked.ok || !picked.draft) {
+    return { ok: false, canceled: picked.canceled };
+  }
+  await applyLoadedDraft(picked.draft);
+  return { ok: true };
+}
+
+/**
+ * .et dosya seçici — içeriği editöre uygulamadan döner (taslaktan soru ekle).
+ */
+export async function pickEtDraftFileFromComputer(): Promise<{
+  ok: boolean;
+  canceled?: boolean;
+  draft?: DraftFilePayload;
+  fileName?: string;
+}> {
   if (window.electronAPI?.openEtDialog) {
     const opened = await window.electronAPI.openEtDialog();
     if (!opened) return { ok: false, canceled: true };
-    const draft = parseEtDraftJson(opened.content);
-    await applyLoadedDraft(draft);
-    return { ok: true };
+    try {
+      const draft = parseEtDraftJson(opened.content);
+      const base =
+        opened.filePath.replace(/^.*[\\/]/, "").replace(/\.et$/i, "") || draft.name;
+      if (!draft.name || draft.name === "taslak") draft.name = base;
+      return { ok: true, draft, fileName: base };
+    } catch {
+      return { ok: false };
+    }
   }
 
   return new Promise((resolve) => {
@@ -107,14 +130,13 @@ export async function loadEtDraftFromComputer(): Promise<{ ok: boolean; canceled
         .text()
         .then((text) => {
           const draft = parseEtDraftJson(text);
-          if (!draft.name) {
-            draft.name = file.name.replace(/\.et$/i, "") || "taslak";
-          }
-          return applyLoadedDraft(draft);
+          const base = file.name.replace(/\.et$/i, "") || "taslak";
+          if (!draft.name) draft.name = base;
+          resolve({ ok: true, draft, fileName: base });
         })
-        .then(() => resolve({ ok: true }))
         .catch(() => resolve({ ok: false }));
     };
+    input.oncancel = () => resolve({ ok: false, canceled: true });
     input.click();
   });
 }

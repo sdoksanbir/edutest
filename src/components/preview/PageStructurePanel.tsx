@@ -47,7 +47,6 @@ type Props = {
   onApplyQuestionLineHeightMatch?: () => Promise<{
     matched: number
     total: number
-    equalizeRunId?: string | null
   }>
   onRestoreOriginalQuestionScales?: () => Promise<void> | void;
   /** Seçili soru full-width (hepsi aynı moda çekilir) */
@@ -689,11 +688,10 @@ export default function PageStructurePanel({
       >
         <div className="pdf-preview-collapsible-section space-y-2.5">
           <SectionHeading>Yazı boyutu eşitle</SectionHeading>
-            <p className={`text-[11px] leading-snug ${t.labelMuted}`}>
-              Alt şık A–E Cap-Height (öncelik) veya üst kök satır yüksekliği ölçülür; tüm
-              sorular tek sütunda ulaşılabilen ortak fiziksel hedefe çekilir (ölçek
-              0.40–1.50). Konsolda COMMON_FONT_TARGET loglanır. İnce ayar: − / +.
-            </p>
+          <p className={`text-[11px] leading-snug ${t.labelMuted}`}>
+            Sorulardaki gövde yazısı morfolojik olarak ölçülür; tüm sorular seçilen
+            hedef puntoya çekilir (ölçek 0.40–1.50). İnce ayar: toplu / seçili kaydırıcı.
+          </p>
           <div className="space-y-1.5">
             <span className={`text-xs ${t.label}`}>Hedef punto</span>
             <div className="grid grid-cols-5 gap-1.5">
@@ -726,7 +724,7 @@ export default function PageStructurePanel({
                 .then((result) => {
                   if (result.matched === 0) {
                     setLineMatchSummary(
-                      "Güvenilir yazı ölçümü yapılamadı. Şık satırı okunabilen sorularda tekrar deneyin.",
+                      "Güvenilir yazı ölçümü yapılamadı. Daha net gövde metni olan sorularda tekrar deneyin.",
                     );
                   } else {
                     setLineMatchSummary(
@@ -773,7 +771,7 @@ export default function PageStructurePanel({
           <SectionHeading>Tüm soruları ölçeklendir</SectionHeading>
           <ScaleSliderField
             label="Toplu boyut"
-            hint="Kağıt hazırlanınca ve yazı eşitlenince boyutlar kaydedilir; toplu ölçek her zaman son boyuttan çarpar."
+            hint="Kağıt hazırlanınca boyutlar kaydedilir; toplu ölçek her zaman son boyuttan çarpar."
             value={allQuestionsScalePct}
             neutralValue={DISPLAY_SCALE_NEUTRAL_PCT}
             onPreview={onAllQuestionsScalePreview}

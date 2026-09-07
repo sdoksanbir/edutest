@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "../../api/client";
-import type { DraftInfo, QuestionItem } from "../../types";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { QuestionItem } from "../../types";
 import { useEditorStore } from "../../store/editorStore";
-import type { DraftFilePayload } from "../../store/editorStore";
+import { pickEtDraftFileFromComputer } from "../../utils/etDraftFileFlow";
 import ModalShell from "./ModalShell";
 
 function cloneSelectedQuestions(
@@ -28,49 +27,51 @@ function questionThumbSrc(q: QuestionItem): string | null {
 }
 
 export default function PickDraftQuestionsModal({ onClose }: { onClose: () => void }) {
-  const [drafts, setDrafts] = useState<DraftInfo[]>([]);
-  const [loadingDrafts, setLoadingDrafts] = useState(true);
-  const [loadingQuestions, setLoadingQuestions] = useState(false);
+  const [loadingFile, setLoadingFile] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeDraftName, setActiveDraftName] = useState<string | null>(null);
+  const [fileLabel, setFileLabel] = useState<string | null>(null);
   const [draftQuestions, setDraftQuestions] = useState<QuestionItem[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const openedOnceRef = useRef(false);
 
   const workingCount = useEditorStore((s) => s.questions.length);
   const addQuestionsToWorkingDraft = useEditorStore((s) => s.addQuestionsToWorkingDraft);
 
-  useEffect(() => {
-    void api.drafts
-      .list()
-      .then((res) => setDrafts(res.items))
-      .catch((e) => setError(e instanceof Error ? e.message : "Taslaklar yüklenemedi"))
-      .finally(() => setLoadingDrafts(false));
-  }, []);
-
-  const openDraft = async (name: string) => {
+  const applyPickedFile = useCallback(async () => {
     setError(null);
-    setLoadingQuestions(true);
+    setLoadingFile(true);
     try {
-      const draft = (await api.drafts.load(name)) as DraftFilePayload;
-      const questions = [...(draft.questions ?? [])].sort(
+      const picked = await pickEtDraftFileFromComputer();
+      if (picked.canceled) {
+        if (!fileLabel) onClose();
+        return;
+      }
+      if (!picked.ok || !picked.draft) {
+        setError("Taslak dosyası açılamadı veya geçersiz.");
+        return;
+      }
+      const questions = [...(picked.draft.questions ?? [])].sort(
         (a, b) => a.order_index - b.order_index
       );
-      setActiveDraftName(name);
+      const label = picked.fileName || picked.draft.name || "taslak";
+      setFileLabel(label);
       setDraftQuestions(questions);
       setSelectedIds(new Set(questions.map((q) => q.id)));
+      if (questions.length === 0) {
+        setError("Bu taslakta soru yok.");
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Taslak açılamadı");
+      setError(e instanceof Error ? e.message : "Dosya açılamadı");
     } finally {
-      setLoadingQuestions(false);
+      setLoadingFile(false);
     }
-  };
+  }, [fileLabel, onClose]);
 
-  const backToList = () => {
-    setActiveDraftName(null);
-    setDraftQuestions([]);
-    setSelectedIds(new Set());
-    setError(null);
-  };
+  useEffect(() => {
+    if (openedOnceRef.current) return;
+    openedOnceRef.current = true;
+    void applyPickedFile();
+  }, [applyPickedFile]);
 
   const allSelected = draftQuestions.length > 0 && selectedIds.size === draftQuestions.length;
 
@@ -119,44 +120,33 @@ export default function PickDraftQuestionsModal({ onClose }: { onClose: () => vo
     <ModalShell title="Taslaktan Soru Seç" onClose={onClose} wide>
       {error && <p className="mb-3 text-sm text-rose-600">{error}</p>}
 
-      {!activeDraftName ? (
-        <>
-          <p className="mb-3 text-sm text-slate-500">
-            Bir taslak seçin; ardından ana editöre eklemek istediğiniz soruları işaretleyin.
+      {loadingFile && !fileLabel ? (
+        <p className="text-sm text-slate-500">Dosya seçici açılıyor…</p>
+      ) : !fileLabel ? (
+        <div className="space-y-3">
+          <p className="text-sm text-slate-500">
+            Bilgisayarınızdan bir <span className="font-medium">.et</span> taslak dosyası seçin.
           </p>
-          {loadingDrafts ? (
-            <p className="text-sm text-slate-500">Taslaklar yükleniyor…</p>
-          ) : drafts.length === 0 ? (
-            <p className="text-sm text-slate-500">Kayıtlı taslak bulunamadı.</p>
-          ) : (
-            <ul className="max-h-80 space-y-2 overflow-y-auto">
-              {drafts.map((item) => (
-                <li key={item.name}>
-                  <button
-                    type="button"
-                    disabled={loadingQuestions}
-                    className="flex w-full items-center justify-between rounded-lg border border-slate-200 px-3 py-2.5 text-left text-sm hover:bg-slate-50 disabled:opacity-50"
-                    onClick={() => void openDraft(item.name)}
-                  >
-                    <span className="font-medium text-slate-800">{item.name}</span>
-                    <span className="text-slate-400">{item.question_count} soru</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
+          <button
+            type="button"
+            className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500"
+            onClick={() => void applyPickedFile()}
+          >
+            Dosya seç
+          </button>
+        </div>
       ) : (
         <>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <button
               type="button"
-              className="rounded border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
-              onClick={backToList}
+              disabled={loadingFile}
+              className="rounded border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => void applyPickedFile()}
             >
-              ← Taslak listesi
+              Başka dosya seç
             </button>
-            <span className="text-sm font-medium text-slate-700">{activeDraftName}</span>
+            <span className="text-sm font-medium text-slate-700">{fileLabel}.et</span>
             <button
               type="button"
               className="rounded border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
@@ -166,7 +156,7 @@ export default function PickDraftQuestionsModal({ onClose }: { onClose: () => vo
             </button>
           </div>
 
-          {loadingQuestions ? (
+          {loadingFile ? (
             <p className="text-sm text-slate-500">Sorular yükleniyor…</p>
           ) : sortedDraftQuestions.length === 0 ? (
             <p className="text-sm text-slate-500">Bu taslakta soru yok.</p>
@@ -228,7 +218,7 @@ export default function PickDraftQuestionsModal({ onClose }: { onClose: () => vo
             </button>
             <button
               type="button"
-              disabled={selectedCount === 0 || loadingQuestions}
+              disabled={selectedCount === 0 || loadingFile}
               className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
               onClick={handleAdd}
             >

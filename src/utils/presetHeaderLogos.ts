@@ -46,6 +46,21 @@ export function resolveHeaderLogoUrl(config: {
   return String(config.logoUrl ?? '').trim()
 }
 
+/** LGS resmi banner — diğer şablonlardan bağımsız logo */
+export function resolveLgsOfficialLogoUrl(config: {
+  lgsShowLogo?: boolean
+  lgsPresetLogoId?: string | null
+  lgsLogoUrl?: string | null
+}): string {
+  if (config.lgsShowLogo === false) return ''
+  const presetId = config.lgsPresetLogoId ?? DEFAULT_PRESET_HEADER_LOGO_ID
+  if (presetId !== 'custom') {
+    const presetUrl = presetHeaderLogoUrl(presetId)
+    if (presetUrl) return presetUrl
+  }
+  return String(config.lgsLogoUrl ?? '').trim()
+}
+
 export function defaultPresetHeaderLogoUrl(): string {
   return preset5Url
 }

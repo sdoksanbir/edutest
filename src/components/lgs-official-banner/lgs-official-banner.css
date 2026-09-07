@@ -1,0 +1,22 @@
+/* LGS resmi deneme başlığı — viewBox 0 0 925 272 */
+
+.lgs-official-banner {
+  --lgs-off-green: #39b54a;
+  --lgs-off-green-soft: #e4f0d4;
+  --lgs-off-text: #2c2c2c;
+
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+
+.lgs-official-banner__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.lgs-official-banner--thumbnail .lgs-official-banner__svg {
+  min-height: 0;
+}

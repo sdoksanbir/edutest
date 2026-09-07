@@ -1,3 +1,7 @@
+import type { FasikulQuestionFrameSettings } from '../utils/fasikulQuestionFrame'
+
+export type { FasikulQuestionFrameSettings }
+
 export type AnswerKey = 'A' | 'B' | 'C' | 'D' | 'E'
 export type AnswerOption = AnswerKey
 export type QuestionContentType = 'question' | 'explanation'
@@ -12,6 +16,13 @@ export interface CropBox {
   y: number
   width: number
   height: number
+}
+
+export interface FontReferenceV1 {
+  version: 1
+  kind: 'option-line' | 'stem-line'
+  /** Kaynak PDF sayfasına / görsele göre normalize 0–1 koordinatları. */
+  sourceRectNorm: CropBox
 }
 
 /** @deprecated use CropBox */
@@ -68,6 +79,10 @@ export interface QuestionItem {
   manualScale?: number
   /** Yazı eşitle (OCR) ölçeği */
   normalizationScale?: number
+  /** Kullanıcının soru içinden seçtiği birincil yazı ölçüm bölgesi. */
+  fontReference?: FontReferenceV1
+  /** Görsel/crop/referans değişiminde async ölçüm sonucunu stale saymak için. */
+  fontMeasurementRevision?: number
   /** Son OCR tespit (analiz canvas px) — teşhis */
   detected_font_px?: number | null
   /** Kırpma yakalama metadata */
@@ -109,6 +124,8 @@ export interface QuestionItem {
   explanation_caption_box_color?: string
   explanation_caption_box_corner?: ExplanationCaptionBoxCorner
   explanation_caption_box_width?: ExplanationCaptionBoxWidth
+  /** Fasikül: soru çerçevesi / etiket (önizleme + taslak). */
+  fasikulFrame?: FasikulQuestionFrameSettings
 }
 
 export interface SectionRange {

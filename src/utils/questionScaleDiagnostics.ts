@@ -3,11 +3,10 @@
  * requestedScale = manualScale × normalizationScale
  */
 
-import {
-  DEFAULT_TARGET_QUESTION_LINE_PT,
-  type FontMeasurementSource,
-} from './normalizeQuestionFont'
 import { getEqualizeRunIdForLogs } from './equalizeRunDiagnostics'
+import type { CropBox } from '../types'
+
+const DEFAULT_TARGET_QUESTION_LINE_PT = 10
 
 /** layout-engine LAYOUT_ZOOM ile aynı: 600 DPI → pt (yalnızca legacy) */
 export const DIAG_LAYOUT_ZOOM = 600 / 72
@@ -66,12 +65,23 @@ export type FontEqualizeDiagEntry = {
   detected_font_analysis_px: number | null
   detected_font_original_px: number | null
   detected_font_pt: number | null
-  font_measurement_source: FontMeasurementSource | null
+  font_measurement_source: string | null
   font_measurement_confidence: number | null
   normalization_scale_raw: number | null
   normalization_scale_clamped: number | null
   pixels_per_pdf_point_used: number | null
   font_metadata_source: 'capture' | 'legacy-fallback' | null
+  hasValidatedOptions?: boolean
+  optionLabelCount?: number
+  optionLabels?: string[]
+  optionsPatternValid?: boolean
+  selectedMeasurementRegion?: 'options' | 'stem' | 'none'
+  optionsMetricFallback?: boolean
+  referenceRectNorm?: CropBox
+  detectedReferenceHeightPx?: number | null
+  manualMeasurementFailureReason?: string
+  appliedScale?: number | null
+  widthLimitApplied?: boolean
 }
 
 type MeasureCacheEntry = FontEqualizeDiagEntry
@@ -89,7 +99,7 @@ export function recordQuestionFontMeasureForDiag(opts: {
   detected_font_analysis_px?: number | null
   detected_font_original_px?: number | null
   detected_font_pt?: number | null
-  font_measurement_source?: FontMeasurementSource | null
+  font_measurement_source?: string | null
   font_measurement_confidence?: number | null
   normalization_scale_raw?: number | null
   normalization_scale_clamped?: number | null
@@ -97,6 +107,17 @@ export function recordQuestionFontMeasureForDiag(opts: {
   font_metadata_source?: 'capture' | 'legacy-fallback' | null
   targetLinePt?: number
   requestedScale: number
+  hasValidatedOptions?: boolean
+  optionLabelCount?: number
+  optionLabels?: string[]
+  optionsPatternValid?: boolean
+  selectedMeasurementRegion?: 'options' | 'stem' | 'none'
+  optionsMetricFallback?: boolean
+  referenceRectNorm?: CropBox
+  detectedReferenceHeightPx?: number | null
+  manualMeasurementFailureReason?: string
+  appliedScale?: number | null
+  widthLimitApplied?: boolean
 }): void {
   measureByOrder.set(opts.orderIndex, {
     detectedFontPx: opts.detectedFontPx,
@@ -112,7 +133,22 @@ export function recordQuestionFontMeasureForDiag(opts: {
     normalization_scale_clamped: opts.normalization_scale_clamped ?? null,
     pixels_per_pdf_point_used: opts.pixels_per_pdf_point_used ?? null,
     font_metadata_source: opts.font_metadata_source ?? null,
+    hasValidatedOptions: opts.hasValidatedOptions,
+    optionLabelCount: opts.optionLabelCount,
+    optionLabels: opts.optionLabels,
+    optionsPatternValid: opts.optionsPatternValid,
+    selectedMeasurementRegion: opts.selectedMeasurementRegion,
+    optionsMetricFallback: opts.optionsMetricFallback,
+    referenceRectNorm: opts.referenceRectNorm,
+    detectedReferenceHeightPx: opts.detectedReferenceHeightPx,
+    manualMeasurementFailureReason: opts.manualMeasurementFailureReason,
+    appliedScale: opts.appliedScale,
+    widthLimitApplied: opts.widthLimitApplied,
   })
+}
+
+export function clearQuestionFontMeasureForDiag(orderIndex: number): void {
+  measureByOrder.delete(orderIndex)
 }
 
 export function getQuestionFontMeasureForDiag(orderIndex: number): MeasureCacheEntry | undefined {

@@ -8,10 +8,32 @@ import {
   CLASSIC_SUBJECT_PILL_TEXT_OFFSET_Y_DEFAULT_PT,
 } from "./classicBannerTopRow";
 import { DEFAULT_TRIAL_YONERGE_TEXT } from "./trialYonergeDefaults";
+import {
+  defaultLgsPageDecor,
+  parseLgsPageDecor,
+  type LgsPageDecor,
+} from "./lgsPageDecor";
+import {
+  FASIKUL_THEME_ACCENT,
+  FASIKUL_THEME_PRIMARY,
+} from "./testThemeDefaults";
 
-export type PaperLayoutModule = "test" | "trial";
+export type PaperLayoutModule = "test" | "trial" | "fasikul";
 
-/** Test / Deneme — başlık + yönerge anlık görüntüsü (birbirinden bağımsız) */
+/** Modül bazlı sütun / filigran / çerçeve (diğer modüllerden bağımsız) */
+export type ModulePageDecor = LgsPageDecor;
+
+export function defaultModulePageDecor(): ModulePageDecor {
+  return {
+    ...defaultLgsPageDecor(),
+    columnDividerText: "SERKAN DOKSANBİR",
+    watermarkText: "ANADOLU LİSESİ",
+    watermarkOpacity: 25,
+    watermarkSize: 50,
+  };
+}
+
+/** Test / Deneme / Fasikül — başlık + yönerge + sayfa dekoru anlık görüntüsü */
 export type ModuleLayoutSnapshot = {
   headerStyleId: string;
   headerConfig: HeaderConfig;
@@ -23,6 +45,7 @@ export type ModuleLayoutSnapshot = {
   descriptionColumnDividers: boolean;
   descriptionBoxPadYPt: number;
   descriptionBoxPadXPt: number;
+  pageDecor: ModulePageDecor;
 };
 
 export function paperLayoutModuleFromTab(
@@ -30,7 +53,61 @@ export function paperLayoutModuleFromTab(
 ): PaperLayoutModule | null {
   if (tab === "trial-exam") return "trial";
   if (tab === "test-paper") return "test";
+  if (tab === "fasikul-paper") return "fasikul";
   return null;
+}
+
+function pageDecorFromLive(state: Partial<LayoutLiveSlice>): ModulePageDecor {
+  return parseLgsPageDecor({
+    showColumnDivider: state.showColumnDivider,
+    columnDividerText: state.columnDividerText,
+    columnDividerWidthPt: state.columnDividerWidthPt,
+    showColumnDividerText: state.showColumnDividerText,
+    centerLineBold: state.centerLineBold,
+    centerLineItalic: state.centerLineItalic,
+    showWatermark: state.showWatermark,
+    watermarkText: state.watermarkText,
+    watermarkLayout: state.watermarkLayout,
+    watermarkAngleDeg: state.watermarkAngleDeg,
+    watermarkOpacity: state.watermarkOpacity,
+    watermarkSize: state.watermarkSize,
+    watermarkLogoUrl: state.watermarkLogoUrl,
+    showPageFrame: state.showPageFrame,
+    pageFrameColorMode: state.pageFrameColorMode,
+    pageFrameColor: state.pageFrameColor,
+    pageFrameWidthPt: state.pageFrameWidthPt,
+    pageFrameInnerGapMm: state.pageFrameInnerGapMm,
+    pageFrameCornerRadiusMm: state.pageFrameCornerRadiusMm,
+    pageFrameLineStyle: state.pageFrameLineStyle,
+  });
+}
+
+/** Store alanlarına yayılacak dekor yaması */
+export function pageDecorStorePatch(d: ModulePageDecor): ModulePageDecor & {
+  // alias alanları canlı store ile aynı isimde
+} {
+  return {
+    showColumnDivider: d.showColumnDivider,
+    columnDividerText: d.columnDividerText,
+    columnDividerWidthPt: d.columnDividerWidthPt,
+    showColumnDividerText: d.showColumnDividerText,
+    centerLineBold: d.centerLineBold,
+    centerLineItalic: d.centerLineItalic,
+    showWatermark: d.showWatermark,
+    watermarkText: d.watermarkText,
+    watermarkLayout: d.watermarkLayout,
+    watermarkAngleDeg: d.watermarkAngleDeg,
+    watermarkOpacity: d.watermarkOpacity,
+    watermarkSize: d.watermarkSize,
+    watermarkLogoUrl: d.watermarkLogoUrl,
+    showPageFrame: d.showPageFrame,
+    pageFrameColorMode: d.pageFrameColorMode,
+    pageFrameColor: d.pageFrameColor,
+    pageFrameWidthPt: d.pageFrameWidthPt,
+    pageFrameInnerGapMm: d.pageFrameInnerGapMm,
+    pageFrameCornerRadiusMm: d.pageFrameCornerRadiusMm,
+    pageFrameLineStyle: d.pageFrameLineStyle,
+  };
 }
 
 export function defaultTestModuleLayout(): ModuleLayoutSnapshot {
@@ -45,6 +122,7 @@ export function defaultTestModuleLayout(): ModuleLayoutSnapshot {
     descriptionColumnDividers: false,
     descriptionBoxPadYPt: 5,
     descriptionBoxPadXPt: 8,
+    pageDecor: defaultModulePageDecor(),
   };
 }
 
@@ -78,6 +156,31 @@ export function defaultTrialModuleLayout(): ModuleLayoutSnapshot {
     descriptionColumnDividers: false,
     descriptionBoxPadYPt: 5,
     descriptionBoxPadXPt: 8,
+    pageDecor: defaultModulePageDecor(),
+  };
+}
+
+/** Fasikül — Standart + Minimal; lacivert ana / kırmızı vurgu (test’ten bağımsız) */
+export function defaultFasikulModuleLayout(): ModuleLayoutSnapshot {
+  const base = defaultHeaderConfig();
+  return {
+    headerStyleId: "style_1",
+    headerConfig: {
+      ...base,
+      useYaprakBanner: false,
+      useExamBanner: false,
+      primaryColor: FASIKUL_THEME_PRIMARY,
+      accentColor: FASIKUL_THEME_ACCENT,
+    },
+    themeColor: FASIKUL_THEME_PRIMARY,
+    includeDescription: false,
+    testDescription: "",
+    descriptionColumnCount: 1,
+    descriptionTexts: [""],
+    descriptionColumnDividers: false,
+    descriptionBoxPadYPt: 5,
+    descriptionBoxPadXPt: 8,
+    pageDecor: defaultModulePageDecor(),
   };
 }
 
@@ -92,6 +195,26 @@ export type LayoutLiveSlice = {
   descriptionColumnDividers: boolean;
   descriptionBoxPadYPt: number;
   descriptionBoxPadXPt: number;
+  showColumnDivider?: boolean;
+  columnDividerText?: string;
+  columnDividerWidthPt?: number;
+  showColumnDividerText?: boolean;
+  centerLineBold?: boolean;
+  centerLineItalic?: boolean;
+  showWatermark?: boolean;
+  watermarkText?: string;
+  watermarkLayout?: ModulePageDecor["watermarkLayout"];
+  watermarkAngleDeg?: number;
+  watermarkOpacity?: number;
+  watermarkSize?: number;
+  watermarkLogoUrl?: string | null;
+  showPageFrame?: boolean;
+  pageFrameColorMode?: ModulePageDecor["pageFrameColorMode"];
+  pageFrameColor?: string;
+  pageFrameWidthPt?: number;
+  pageFrameInnerGapMm?: number;
+  pageFrameCornerRadiusMm?: number;
+  pageFrameLineStyle?: ModulePageDecor["pageFrameLineStyle"];
 };
 
 export function captureModuleLayout(state: LayoutLiveSlice): ModuleLayoutSnapshot {
@@ -106,15 +229,18 @@ export function captureModuleLayout(state: LayoutLiveSlice): ModuleLayoutSnapsho
     descriptionColumnDividers: !!state.descriptionColumnDividers,
     descriptionBoxPadYPt: state.descriptionBoxPadYPt,
     descriptionBoxPadXPt: state.descriptionBoxPadXPt,
+    pageDecor: pageDecorFromLive(state),
   };
 }
 
 export function applyModuleLayout(snap: ModuleLayoutSnapshot): Partial<LayoutLiveSlice> & {
   optionsPatch: { includeDescription: boolean };
+  pageDecor: ModulePageDecor;
 } {
   const col = snap.descriptionColumnCount;
   const descriptionColumnCount: 1 | 2 | 3 =
     col === 2 || col === 3 ? col : 1;
+  const pageDecor = parseLgsPageDecor(snap.pageDecor ?? defaultModulePageDecor());
   return {
     headerStyleId: snap.headerStyleId || "style_1",
     headerConfig: { ...defaultHeaderConfig(), ...snap.headerConfig },
@@ -127,6 +253,23 @@ export function applyModuleLayout(snap: ModuleLayoutSnapshot): Partial<LayoutLiv
     descriptionBoxPadYPt: snap.descriptionBoxPadYPt ?? 5,
     descriptionBoxPadXPt: snap.descriptionBoxPadXPt ?? 8,
     optionsPatch: { includeDescription: !!snap.includeDescription },
+    pageDecor,
+  };
+}
+
+export function defaultLayoutForModule(mod: PaperLayoutModule): ModuleLayoutSnapshot {
+  if (mod === "trial") return defaultTrialModuleLayout();
+  if (mod === "fasikul") return defaultFasikulModuleLayout();
+  return defaultTestModuleLayout();
+}
+
+export function ensureModuleLayouts(
+  raw: Partial<Record<PaperLayoutModule, unknown>> | null | undefined,
+): Record<PaperLayoutModule, ModuleLayoutSnapshot> {
+  return {
+    test: parseModuleLayoutSnapshot(raw?.test, defaultTestModuleLayout()),
+    trial: parseModuleLayoutSnapshot(raw?.trial, defaultTrialModuleLayout()),
+    fasikul: parseModuleLayoutSnapshot(raw?.fasikul, defaultFasikulModuleLayout()),
   };
 }
 
@@ -159,5 +302,6 @@ export function parseModuleLayoutSnapshot(
         : fallback.descriptionColumnDividers,
     descriptionBoxPadYPt: o.descriptionBoxPadYPt ?? fallback.descriptionBoxPadYPt,
     descriptionBoxPadXPt: o.descriptionBoxPadXPt ?? fallback.descriptionBoxPadXPt,
+    pageDecor: parseLgsPageDecor(o.pageDecor ?? fallback.pageDecor),
   };
 }

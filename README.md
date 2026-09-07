@@ -71,6 +71,10 @@ Electron penceresi açılmazsa bir süre bekleyin; `tsc --watch` önce `dist-ele
 | `npm start` | Build alıp Electron ile çalıştırır |
 | `npm run lint` | Oxlint |
 | `npm run preview` | Sadece Vite preview (Electron yok) |
+| `npm run dist:win` | Windows `.exe` (NSIS + portable) → `release/` |
+| `npm run dist:mac` | macOS `.dmg` / `.zip` → `release/` (yalnızca Mac) |
+| `npm run dist` | Mevcut OS için paket |
+| `npm run dist:dir` | Paketlenmemiş uygulama klasörü (test) |
 
 ## Paketleri yeniden yükleme (sorun olursa)
 
@@ -169,6 +173,45 @@ npm run dev
 ```
 
 `package.json` değiştiyse mutlaka `npm install` çalıştırın.
+
+## Paketleme (Windows / macOS)
+
+`electron-builder` ile kurulum dosyası üretir. Çıktılar `release/` klasörüne yazılır.
+
+| Komut | Ne üretir | Nerede çalıştırılır |
+|-------|-----------|---------------------|
+| `npm run dist:win` | Windows NSIS kurulumcu + portable `.exe` | **Windows** |
+| `npm run dist:mac` | macOS `.dmg` + `.zip` (x64 + arm64) | **macOS** |
+| `npm run dist` | Bulunduğun işletim sistemi için paket | Win veya Mac |
+| `npm run dist:dir` | Paketlenmemiş klasör (hızlı test) | Win veya Mac |
+
+> Paketleme `vite build` kullanır (`tsc -b` typecheck adımını atlar); typecheck için `npm run build`.
+
+### Windows
+
+```powershell
+npm run dist:win
+```
+
+Örnek çıktılar `release/` altında:
+- `EduTest-*-setup-x64.exe` (kurulumcu)
+- `EduTest-*-portable-x64.exe` (taşınabilir)
+
+### macOS
+
+```bash
+npm run dist:mac
+```
+
+> macOS `.dmg` / `.app` yalnızca Mac üzerinde üretilir. Windows makinede `dist:mac` çalışmaz.
+> Gatekeeper için Apple Developer imzalama ve notarize ayrıca gerekir.
+
+### İkon (isteğe bağlı)
+
+`build/` altına koyun:
+- `icon.ico` — Windows
+- `icon.icns` — macOS
+- `icon.png` — 512×512 yedek
 
 ## Lisans / durum
 

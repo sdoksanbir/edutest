@@ -60,7 +60,7 @@
   /* PDF önizleme modal — panel genişlikleri (fluid) */
   --pdf-panel-left-width: clamp(19rem, 23vw, 26rem);
   --pdf-panel-thumb-width: clamp(7.5rem, 10vw, 9.6875rem);
-  --pdf-panel-theme-width: clamp(18rem, 22vw, 24rem);
+  --pdf-panel-theme-width: clamp(20.5rem, 24vw, 27rem);
   --pdf-panel-optik-width: clamp(12.5rem, 16vw, 15.5rem);
   --pdf-panel-rail-width: 2.125rem;
   /* En uzun etiket: Düzenleme — tüm rail kutuları bu boyuta sabitlenir */
@@ -139,7 +139,7 @@ html.tq-editor-root {
     --tq-sidebar-width: clamp(14rem, 20vw, 17.5rem);
     --pdf-panel-left-width: clamp(17rem, 20vw, 20rem);
     --pdf-panel-thumb-width: clamp(7rem, 9vw, 8.125rem);
-    --pdf-panel-theme-width: clamp(16.5rem, 19vw, 19.5rem);
+    --pdf-panel-theme-width: clamp(18.75rem, 22vw, 22.5rem);
     --pdf-panel-optik-width: clamp(11.25rem, 14vw, 13.75rem);
     --pdf-panel-rail-width: 2rem;
     --pdf-panel-padding: 0.625rem;
@@ -151,7 +151,7 @@ html.tq-editor-root {
   :root {
     --tq-sidebar-width: clamp(17.75rem, 22vw, 23rem);
     --pdf-panel-left-width: clamp(20rem, 18vw, 26rem);
-    --pdf-panel-theme-width: clamp(19rem, 17vw, 24rem);
+    --pdf-panel-theme-width: clamp(21.5rem, 18vw, 27rem);
     --pdf-panel-optik-width: clamp(13rem, 13vw, 16.5rem);
     --pdf-panel-padding: 0.875rem;
   }
@@ -163,7 +163,7 @@ html.tq-editor-root {
     --tq-sidebar-width: clamp(18.5rem, 18vw, 24rem);
     --pdf-panel-left-width: clamp(21rem, 16vw, 27rem);
     --pdf-panel-thumb-width: clamp(8rem, 8vw, 10.5rem);
-    --pdf-panel-theme-width: clamp(20rem, 15vw, 25rem);
+    --pdf-panel-theme-width: clamp(22.5rem, 16vw, 28rem);
     --pdf-panel-optik-width: clamp(14rem, 12vw, 17.5rem);
     --pdf-panel-rail-width: 2.25rem;
     --tq-main-padding: var(--tq-space-5);

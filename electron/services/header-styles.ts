@@ -24,6 +24,9 @@ const LEAF_CORPORATE_BANNER_BODY_H_PT = 86.25 + LEAF_CORPORATE_BANNER_FOOTER_H_P
 const LEAF_CORPORATE_BANNER_STRIPE_H_PT = 2.5
 const LGS_VERBAL_BANNER_VIEW_W = 1498
 const LGS_VERBAL_BANNER_VIEW_H = 92
+const LGS_OFFICIAL_BANNER_VIEW_W = 925
+const LGS_OFFICIAL_BANNER_VIEW_H = 272
+const LGS_OFFICIAL_BELOW_GAP_PT = 6
 
 function usesHtmlBannerOverlay(config?: HeaderConfig): boolean {
   if (!config) return false
@@ -37,6 +40,10 @@ function isLeafRefCorporateBanner(config?: HeaderConfig): boolean {
 
 function isLgsVerbalRefBanner(config?: HeaderConfig): boolean {
   return config?.useExamBanner === true && config.examBannerTemplate === 'lgs-verbal-ref'
+}
+
+function isLgsOfficialRefBanner(config?: HeaderConfig): boolean {
+  return config?.useExamBanner === true && config.examBannerTemplate === 'lgs-official-ref'
 }
 
 function testBannerBodyHeightPt(contentWidthPt: number): number {
@@ -58,6 +65,14 @@ export function lgsVerbalBannerBodyHeightPt(contentWidthPt: number): number {
 
 export function lgsVerbalBannerHeaderBlockHeightPt(contentWidthPt: number): number {
   return lgsVerbalBannerBodyHeightPt(contentWidthPt)
+}
+
+export function lgsOfficialBannerBodyHeightPt(contentWidthPt: number): number {
+  return contentWidthPt * (LGS_OFFICIAL_BANNER_VIEW_H / LGS_OFFICIAL_BANNER_VIEW_W)
+}
+
+export function lgsOfficialBannerHeaderBlockHeightPt(contentWidthPt: number): number {
+  return lgsOfficialBannerBodyHeightPt(contentWidthPt) + LGS_OFFICIAL_BELOW_GAP_PT
 }
 
 export type HeaderStyleId = 'style_1' | 'style_2' | 'style_3' | 'style_4'
@@ -169,6 +184,13 @@ export function themeFirstPageHeaderTotalPt(
           ? pageWpt - marginLeftMm * PT_PER_MM - marginRightMm * PT_PER_MM
           : 451
       return lgsVerbalBannerHeaderBlockHeightPt(contentW)
+    }
+    if (isLgsOfficialRefBanner(headerConfig)) {
+      const contentW =
+        pageWpt != null && marginLeftMm != null && marginRightMm != null
+          ? pageWpt - marginLeftMm * PT_PER_MM - marginRightMm * PT_PER_MM
+          : 451
+      return lgsOfficialBannerHeaderBlockHeightPt(contentW)
     }
     const contentW =
       pageWpt != null && marginLeftMm != null && marginRightMm != null

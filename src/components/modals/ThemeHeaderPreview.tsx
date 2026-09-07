@@ -62,36 +62,36 @@ function SchematicIcon({
   }
 
   if (styleId === "style_1") {
-    // Klasik: üst şerit + iki satır
+    // Klasik / Standart: üst şerit + iki satır
     return (
       <svg viewBox="0 0 72 56" className="theme-header-schematic-icon" aria-hidden>
         <rect
-          x="10"
+          x="12"
           y="8"
-          width="52"
+          width="48"
           height="40"
-          rx="8"
+          rx="6"
           fill="none"
           stroke={ink}
-          strokeWidth="1.75"
+          strokeWidth="1.65"
         />
-        <rect x="15" y="13" width="42" height="9" rx="2.5" fill={ink} opacity="0.9" />
+        <rect x="17" y="13" width="38" height="8" rx="2" fill={ink} opacity="0.92" />
         <line
-          x1="17"
-          y1="31"
-          x2="55"
-          y2="31"
+          x1="18"
+          y1="30"
+          x2="54"
+          y2="30"
           stroke={ink}
-          strokeWidth="1.75"
+          strokeWidth="1.65"
           strokeLinecap="round"
         />
         <line
-          x1="17"
-          y1="39"
-          x2="48"
-          y2="39"
+          x1="18"
+          y1="38"
+          x2="46"
+          y2="38"
           stroke={ink}
-          strokeWidth="1.75"
+          strokeWidth="1.65"
           strokeLinecap="round"
         />
       </svg>
@@ -99,101 +99,88 @@ function SchematicIcon({
   }
 
   if (styleId === "style_2") {
-    // Minimal: sol boş / orta ders adı / sağ D/Y/B + alt bilgi
+    // Minimal: ince üst şerit + tek satır
     return (
       <svg viewBox="0 0 72 56" className="theme-header-schematic-icon" aria-hidden>
         <rect
-          x="10"
+          x="12"
           y="8"
-          width="52"
+          width="48"
           height="40"
-          rx="8"
+          rx="6"
           fill="none"
           stroke={ink}
-          strokeWidth="1.75"
+          strokeWidth="1.65"
         />
-        <rect
-          x="15"
-          y="13"
-          width="12"
-          height="10"
-          rx="1.5"
-          fill="none"
+        <rect x="17" y="14" width="38" height="5" rx="1.5" fill={ink} opacity="0.88" />
+        <line
+          x1="18"
+          y1="30"
+          x2="54"
+          y2="30"
           stroke={ink}
-          strokeWidth="1.4"
-        />
-        <rect x="29" y="13" width="14" height="10" rx="1.5" fill={ink} opacity="0.9" />
-        <rect
-          x="45"
-          y="13"
-          width="12"
-          height="10"
-          rx="1.5"
-          fill="none"
-          stroke={ink}
-          strokeWidth="1.4"
-        />
-        <rect
-          x="15"
-          y="27"
-          width="42"
-          height="16"
-          rx="2"
-          fill="none"
-          stroke={ink}
-          strokeWidth="1.4"
+          strokeWidth="1.55"
+          strokeLinecap="round"
         />
       </svg>
     );
   }
 
   if (styleId === "style_3") {
-    // Blok: üst şerit + iki kalın blok
+    // Blok: kalın üst şerit + iki satır
     return (
       <svg viewBox="0 0 72 56" className="theme-header-schematic-icon" aria-hidden>
         <rect
-          x="10"
+          x="12"
           y="8"
-          width="52"
+          width="48"
           height="40"
-          rx="8"
+          rx="6"
           fill="none"
           stroke={ink}
-          strokeWidth="1.75"
+          strokeWidth="1.65"
         />
-        <rect x="15" y="13" width="42" height="8" rx="2.5" fill={ink} opacity="0.9" />
-        <rect x="15" y="27" width="42" height="6" rx="2" fill={ink} opacity="0.55" />
-        <rect x="15" y="37" width="28" height="6" rx="2" fill={ink} opacity="0.4" />
+        <rect x="17" y="13" width="38" height="11" rx="2" fill={ink} opacity="0.92" />
+        <line
+          x1="18"
+          y1="33"
+          x2="54"
+          y2="33"
+          stroke={ink}
+          strokeWidth="1.65"
+          strokeLinecap="round"
+        />
+        <line
+          x1="18"
+          y1="41"
+          x2="44"
+          y2="41"
+          stroke={ink}
+          strokeWidth="1.65"
+          strokeLinecap="round"
+        />
       </svg>
     );
   }
 
-  // Minimal: ince çerçeve + iki ince çizgi
+  // Modern / fallback: orta şerit + iki satır
   return (
     <svg viewBox="0 0 72 56" className="theme-header-schematic-icon" aria-hidden>
       <rect
-        x="10"
+        x="12"
         y="8"
-        width="52"
+        width="48"
         height="40"
-        rx="8"
+        rx="6"
         fill="none"
         stroke={ink}
         strokeWidth="1.5"
       />
-      <line
-        x1="18"
-        y1="22"
-        x2="54"
-        y2="22"
-        stroke={ink}
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
+      <rect x="17" y="14" width="38" height="7" rx="2" fill={ink} opacity="0.75" />
       <line
         x1="18"
         y1="30"
-        x2="46"
+        x2="54"
         y2="30"
         stroke={ink}
         strokeWidth="1.5"
@@ -202,7 +189,7 @@ function SchematicIcon({
       <line
         x1="18"
         y1="38"
-        x2="50"
+        x2="48"
         y2="38"
         stroke={ink}
         strokeWidth="1.5"

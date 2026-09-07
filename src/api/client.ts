@@ -233,7 +233,7 @@ export const api = {
       ),
     fromQuestions: async (payload: Record<string, unknown>) => {
       const exportId = String(payload.exportId ?? `exp_${Date.now()}`)
-      console.error('[PDF_EXPORT:API]', {
+      console.debug('[PDF_EXPORT:API]', {
         exportId,
         file: 'src/api/client.ts',
         fn: 'api.exports.fromQuestions',
@@ -256,7 +256,7 @@ export const api = {
 
       // Eski main process yalnızca base64 string dönerse
       if (typeof result === 'string') {
-        console.error('[PDF_EXPORT:API] LEGACY_STRING_RESPONSE — dist-electron yeniden derlenmeli', {
+        console.debug('[PDF_EXPORT:API] LEGACY_STRING_RESPONSE — dist-electron yeniden derlenmeli', {
           exportId,
         })
         const binary = Uint8Array.from(atob(result), (c) => c.charCodeAt(0))
@@ -288,7 +288,7 @@ export const api = {
         questions: result.questions ?? [],
         rendererFile: result.rendererFile ?? '',
       }
-      console.error('[PDF_EXPORT:API] diagnostics', diagnostics)
+      console.debug('[PDF_EXPORT:API] diagnostics', diagnostics)
       return {
         blob: new Blob([binary], { type: 'application/pdf' }),
         diagnostics,

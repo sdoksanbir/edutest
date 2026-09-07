@@ -6,7 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     if (method === 'exports:fromQuestions') {
       const body = (payload && typeof payload === 'object' ? payload : {}) as Record<string, unknown>
       const exportId = String(body.exportId ?? '')
-      console.error('[PDF_EXPORT:PRELOAD]', {
+      console.debug('[PDF_EXPORT:PRELOAD]', {
         exportId,
         file: 'electron/preload.ts',
         method: 'exports:fromQuestions',

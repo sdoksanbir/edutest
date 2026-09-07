@@ -84,8 +84,8 @@ type LayoutEntry = QuestionBlock & {
 }
 
 /**
- * Crop CROP_EXPORT_DPI=600 ile birebir: 1 px → 72/600 pt.
- * Eski TEXT_SCALE (10/12) kaldırıldı — 600 DPI kırpmayı ~720 DPI sanıp ~%17 küçültüyordu.
+ * Legacy fallback 600 DPI: 1 px → 72/600 pt. Yeni kırpmalar capture.pixelsPerPdfPoint kullanır.
+ * Eski TEXT_SCALE (10/12) kaldırıldı — 600 DPI kırpmayı ~600 DPI sanıp ~%17 küçültüyordu.
  */
 export const LAYOUT_ZOOM = 600 / 72
 const IMG_COL_RIGHT_PAD_PT = METRICS_IMG_PAD

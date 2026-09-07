@@ -10,6 +10,7 @@ import {
   CORPORATE_STRIPE_H_PT,
   CORPORATE_STRIPE_ROW_H_PT,
   CORPORATE_STRIPE_SECTION_GAP_PT,
+  isLgsOfficialBannerConfig,
   parseHeaderConfig,
   type HeaderConfig,
 } from './corporate-header-layout.js'
@@ -32,7 +33,7 @@ import { drawCorporateHeader, drawStyle1RunningHeaderPdf } from './corporate-hea
 import { HEADER_LOGO_COL_PAD_PT } from './header-logo.js'
 import { drawHeaderLeftColumnPdf } from './header-left-column.js'
 import { fieldFontPt, runningHeaderSideFontPt, type HeaderFontFieldKey } from './header-field-fonts.js'
-import { headerFieldDisplayText, otherPageHeaderLeftText, otherPageHeaderRightText, visibleSubTopicText, visibleTopicText } from './header-field-visibility.js'
+import { headerFieldDisplayText, otherPageHeaderLeftText, otherPageHeaderRightText, trialLgsOtherPageLeftText, trialLgsOtherPageRightText, visibleSubTopicText, visibleTopicText } from './header-field-visibility.js'
 
 function hexToRgb(hex: string): RGB {
   const s = (hex || '').trim().replace(/^#/, '')
@@ -365,10 +366,22 @@ async function drawThemeRunningHeaderPdf(
   mt: number,
   fonts: { regular: PDFFont; bold: PDFFont },
   otherPageGapMm = 1.0,
+  trialTestName?: string | null,
 ) {
   const id = normalizeHeaderStyleId(styleId)
   if (id === 'style_1') {
-    await drawStyle1RunningHeaderPdf(pdf, page, config, pageNum, geom, mt, fonts, id, otherPageGapMm)
+    await drawStyle1RunningHeaderPdf(
+      pdf,
+      page,
+      config,
+      pageNum,
+      geom,
+      mt,
+      fonts,
+      id,
+      otherPageGapMm,
+      trialTestName,
+    )
     return
   }
 
@@ -383,8 +396,12 @@ async function drawThemeRunningHeaderPdf(
   const bodyBottom = bodyTop - THEME_RUNNING_BODY_H_PT
   const bottomStripeBottom =
     bodyBottom - THEME_RUNNING_STRIPE_GAP_PT - THEME_RUNNING_STRIPE_H_PT
-  const topicText = otherPageHeaderLeftText(config)
-  const brandText = otherPageHeaderRightText(config)
+  const topicText = isLgsOfficialBannerConfig(config)
+    ? trialLgsOtherPageLeftText(trialTestName)
+    : otherPageHeaderLeftText(config)
+  const brandText = isLgsOfficialBannerConfig(config)
+    ? trialLgsOtherPageRightText(config)
+    : otherPageHeaderRightText(config)
 
   page.drawRectangle({
     x: geom.ml,
@@ -469,7 +486,23 @@ export async function drawThemeRunningHeaderPdfFromPayload(
   const styleId = normalizeHeaderStyleId(String(payload.header_style_id ?? ''))
   const config = parseHeaderConfig(payload.header_config)
   const otherPageGapMm = Number(payload.other_page_header_bottom_gap_mm ?? 1.0)
-  await drawThemeRunningHeaderPdf(pdf, page, config, styleId, pageNum, geom, mt, fonts, otherPageGapMm)
+  const trialRaw = payload.trial_banner
+  const trialTestName =
+    trialRaw && typeof trialRaw === 'object'
+      ? String((trialRaw as Record<string, unknown>).test_name ?? '').trim()
+      : ''
+  await drawThemeRunningHeaderPdf(
+    pdf,
+    page,
+    config,
+    styleId,
+    pageNum,
+    geom,
+    mt,
+    fonts,
+    otherPageGapMm,
+    trialTestName,
+  )
 }
 
 export function themeRunningHeaderBlockPt(): number {
