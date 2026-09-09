@@ -76,7 +76,7 @@ export function clampExamTypeDividerWidthPt(pt: number): number {
 
 function splitExamTypeToLines(examType: string): { line1: string; line2: string } {
   const t = examType.trim()
-  if (!t) return { line1: '9. Sınıf', line2: '' }
+  if (!t) return { line1: 'SINIF', line2: '' }
   const idx = t.lastIndexOf(' ')
   if (idx > 0) return { line1: t.slice(0, idx).trim(), line2: t.slice(idx + 1).trim() }
   return { line1: t, line2: '' }
@@ -100,7 +100,7 @@ export function examTypeLineSpecs(config: HeaderConfig): PublicationLineSpec[] {
   }
 
   const fallback = splitExamTypeToLines(config.examType || '')
-  const l1 = String(config.examTypeLine1 ?? '').trim() || fallback.line1
+  const l1 = String(config.examTypeLine1 ?? fallback.line1).trim()
   if (!l1) return []
   const primary = config.primaryColor || '#0A1931'
   return [

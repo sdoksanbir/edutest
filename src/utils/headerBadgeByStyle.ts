@@ -138,7 +138,7 @@ export function style1BadgeDefaults(): HeaderBadgeSettings {
     testNoOffsetYPt: 3,
     testNoGapXPt: 3,
     testNoOffsetXPt: 23,
-    scoreBoxWidthPt: 100,
+    scoreBoxWidthPt: 130,
     scoreBoxHeightPt: 17,
     scoreBoxLabelFontPt: 10,
     scoreBoxOffsetYPt: 9,
@@ -146,8 +146,8 @@ export function style1BadgeDefaults(): HeaderBadgeSettings {
     examTypeBoxManualHeightPt: 22,
     examTypeOffsetXPt: 0,
     examTypeOffsetYPt: 7,
-    examType: "9. Sınıf",
-    examTypeLine1: "9. Sınıf",
+    examType: "SINIF",
+    examTypeLine1: "SINIF",
     examTypeLine2: "",
     examTypeLine1FontPt: 11,
     examTypeLine1Color: "#FFFFFF",
@@ -171,7 +171,7 @@ export function style2BadgeDefaults(): HeaderBadgeSettings {
     testNoBorderColor: "",
     testNoWidthPt: 60,
     testNoHeightPt: 18,
-    scoreBoxWidthPt: 100,
+    scoreBoxWidthPt: 130,
     scoreBoxHeightPt: 17,
     scoreBoxLabelFontPt: 10,
     scoreBoxLabelColor: "",
@@ -179,8 +179,8 @@ export function style2BadgeDefaults(): HeaderBadgeSettings {
     scoreBoxFillColor: "#FFFFFF",
     scoreBoxBorderWidthPt: 1.25,
     scoreBoxLineWidthPt: 0.75,
-    examType: '9. Sınıf',
-    examTypeLine1: '9. Sınıf',
+    examType: 'SINIF',
+    examTypeLine1: 'SINIF',
     examTypeLine2: '',
     examTypeLine1FontPt: 9,
     examTypeLine2FontPt: 10,
@@ -221,7 +221,7 @@ function stripLegacyScoreBoxDefaults(
   const testOx = Number(next.testNoOffsetXPt)
   const examW = Number(next.examTypeBoxManualWidthPt)
   const examOy = Number(next.examTypeOffsetYPt)
-  if (w === 113 || w === 108) delete next.scoreBoxWidthPt
+  if (w === 113 || w === 108 || w === 100) delete next.scoreBoxWidthPt
   if (h === 37 || h === 22) delete next.scoreBoxHeightPt
   if (f === 7) delete next.scoreBoxLabelFontPt
   if (testW === 72 || testW === 60) delete next.testNoWidthPt
@@ -250,14 +250,22 @@ function stripLegacyScoreBoxDefaults(
   if (next.examTypeLine1Color === "" || next.examTypeLine1Color == null) {
     delete next.examTypeLine1Color
   }
-  if (next.examTypeLine1 === "" || next.examTypeLine1 == null) {
+  if (next.examTypeLine1 == null) {
     delete next.examTypeLine1
   }
   {
     const line1 = String(next.examTypeLine1 ?? "").trim()
-    if (line1 === "TYT-AYT" || line1 === "TYT-AYT TEST") delete next.examTypeLine1
+    if (
+      line1 === "TYT-AYT" ||
+      line1 === "TYT-AYT TEST" ||
+      line1 === "9. Sınıf"
+    ) {
+      delete next.examTypeLine1
+    }
     const et = String(next.examType ?? "").trim()
-    if (et === "TYT-AYT" || et === "TYT-AYT TEST") delete next.examType
+    if (et === "TYT-AYT" || et === "TYT-AYT TEST" || et === "9. Sınıf") {
+      delete next.examType
+    }
   }
   {
     const fill = String(next.examTypeBoxFillColor ?? "").trim().toLowerCase()

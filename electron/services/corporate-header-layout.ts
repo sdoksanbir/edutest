@@ -26,7 +26,7 @@ import {
 
 function splitExamTypeToLines(examType: string): { line1: string; line2: string } {
   const t = examType.trim()
-  if (!t) return { line1: '9. Sınıf', line2: '' }
+  if (!t) return { line1: 'SINIF', line2: '' }
   const idx = t.lastIndexOf(' ')
   if (idx > 0) return { line1: t.slice(0, idx).trim(), line2: t.slice(idx + 1).trim() }
   return { line1: t, line2: '' }
@@ -313,7 +313,7 @@ export function defaultHeaderConfig(): HeaderConfig {
     institutionBadgeHeightPt: 18,
     institutionBadgePadXPt: 6,
     institutionBadgeRadiusPt: 2.5,
-    examTypeLine1: '9. Sınıf',
+    examTypeLine1: 'SINIF',
     examTypeLine2: '',
     examTypeLine1FontPt: 11,
     examTypeLine2FontPt: 10,
@@ -341,7 +341,7 @@ export function defaultHeaderConfig(): HeaderConfig {
     subjectPillTextOffsetYPt: -3,
     subjectTopicGapPt: 3,
     topicSubTopicGapPt: 3,
-    examType: '9. Sınıf',
+    examType: 'SINIF',
     subject: 'MATEMATİK',
     topic: 'POLİNOMLAR',
     subTopic: 'Bölme İşlemi',
@@ -403,7 +403,7 @@ export function defaultHeaderConfig(): HeaderConfig {
     testNoOffsetYPt: 3,
     testNoGapXPt: 3,
     testNoOffsetXPt: 23,
-    scoreBoxWidthPt: 100,
+    scoreBoxWidthPt: 130,
     scoreBoxHeightPt: 17,
     scoreBoxOffsetYPt: 9,
     scoreBoxLabelFontPt: 10,

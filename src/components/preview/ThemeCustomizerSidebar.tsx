@@ -1137,7 +1137,7 @@ export default function ThemeCustomizerSidebar({
       : ["testNo"]
     : resolveBannerRightSlots(badgeConfig);
 
-  const examTypeLine1 = badgeConfig.examTypeLine1?.trim() || "9. Sınıf";
+  const examTypeLine1 = badgeConfig.examTypeLine1 ?? "SINIF";
   const examTypeLine1Color = badgeConfig.examTypeLine1Color || APP_TEXT_ON_FILL_DEFAULT;
   const examTypeLine1FontPt = badgeConfig.examTypeLine1FontPt ?? 11;
   const examTypeBoxBorderStyle = (badgeConfig.examTypeBoxBorderStyle ?? "none") as ExamTypeBoxBorderStyle;
@@ -1934,7 +1934,7 @@ export default function ThemeCustomizerSidebar({
                                 examTypeLine2: "",
                               })
                             }
-                            placeholder="9. Sınıf"
+                            placeholder="SINIF"
                             fontPt={examTypeLine1FontPt}
                             onFontPtChange={(pt) => updateBadge({ examTypeLine1FontPt: pt })}
                             color={examTypeLine1Color}

@@ -33,7 +33,7 @@ const CLASSIC_TOP_BANNER_H_MAX_PT = 72
 
 export type BannerRightMode = 'examType' | 'score' | 'testNo' | 'hidden'
 
-export const STYLE_1_SCORE_BOX_W_PT = 100
+export const STYLE_1_SCORE_BOX_W_PT = 130
 export const STYLE_1_SCORE_BOX_H_PT = 17
 export const STYLE_1_SCORE_BOX_W_MIN_PT = 72
 export const STYLE_1_SCORE_BOX_W_MAX_PT = 200
