@@ -2,32 +2,33 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { GripVertical, RotateCcw, Undo2 } from "lucide-react";
 import {
-  FASIKUL_BADGE_STYLES,
   FASIKUL_BORDER_COLORS,
   FASIKUL_FILL_COLORS,
-  FASIKUL_FRAME_ICONS,
   FASIKUL_FRAME_PRESETS,
   FASIKUL_LABEL_COLORS,
   FASIKUL_LABEL_POSITIONS,
   DEFAULT_FASIKUL_QUESTION_FRAME,
+  FASIKUL_CORNER_RADIUS_MAX_PX,
+  FASIKUL_CORNER_RADIUS_MIN_PX,
   applyFasikulPreset,
-  getFasikulFrameIcon,
   getFasikulFramePreset,
   clampBadgeOffsetForPosition,
+  clampFasikulCornerRadiusPx,
   isSideLabelPosition,
   isTopOrBottomLabelPosition,
   normalizeLabelPosition,
   withBorderStyle,
-  type FasikulBadgeStyle,
   type FasikulBorderStyle,
   type FasikulFrameApplyScope,
-  type FasikulFrameIconId,
   type FasikulFramePresetId,
-  type FasikulIconTextPlacement,
   type FasikulLabelPosition,
   type FasikulLabelSideTextDir,
   type FasikulQuestionFrameSettings,
 } from "../../utils/fasikulQuestionFrame";
+import {
+  FasikulFrameBadgeChrome,
+  FasikulFrameBadgeShape,
+} from "./FasikulFrameBadge";
 
 type Props = {
   open: boolean;
@@ -197,7 +198,6 @@ function FramePresetThumb({
 }) {
   const preset = getFasikulFramePreset(presetId);
   if (!preset) return null;
-  const icon = getFasikulFrameIcon(preset.defaultIcon)?.glyph ?? "";
 
   return (
     <button
@@ -210,45 +210,38 @@ function FramePresetThumb({
       }`}
     >
       <div
-        className="relative h-[44px] w-full overflow-hidden rounded border"
-        style={{ borderColor: preset.accent + "55", background: preset.fill }}
+        className="relative h-[52px] w-full overflow-visible rounded-[5px]"
+        style={{
+          borderWidth: preset.borderStyle === "none" ? 0 : 2,
+          borderStyle: preset.borderStyle === "dashed" ? "dashed" : "solid",
+          borderColor: preset.borderStyle === "none" ? "transparent" : preset.accent,
+          background: preset.badgeStyle === "ring-pill" ? "transparent" : preset.fill,
+        }}
       >
-        {preset.kind === "corner-tag" && (
-          <span
-            className="absolute left-0 top-0 inline-flex items-center gap-0.5 rounded-br px-1.5 py-0.5 text-[8px] font-bold text-white"
-            style={{ background: preset.accent }}
-          >
-            {icon && <span className="text-[9px] leading-none">{icon}</span>}
-            {preset.defaultLabel}
-          </span>
-        )}
-        {preset.kind === "header-bar" && (
-          <div
-            className="flex h-5 w-full items-center gap-1 px-1.5 text-[8px] font-bold text-white"
-            style={{ background: preset.accent }}
-          >
-            {icon && <span className="text-[9px] leading-none">{icon}</span>}
-            {preset.defaultLabel}
+        <div className="absolute left-0 bottom-full mb-[6px] scale-[0.72] origin-bottom-left">
+          <FasikulFrameBadgeShape
+            label={preset.defaultLabel}
+            accent={preset.accent}
+            badgeStyle={preset.badgeStyle}
+            questionNumber={1}
+          />
+        </div>
+        {preset.badgeStyle === "flat-bar-dots" && (
+          <div className="absolute right-2 top-0 flex -translate-y-1/2 gap-[3px]">
+            {[0, 1, 2].map((i) => (
+              <span
+                key={i}
+                className="block h-[4px] w-[4px] rounded-full"
+                style={{ background: preset.accent }}
+              />
+            ))}
           </div>
         )}
-        {preset.kind === "ribbon" && (
+        {preset.badgeStyle === "slash-corner-dot" && (
           <span
-            className="absolute -right-5 top-1.5 w-16 rotate-45 py-0.5 text-center text-[7px] font-bold text-white shadow"
+            className="absolute right-0 top-0 h-[6px] w-[6px] -translate-y-1/2 translate-x-1/2 rounded-full"
             style={{ background: preset.accent }}
-          >
-            {preset.defaultLabel}
-          </span>
-        )}
-        {(preset.kind === "seal" ||
-          preset.kind === "tab" ||
-          preset.kind === "dotted" ||
-          preset.kind === "double-line") && (
-          <span
-            className="absolute left-1 top-1 text-[8px] font-bold"
-            style={{ color: preset.accent }}
-          >
-            {preset.defaultLabel}
-          </span>
+          />
         )}
       </div>
       <span className="text-[10px] font-medium leading-tight text-slate-600">{preset.name}</span>
@@ -274,44 +267,6 @@ function AlignIcon({ align }: { align: "left" | "center" | "right" }) {
   return (
     <svg width="12" height="10" viewBox="0 0 12 10" aria-hidden>
       <path d="M2 2h6M2 5h4M2 8h6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function BadgeStyleIcon({
-  styleId,
-  active,
-}: {
-  styleId: FasikulBadgeStyle;
-  active: boolean;
-}) {
-  const stroke = active ? "#fff" : "#64748b";
-  const fill = active ? "rgba(255,255,255,0.25)" : "#e2e8f0";
-  if (styleId === "folded-tab") {
-    return (
-      <svg width="18" height="14" viewBox="0 0 18 14" aria-hidden>
-        <path d="M1 2h11l4 5v5H1V2z" fill={fill} stroke={stroke} strokeWidth="1.2" />
-        <path d="M12 2v5h4" fill="none" stroke={stroke} strokeWidth="1.2" />
-      </svg>
-    );
-  }
-  if (styleId === "angular-ribbon") {
-    return (
-      <svg width="18" height="14" viewBox="0 0 18 14" aria-hidden>
-        <path d="M2 3l12 0 2 4-2 4H2l2-4-2-4z" fill={fill} stroke={stroke} strokeWidth="1.2" />
-      </svg>
-    );
-  }
-  if (styleId === "reverse-angular-ribbon") {
-    return (
-      <svg width="18" height="14" viewBox="0 0 18 14" aria-hidden>
-        <path d="M16 3H4L2 7l2 4h12l-2-4 2-4z" fill={fill} stroke={stroke} strokeWidth="1.2" />
-      </svg>
-    );
-  }
-  return (
-    <svg width="18" height="14" viewBox="0 0 18 14" aria-hidden>
-      <rect x="1.5" y="3" width="15" height="8" rx="2" fill={fill} stroke={stroke} strokeWidth="1.2" />
     </svg>
   );
 }
@@ -368,54 +323,23 @@ function LabelPositionPicker({
   );
 }
 
-function badgeLayoutClass(pos: FasikulLabelPosition): string {
-  switch (normalizeLabelPosition(pos)) {
-    case "top-center":
-      return "left-1/2 top-0 -translate-x-1/2 -translate-y-full";
-    case "top-right":
-      return "right-0 top-0 -translate-y-full";
-    case "middle-left":
-      return "left-0 top-1/2";
-    case "middle-right":
-      return "right-0 top-1/2";
-    case "bottom-left":
-      return "left-0 top-full mt-0.5";
-    case "bottom-center":
-      return "left-1/2 top-full mt-0.5 -translate-x-1/2";
-    case "bottom-right":
-      return "right-0 top-full mt-0.5";
-    case "top-left":
-    default:
-      return "left-0 top-0 -translate-y-full";
-  }
-}
-
-function sideBadgeTransform(
-  pos: FasikulLabelPosition,
-  dir: FasikulLabelSideTextDir,
-): string {
-  const p = normalizeLabelPosition(pos);
-  const base =
-    p === "middle-left" ? "translate(-100%, -50%)" : "translate(100%, -50%)";
-  return dir === "btt" ? `${base} rotate(180deg)` : base;
-}
-
-function SectionCard({
+function FrameMenuSection({
   title,
-  accent,
   children,
 }: {
   title: string;
-  accent: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-2.5">
-      <div className="mb-2 flex items-center gap-1.5">
-        <span className="h-3.5 w-3.5 rounded-sm" style={{ background: accent }} aria-hidden />
-        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-600">{title}</p>
+    <div className="space-y-3 py-1">
+      <div className="flex w-full min-w-0 items-center gap-2.5">
+        <span className="h-px min-w-[0.375rem] flex-1 bg-slate-300/80" aria-hidden />
+        <span className="max-w-[70%] rounded-md bg-slate-100 px-3 py-1.5 text-center text-[12px] font-semibold leading-snug tracking-wide text-slate-600">
+          {title}
+        </span>
+        <span className="h-px min-w-[0.375rem] flex-1 bg-slate-300/80" aria-hidden />
       </div>
-      {children}
+      <div className="space-y-2.5">{children}</div>
     </div>
   );
 }
@@ -619,7 +543,7 @@ export default function FasikulQuestionFrameMenu({
         </label>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
+      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-3 py-3">
         <div className="space-y-1.5">
           <p className="text-[12px] font-semibold text-slate-700">
             Çerçeve hangi sorulara uygulansın?
@@ -653,153 +577,25 @@ export default function FasikulQuestionFrameMenu({
           </button>
         </div>
 
-        <div className="grid grid-cols-5 gap-1">
-          {BORDER_STYLES.map((s) => {
-            const selected = value.borderStyle === s.id;
-            return (
-              <button
-                key={s.id}
-                type="button"
-                title={s.label}
-                onClick={() => push(withBorderStyle(value, s.id))}
-                className={`flex flex-col items-center gap-1 rounded-lg border px-1 py-2 transition ${
-                  selected
-                    ? "border-blue-500 bg-blue-50 text-blue-700"
-                    : "border-slate-200 text-slate-500 hover:border-slate-300"
-                }`}
-              >
-                <span className={`mt-1 block w-7 ${s.preview}`} aria-hidden />
-                <span className="text-[9px] font-semibold">{s.label}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        <SectionCard title="Kenarlık" accent="#f97316">
-          <p className="mb-1 text-[10px] font-semibold text-slate-500">Kalınlık</p>
-          <div className="mb-2 flex gap-1.5">
-            {([1, 2, 3, 4] as const).map((n) => (
-              <button
-                key={n}
-                type="button"
-                onClick={() => push({ ...value, borderWidth: n, enabled: true })}
-                className={`h-7 w-8 rounded-md border text-[11px] font-bold transition ${
-                  value.borderWidth === n
-                    ? "border-blue-500 bg-blue-50 text-blue-700"
-                    : "border-slate-200 text-slate-600"
-                }`}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-          <p className="mb-1 text-[10px] font-semibold text-slate-500">Renk</p>
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {FASIKUL_BORDER_COLORS.map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() =>
-                  push({ ...value, borderColor: c, labelColor: c, enabled: true })
-                }
-                className={`h-6 w-6 rounded-md border-2 ${
-                  value.borderColor.toLowerCase() === c.toLowerCase()
-                    ? "border-slate-500"
-                    : "border-transparent"
-                }`}
-                style={{ background: c }}
+        <FrameMenuSection title="Hazır Tasarımlar">
+          <div className="grid grid-cols-2 gap-2">
+            {FASIKUL_FRAME_PRESETS.map((p) => (
+              <FramePresetThumb
+                key={p.id}
+                presetId={p.id}
+                selected={value.enabled && value.presetId === p.id}
+                onSelect={() => push(applyFasikulPreset(value, p.id))}
               />
             ))}
           </div>
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[10px] font-semibold text-slate-500">Köşeler</p>
-            <span className="text-[10px] font-bold text-orange-600">
-              {value.cornerRadiusPx}px
-            </span>
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={24}
-            value={value.cornerRadiusPx}
-            onChange={(e) =>
-              push({
-                ...value,
-                cornerRadiusPx: Number(e.target.value),
-                enabled: true,
-              })
-            }
-            className="mt-1 w-full"
-            style={{ accentColor: "#f97316" }}
-          />
-        </SectionCard>
+          {selectedPreset && (
+            <p className="mt-1.5 text-[10px] text-slate-400">
+              Seçili hazır tasarım: {selectedPreset.name}
+            </p>
+          )}
+        </FrameMenuSection>
 
-        <SectionCard title="Arkaplan" accent="#93c5fd">
-          <p className="mb-1 text-[10px] font-semibold text-slate-500">Dolgu Rengi</p>
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {FASIKUL_FILL_COLORS.map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => push({ ...value, fillColor: c, enabled: true })}
-                className={`h-6 w-6 rounded-md border-2 ${
-                  value.fillColor.toLowerCase() === c.toLowerCase()
-                    ? "border-slate-500"
-                    : "border-slate-200"
-                }`}
-                style={{ background: c }}
-              />
-            ))}
-          </div>
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[10px] font-semibold text-slate-500">Opaklık</p>
-            <span className="text-[10px] font-bold text-blue-600">
-              {value.fillOpacityPct}%
-            </span>
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            value={value.fillOpacityPct}
-            onChange={(e) =>
-              push({
-                ...value,
-                fillOpacityPct: Number(e.target.value),
-                enabled: true,
-              })
-            }
-            className="mt-1 w-full"
-            style={{ accentColor: "#3b82f6" }}
-          />
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <p className="text-[10px] font-semibold text-slate-500">İç boşluk</p>
-            <span className="text-[10px] font-bold text-teal-700">
-              {value.innerPaddingPx ?? 0}px
-            </span>
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={40}
-            value={value.innerPaddingPx ?? 0}
-            onChange={(e) =>
-              push({
-                ...value,
-                innerPaddingPx: Number(e.target.value),
-                enabled: true,
-              })
-            }
-            className="mb-3 w-full"
-            style={{ accentColor: "#0f766e" }}
-          />
-          <p className="mb-1 text-[10px] text-slate-400">
-            Çerçeve kenarı ile soru görseli arası boşluk
-          </p>
-        </SectionCard>
-
-        <SectionCard title="Başlık" accent="#fb923c">
-          <p className="mb-1 text-[10px] font-semibold text-slate-500">Başlık</p>
+        <FrameMenuSection title="Başlık">
           <input
             type="text"
             value={value.labelText}
@@ -809,32 +605,6 @@ export default function FasikulQuestionFrameMenu({
             }
             className="mb-2 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[12px] font-semibold uppercase text-slate-800 outline-none focus:border-blue-400"
           />
-          <div className="mb-2 grid grid-cols-2 gap-1.5">
-            {FASIKUL_BADGE_STYLES.map((s) => {
-              const selected = value.badgeStyle === s.id;
-              return (
-                <button
-                  key={s.id}
-                  type="button"
-                  onClick={() =>
-                    push({
-                      ...value,
-                      badgeStyle: s.id,
-                      enabled: true,
-                    })
-                  }
-                  className={`flex items-center gap-2 rounded-lg border px-2 py-2 text-left text-[11px] font-semibold transition ${
-                    selected
-                      ? "border-blue-600 bg-blue-600 text-white"
-                      : "border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300"
-                  }`}
-                >
-                  <BadgeStyleIcon styleId={s.id} active={selected} />
-                  {s.name}
-                </button>
-              );
-            })}
-          </div>
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <span className="text-[10px] font-semibold text-slate-500">Renk:</span>
             <button
@@ -898,57 +668,6 @@ export default function FasikulQuestionFrameMenu({
                 );
               })}
             </div>
-          </div>
-          <p className="mb-1 text-[10px] font-semibold text-slate-500">İkon</p>
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {FASIKUL_FRAME_ICONS.map((ic) => {
-              const selected = value.iconId === ic.id;
-              return (
-                <button
-                  key={ic.id}
-                  type="button"
-                  title={ic.label}
-                  onClick={() => push({ ...value, iconId: ic.id, enabled: true })}
-                  className={`flex h-8 w-8 items-center justify-center rounded-md border text-sm transition ${
-                    selected
-                      ? "border-violet-500 bg-violet-50 ring-1 ring-violet-300"
-                      : "border-slate-200 bg-white hover:border-slate-300"
-                  }`}
-                >
-                  <span aria-hidden>{ic.glyph}</span>
-                </button>
-              );
-            })}
-          </div>
-          <div className="mb-2 grid grid-cols-2 gap-2">
-            {(
-              [
-                ["before", "Metnin Başına"],
-                ["after", "Metnin Sonuna"],
-              ] as const
-            ).map(([id, label]) => {
-              const selected = value.iconTextPlacement === id;
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() =>
-                    push({
-                      ...value,
-                      iconTextPlacement: id as FasikulIconTextPlacement,
-                      enabled: true,
-                    })
-                  }
-                  className={`rounded-lg border px-2 py-2 text-[11px] font-semibold transition ${
-                    selected
-                      ? "border-violet-500 text-violet-700"
-                      : "border-slate-200 text-slate-500"
-                  }`}
-                >
-                  {label}
-                </button>
-              );
-            })}
           </div>
           <p className="mb-1 text-[10px] font-semibold text-slate-500">
             Konum (çerçeve dışı)
@@ -1149,28 +868,212 @@ export default function FasikulQuestionFrameMenu({
               })}
             </div>
           )}
-        </SectionCard>
+        </FrameMenuSection>
 
-        <div>
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-            Hazır Tasarımlar
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            {FASIKUL_FRAME_PRESETS.map((p) => (
-              <FramePresetThumb
-                key={p.id}
-                presetId={p.id}
-                selected={value.enabled && value.presetId === p.id}
-                onSelect={() => push(applyFasikulPreset(value, p.id))}
+        <FrameMenuSection title="Kenarlık">
+          <p className="mb-1 text-[10px] font-semibold text-slate-500">Stil</p>
+          <div className="grid grid-cols-5 gap-1">
+            {BORDER_STYLES.map((s) => {
+              const selected = value.borderStyle === s.id;
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  title={s.label}
+                  onClick={() => push(withBorderStyle(value, s.id))}
+                  className={`flex flex-col items-center gap-1 rounded-lg border px-1 py-2 transition ${
+                    selected
+                      ? "border-blue-500 bg-blue-50 text-blue-700"
+                      : "border-slate-200 text-slate-500 hover:border-slate-300"
+                  }`}
+                >
+                  <span className={`mt-1 block w-7 ${s.preview}`} aria-hidden />
+                  <span className="text-[9px] font-semibold">{s.label}</span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="mb-1 mt-2 text-[10px] font-semibold text-slate-500">Kalınlık</p>
+          <div className="mb-2 flex gap-1.5">
+            {([1, 2, 3, 4] as const).map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => push({ ...value, borderWidth: n, enabled: true })}
+                className={`h-7 w-8 rounded-md border text-[11px] font-bold transition ${
+                  value.borderWidth === n
+                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                    : "border-slate-200 text-slate-600"
+                }`}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+          <p className="mb-1 text-[10px] font-semibold text-slate-500">Renk</p>
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {FASIKUL_BORDER_COLORS.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() =>
+                  push({ ...value, borderColor: c, labelColor: c, enabled: true })
+                }
+                className={`h-6 w-6 rounded-md border-2 ${
+                  value.borderColor.toLowerCase() === c.toLowerCase()
+                    ? "border-slate-500"
+                    : "border-transparent"
+                }`}
+                style={{ background: c }}
               />
             ))}
           </div>
-          {selectedPreset && (
-            <p className="mt-1.5 text-[10px] text-slate-400">
-              Seçili hazır tasarım: {selectedPreset.name}
-            </p>
-          )}
-        </div>
+          <p className="mb-1 mt-2 text-[10px] font-semibold text-slate-500">
+            Köşe yuvarlaklığı
+          </p>
+          <div className="mb-1.5 flex flex-wrap gap-1">
+            {([0, 5, 8, 12, 16, 24, 32] as const).map((n) => (
+              <button
+                key={n}
+                type="button"
+                title={`${n}px`}
+                onClick={() =>
+                  push({
+                    ...value,
+                    cornerRadiusPx: n,
+                    enabled: true,
+                  })
+                }
+                className={`h-7 min-w-[2rem] rounded-md border px-1.5 text-[10px] font-bold transition ${
+                  value.cornerRadiusPx === n
+                    ? "border-orange-500 bg-orange-50 text-orange-700"
+                    : "border-slate-200 text-slate-600 hover:border-slate-300"
+                }`}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[10px] font-semibold text-slate-400">Özel</span>
+            <span className="tabular-nums text-[10px] font-bold text-orange-600">
+              {value.cornerRadiusPx} px
+            </span>
+          </div>
+          <input
+            type="range"
+            min={FASIKUL_CORNER_RADIUS_MIN_PX}
+            max={FASIKUL_CORNER_RADIUS_MAX_PX}
+            step={1}
+            value={value.cornerRadiusPx}
+            onChange={(e) =>
+              push({
+                ...value,
+                cornerRadiusPx: clampFasikulCornerRadiusPx(Number(e.target.value)),
+                enabled: true,
+              })
+            }
+            className="mt-1 w-full"
+            style={{ accentColor: "#f97316" }}
+          />
+        </FrameMenuSection>
+
+        <FrameMenuSection title="Arkaplan">
+          <p className="mb-1 text-[10px] font-semibold text-slate-500">Dolgu Rengi</p>
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {FASIKUL_FILL_COLORS.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => push({ ...value, fillColor: c, enabled: true })}
+                className={`h-6 w-6 rounded-md border-2 ${
+                  value.fillColor.toLowerCase() === c.toLowerCase()
+                    ? "border-slate-500"
+                    : "border-slate-200"
+                }`}
+                style={{ background: c }}
+              />
+            ))}
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] font-semibold text-slate-500">Opaklık</p>
+            <span className="text-[10px] font-bold text-blue-600">
+              {value.fillOpacityPct}%
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={value.fillOpacityPct}
+            onChange={(e) =>
+              push({
+                ...value,
+                fillOpacityPct: Number(e.target.value),
+                enabled: true,
+              })
+            }
+            className="mt-1 w-full"
+            style={{ accentColor: "#3b82f6" }}
+          />
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-[10px] font-semibold text-slate-500">İç boşluk</p>
+            <span className="text-[10px] font-bold text-teal-700">
+              {value.innerPaddingPx ?? 0}px
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={40}
+            value={value.innerPaddingPx ?? 0}
+            onChange={(e) =>
+              push({
+                ...value,
+                innerPaddingPx: Number(e.target.value),
+                enabled: true,
+              })
+            }
+            className="mb-3 w-full"
+            style={{ accentColor: "#0f766e" }}
+          />
+          <p className="mb-1 text-[10px] text-slate-400">
+            Çerçeve kenarı ile soru görseli arası boşluk
+          </p>
+        </FrameMenuSection>
+
+        <FrameMenuSection title="Kareli Alan">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[11px] font-medium text-slate-700">Kareli alan ekle</div>
+              <div className="mt-0.5 text-[10px] leading-snug text-slate-500">
+                Çerçevenin altına kareli çalışma alanı çizer
+              </div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={Boolean(value.showScratchGrid)}
+              aria-label="Kareli alan ekle"
+              onClick={() =>
+                push({
+                  ...value,
+                  showScratchGrid: !value.showScratchGrid,
+                  enabled: true,
+                })
+              }
+              className={`relative h-5 w-9 shrink-0 rounded-full transition ${
+                value.showScratchGrid ? "bg-blue-500" : "bg-slate-300"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${
+                  value.showScratchGrid ? "left-[18px]" : "left-0.5"
+                }`}
+              />
+            </button>
+          </div>
+        </FrameMenuSection>
       </div>
 
       <div className="grid grid-cols-2 gap-2 border-t border-slate-100 p-3">
@@ -1200,92 +1103,29 @@ export default function FasikulQuestionFrameMenu({
 /** Soru kutusu üzerinde çerçeve önizlemesi — rozet çerçevenin dışında. */
 export function FasikulFramePreviewChrome({
   settings,
+  questionNumber,
 }: {
   settings: FasikulQuestionFrameSettings;
+  questionNumber?: number | null;
 }) {
   if (!settings.enabled) return null;
   const preset = getFasikulFramePreset(settings.presetId);
-  const icon =
-    settings.iconId !== "none"
-      ? getFasikulFrameIcon(settings.iconId as FasikulFrameIconId)?.glyph ?? ""
-      : "";
-  const text = (settings.labelText || preset?.defaultLabel || "KURAL").trim();
-  const label =
-    settings.iconTextPlacement === "before"
-      ? `${icon ? `${icon} ` : ""}${text}`
-      : `${text}${icon ? ` ${icon}` : ""}`;
-  const accent = settings.labelColor || settings.borderColor;
-  const pos = normalizeLabelPosition(settings.labelPosition);
-  const side = isSideLabelPosition(pos);
-  const sideDir = settings.labelSideTextDir === "btt" ? "btt" : "ttb";
-  const badgeOffsets = clampBadgeOffsetForPosition(
-    pos,
-    settings.badgeOffsetX ?? 0,
-    settings.badgeOffsetY ?? 0,
-  );
-  const badgeStyle = settings.badgeStyle || "folded-tab";
-  const align = settings.labelAlign ?? "left";
-  const borderCss =
-    settings.borderStyle === "none"
-      ? "none"
-      : settings.borderStyle === "double"
-        ? `${Math.max(3, settings.borderWidth + 1)}px double ${settings.borderColor}`
-        : `${settings.borderWidth}px ${settings.borderStyle} ${settings.borderColor}`;
-
-  const alignClass =
-    align === "center" ? "justify-center text-center" : align === "right" ? "justify-end text-right" : "justify-start text-left";
-
-  const badgeShapeClass =
-    badgeStyle === "classic"
-      ? "rounded-md px-2 py-0.5"
-      : badgeStyle === "folded-tab"
-        ? "rounded-tl-md rounded-bl-md pl-2 pr-3 py-0.5"
-        : badgeStyle === "angular-ribbon"
-          ? "px-3 py-0.5"
-          : "px-3 py-0.5";
-
-  const badgeClip =
-    badgeStyle === "folded-tab"
-      ? "polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%)"
-      : badgeStyle === "angular-ribbon"
-        ? "polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%)"
-        : badgeStyle === "reverse-angular-ribbon"
-          ? "polygon(0 0, calc(100% - 8px) 0, 100% 100%, 8px 100%)"
-          : undefined;
-
+  const text = (settings.labelText || preset?.defaultLabel || "ÖRNEK").trim();
   return (
-    <div className="pointer-events-none absolute inset-0 z-[5] overflow-visible" aria-hidden>
-      <div
-        className="absolute inset-0"
-        style={{
-          border: borderCss,
-          borderRadius: settings.cornerRadiusPx,
-          background: "transparent",
-        }}
-      />
-      <span
-        className={`absolute z-10 ${badgeLayoutClass(pos)}`}
-        style={
-          side
-            ? {
-                writingMode: "vertical-rl" as const,
-                textOrientation: "mixed" as const,
-                transform: sideBadgeTransform(pos, sideDir),
-              }
-            : undefined
-        }
-      >
-        <span
-          className={`inline-flex items-center gap-0.5 whitespace-nowrap text-[9px] font-bold uppercase tracking-wide text-white shadow-sm ${badgeShapeClass} ${alignClass}`}
-          style={{
-            background: accent,
-            clipPath: badgeClip,
-            transform: `translate(${badgeOffsets.badgeOffsetX}px, ${badgeOffsets.badgeOffsetY}px)`,
-          }}
-        >
-          {label}
-        </span>
-      </span>
-    </div>
+    <FasikulFrameBadgeChrome
+      enabled={settings.enabled}
+      borderStyle={settings.borderStyle}
+      borderWidth={settings.borderWidth}
+      borderColor={settings.borderColor}
+      cornerRadiusPx={settings.cornerRadiusPx}
+      labelText={text}
+      labelColor={settings.labelColor || settings.borderColor}
+      badgeStyle={settings.badgeStyle}
+      labelPosition={settings.labelPosition}
+      labelSideTextDir={settings.labelSideTextDir}
+      badgeOffsetX={settings.badgeOffsetX}
+      badgeOffsetY={settings.badgeOffsetY}
+      questionNumber={questionNumber}
+    />
   );
 }

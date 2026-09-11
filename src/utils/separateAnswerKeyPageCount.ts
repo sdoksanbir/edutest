@@ -26,6 +26,7 @@ export function countSeparateAnswerKeyPages(params: {
   pageHpt: number;
   marginTopMm: number;
   marginBottomMm: number;
+  pairsPerRow?: number;
 }): number {
   const { itemCount, pageHpt, marginTopMm, marginBottomMm } = params;
   if (itemCount <= 0) return 0;
@@ -37,7 +38,7 @@ export function countSeparateAnswerKeyPages(params: {
   let y0 = top - 8;
   let pages = 1;
   let remaining = itemCount;
-  const pairs = SEPARATE_AK.PAIRS_PER_ROW;
+  const pairs = Math.max(1, params.pairsPerRow ?? SEPARATE_AK.PAIRS_PER_ROW);
   while (remaining > 0) {
     const maxH = Math.max(0, y0 - effectiveBottom);
     const { used, consumed } = nextChunk(maxH, remaining, pairs);

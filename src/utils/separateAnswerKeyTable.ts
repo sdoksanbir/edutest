@@ -24,7 +24,7 @@ export const SEPARATE_AK = {
   TOP_GAP_PT: 6,
 } as const;
 
-export type SeparateAkItem = [number, string];
+export type SeparateAkItem = [string | number, string];
 
 export type SeparateAkLayout = {
   tableWidthPx: number;
@@ -196,13 +196,16 @@ export function drawSeparateAnswerKeyTableCanvas(params: {
       const ans = (ansRaw || "?").trim().toUpperCase() || "?";
       const cellX = x + c * pw;
       const midY = rowY + rh / 2;
+      const label = String(num);
 
-      // Soru no
+      // Soru no / ÖRNEK 1 / ÖSYM
       ctx.fillStyle = rgba(pr, pg, pb, 0.72);
-      ctx.font = `600 ${SEPARATE_AK.NUM_FONT_PT * s}px "Segoe UI", Arial, Helvetica, sans-serif`;
+      const labelFontPt =
+        label.length > 4 ? SEPARATE_AK.NUM_FONT_PT * 0.88 : SEPARATE_AK.NUM_FONT_PT;
+      ctx.font = `600 ${labelFontPt * s}px "Segoe UI", Arial, Helvetica, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(String(num), cellX + pw * 0.28, midY);
+      ctx.fillText(label, cellX + pw * 0.32, midY, pw * 0.5);
 
       // Cevap hapı
       const pillH = SEPARATE_AK.PILL_H_PT * s;
@@ -212,7 +215,7 @@ export function drawSeparateAnswerKeyTableCanvas(params: {
         pillH,
         ctx.measureText(ans).width + pillPadX * 2,
       );
-      const pillX = cellX + pw * 0.58 - ansW / 2;
+      const pillX = cellX + pw * 0.72 - ansW / 2;
       const pillY = midY - pillH / 2;
       ctx.fillStyle = rgba(ar, ag, ab, 0.12);
       ctx.beginPath();

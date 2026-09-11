@@ -7,6 +7,7 @@ import {
   questionNumberImageGapPt,
   type LayoutGeometryInput,
 } from "./pdfLayoutGeometry";
+import { isOptikAnswerableQuestion } from "./optikFormOrder";
 
 export type DisplayNumberLayoutInput = {
   columns: number;
@@ -17,10 +18,14 @@ export type DisplayNumberLayoutInput = {
   questions?: QuestionItem[];
 };
 
-function contentTypeForItem(item: LayoutItem, questions?: QuestionItem[]): string {
-  if (item.content_type) return item.content_type;
+function shouldSkipDisplayNumber(
+  item: LayoutItem,
+  questions?: QuestionItem[],
+): boolean {
   const q = questions?.find((x) => x.order_index === item.order_index);
-  return q?.content_type ?? "question";
+  if (q) return !isOptikAnswerableQuestion(q);
+  if (item.content_type === "explanation") return true;
+  return false;
 }
 
 /** Yerleşim / dikey taşıma sonrası soru numaralarını okuma sırasına göre yeniden ata. */
@@ -57,7 +62,7 @@ export function reapplyDisplayNumbersByReadingOrder(
     for (let col = 0; col < cols; col++) {
       const items = getColumnItemsSortedTopFirst(layout, pageNum, col, band);
       for (const item of items) {
-        if (contentTypeForItem(item, input.questions) === "explanation") {
+        if (shouldSkipDisplayNumber(item, input.questions)) {
           displayByOrder.set(item.order_index, null);
         } else {
           displayByOrder.set(item.order_index, counter);

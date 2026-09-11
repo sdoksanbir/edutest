@@ -43,6 +43,15 @@ export function normalizeBannerRightSlots(raw: unknown): BannerRightSlot[] | nul
   return out
 }
 
+/** Minimal üst banner — yalnızca Test No (D/Y/B alt şeritte) */
+export function classicBannerTopRightSlots(
+  config: HeaderConfig,
+): Array<'testNo'> {
+  return resolveBannerRightSlots(config).filter(
+    (s): s is 'testNo' => s === 'testNo',
+  )
+}
+
 /** Kayıtlı slots varsa onu kullan; yoksa eski bannerRightMode’dan türet. */
 export function resolveBannerRightSlots(config: HeaderConfig): BannerRightSlot[] {
   const fromField = normalizeBannerRightSlots(

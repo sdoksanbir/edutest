@@ -1,28 +1,163 @@
 import type { LayoutItem } from "../api/client";
 import type { QuestionItem } from "../types";
+import { normalizeContentType } from "./questionNumbering";
+import {
+  getFasikulFramePreset,
+  normalizeFasikulQuestionFrame,
+  resolveFasikulPresetId,
+  isFasikulOrnekNumberedFrame,
+  formatFasikulBadgeQuestionNumber,
+  buildFasikulOrnekNumberByOrderIndex,
+  type FasikulQuestionFrameSettings,
+} from "./fasikulQuestionFrame";
+import { getColumnItemsSortedTopFirst } from "./columnRedistribute";
+import {
+  computePageColumnBand,
+  type LayoutGeometryInput,
+} from "./pdfLayoutGeometry";
 
-/** PDF okuma sırasına göre soru listesi (display_number / layout konumu). */
+/**
+ * Gerçek soru sarmalayan hazır tasarımlar (ÖSYM / Örnek).
+ * Formül, Kural, Unutma vb. içerik kutusu — optikte adıyla görünür.
+ */
+export function isFasikulQuestionWrapperFrame(
+  frame: FasikulQuestionFrameSettings | null | undefined,
+): boolean {
+  if (!frame?.enabled) return false;
+  const id = resolveFasikulPresetId(frame.presetId);
+  if (id === "kural" || id === "ogreniyorum") return true;
+  return frame.badgeStyle === "ring-pill";
+}
+
+/** Cevap işaretlenebilir optik sorusu mu?
+ * Formül / Kural / Unutma vb. içerik kutusu → hayır.
+ * ÖSYM / Örnek (soru sarmalayan) ve çerçevesiz sorular → evet.
+ */
+export function isOptikAnswerableQuestion(q: QuestionItem): boolean {
+  if (normalizeContentType(q.content_type) === "explanation") return false;
+  if ((q.fasikulEmptyRows ?? 0) > 0) return false;
+  const frame = q.fasikulFrame
+    ? normalizeFasikulQuestionFrame(q.fasikulFrame)
+    : null;
+  if (frame?.enabled && !isFasikulQuestionWrapperFrame(frame)) return false;
+  return true;
+}
+
+/** Optik satır etiketi rengi (preset accent / labelColor) */
+export function resolveOptikFrameAccentColor(q: QuestionItem): string | null {
+  const frame = q.fasikulFrame
+    ? normalizeFasikulQuestionFrame(q.fasikulFrame)
+    : null;
+  if (!frame?.enabled) return null;
+  const preset = getFasikulFramePreset(frame.presetId);
+  const hex = (frame.labelColor || preset?.accent || "").trim();
+  return /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : preset?.accent ?? null;
+}
+
+/** Optik satır arka planı (preset fill) */
+export function resolveOptikFrameFillColor(q: QuestionItem): string | null {
+  const frame = q.fasikulFrame
+    ? normalizeFasikulQuestionFrame(q.fasikulFrame)
+    : null;
+  if (!frame?.enabled) return null;
+  const preset = getFasikulFramePreset(frame.presetId);
+  const hex = (frame.fillColor || preset?.fill || "").trim();
+  return /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : preset?.fill ?? null;
+}
+
+/** Optik panelde çerçeve / açıklama satırı etiketi (FORMÜL, ÖRNEK 01, …) */
+export function resolveOptikFrameSidebarLabel(
+  q: QuestionItem,
+  ornekNumberByOrder?: Map<number, number>,
+): string {
+  const frame = q.fasikulFrame
+    ? normalizeFasikulQuestionFrame(q.fasikulFrame)
+    : null;
+  if (frame?.enabled) {
+    const preset = getFasikulFramePreset(frame.presetId);
+    const text = (frame.labelText || preset?.defaultLabel || "").trim();
+    if (text) {
+      if (isFasikulOrnekNumberedFrame(frame)) {
+        const n =
+          ornekNumberByOrder?.get(q.order_index) ??
+          buildFasikulOrnekNumberByOrderIndex([q]).get(q.order_index);
+        if (n != null) {
+          return `${text} ${formatFasikulBadgeQuestionNumber(n)}`;
+        }
+      }
+      return text;
+    }
+  }
+  return "Açıklama";
+}
+
+export type OptikReadingOrderOptions = {
+  columns?: number;
+  geometry?: LayoutGeometryInput;
+};
+
+/**
+ * PDF okuma sırası: sayfa → sol sütun yukarıdan aşağı → sağ sütun …
+ * (satır satır sol-sağ değil)
+ */
 export function questionsInLayoutReadingOrder(
   questions: QuestionItem[],
-  layout: LayoutItem[]
+  layout: LayoutItem[],
+  opts?: OptikReadingOrderOptions,
 ): QuestionItem[] {
   const rankById = new Map<string, number>();
+  let rank = 0;
 
-  for (const item of layout) {
-    if (item.kind === "answer_key_page") continue;
-    const q = questions.find((x) => x.order_index === item.order_index);
-    if (!q) continue;
-    if (item.display_number != null) {
-      rankById.set(q.id, item.display_number);
-      continue;
+  const cols = Math.max(1, opts?.columns ?? 1);
+  const geometry = opts?.geometry;
+
+  if (geometry && layout.length > 0) {
+    const pageNums = [
+      ...new Set(
+        layout
+          .filter((l) => l.kind !== "answer_key_page")
+          .map((l) => l.page_num)
+          .filter((p) => p > 0),
+      ),
+    ].sort((a, b) => a - b);
+
+    for (const pageNum of pageNums) {
+      const band = computePageColumnBand({ ...geometry, pageNum });
+      for (let col = 0; col < cols; col++) {
+        const items = getColumnItemsSortedTopFirst(layout, pageNum, col, band);
+        for (const item of items) {
+          const q = questions.find((x) => x.order_index === item.order_index);
+          if (!q || rankById.has(q.id)) continue;
+          rankById.set(q.id, rank++);
+        }
+      }
     }
-    rankById.set(q.id, item.page_num * 100000 + item.order_index);
+  } else {
+    const items = layout
+      .filter((item) => item.kind !== "answer_key_page")
+      .slice()
+      .sort((a, b) => {
+        if (a.page_num !== b.page_num) return a.page_num - b.page_num;
+        if (Math.abs(a.x_pt - b.x_pt) > 0.01) return a.x_pt - b.x_pt;
+        const dy = b.y_top_pt - a.y_top_pt;
+        if (Math.abs(dy) > 0.01) return dy;
+        return a.order_index - b.order_index;
+      });
+
+    for (const item of items) {
+      const q = questions.find((x) => x.order_index === item.order_index);
+      if (!q || rankById.has(q.id)) continue;
+      rankById.set(q.id, rank++);
+    }
   }
 
   return [...questions].sort((a, b) => {
-    const ra = rankById.get(a.id) ?? a.order_index + 1;
-    const rb = rankById.get(b.id) ?? b.order_index + 1;
-    return ra - rb;
+    const ra = rankById.get(a.id);
+    const rb = rankById.get(b.id);
+    if (ra != null && rb != null) return ra - rb;
+    if (ra != null) return -1;
+    if (rb != null) return 1;
+    return a.order_index - b.order_index;
   });
 }
 
@@ -30,7 +165,7 @@ export function questionsInLayoutReadingOrder(
 export function swapReadingOrderIds(
   readingOrderIds: string[],
   idA: string,
-  idB: string
+  idB: string,
 ): string[] {
   const i = readingOrderIds.indexOf(idA);
   const j = readingOrderIds.indexOf(idB);
@@ -44,7 +179,7 @@ export function swapReadingOrderIds(
 export function readingOrderIdsAfterMove(
   readingOrderIds: string[],
   activeId: string,
-  overId: string
+  overId: string,
 ): string[] {
   const from = readingOrderIds.indexOf(activeId);
   const to = readingOrderIds.indexOf(overId);

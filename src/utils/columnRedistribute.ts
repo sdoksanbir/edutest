@@ -54,7 +54,8 @@ export function shiftLayoutItemYTop(item: LayoutItem, newYTopPt: number): Layout
 export function reflowLayoutWithFixedGapMm(
   layout: LayoutItem[],
   gapMm: number,
-  geometry: LayoutGeometryInput
+  geometry: LayoutGeometryInput,
+  options?: { fixedInterGaps?: boolean },
 ): LayoutItem[] {
   const gapPt = mmToPdfPt(Math.max(0, gapMm));
   const cols = Math.max(1, Math.min(6, geometry.columns));
@@ -84,6 +85,7 @@ export function reflowLayoutWithFixedGapMm(
         n,
         gapPt,
         COLUMN_LAYOUT_BOTTOM_MIN_PT,
+        { fixedInterGaps: options?.fixedInterGaps === true },
       );
 
       let y = contentTop;

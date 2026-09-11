@@ -191,6 +191,7 @@ export const api = {
     clearAll: () => invoke<{ ok: true }>('questions:clearAll'),
     getImageDataUrl: async (id: string) => {
       const b64 = await invoke<string>('questions:getImage', { id })
+      if (!b64) return ''
       return `data:image/png;base64,${b64}`
     },
     imageUrl: (id: string) => `tq-question://${id}`,

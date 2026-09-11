@@ -14,7 +14,17 @@ import type {
   SectionRange,
   FasikulQuestionFrameSettings,
 } from "../types";
-import { normalizeFasikulQuestionFrame } from "../utils/fasikulQuestionFrame";
+import { normalizeFasikulQuestionFrame, applyFasikulPreset, DEFAULT_FASIKUL_QUESTION_FRAME, type FasikulFramePresetId } from "../utils/fasikulQuestionFrame";
+import {
+  clampScratchCornerRadiusPt,
+  normalizeScratchGridColorHex,
+  normalizeScratchGridColorMode,
+  SCRATCH_COLOR_CUSTOM_DEFAULT,
+  SCRATCH_COLOR_MODE_DEFAULT,
+  SCRATCH_CORNER_RADIUS_DEFAULT_PT,
+  FASIKUL_EMPTY_BOX_ROWS,
+  type ScratchGridColorMode,
+} from "../utils/questionScratchGrid";
 import { clearQuestionFontMeasureForDiag } from "../utils/questionScaleDiagnostics";
 import {
   manualScaleForRequestedProduct,
@@ -307,6 +317,11 @@ type EditorState = {
   pageFrameInnerGapMm: number;
   pageFrameCornerRadiusMm: number;
   pageFrameLineStyle: "solid" | "dashed" | "dotted";
+  /** Fasikül: soru altı kareli alan köşe yuvarlaklığı (pt) */
+  scratchGridCornerRadiusPt: number;
+  /** Fasikül: kareli alan rengi — siyah / tema / özel */
+  scratchGridColorMode: ScratchGridColorMode;
+  scratchGridColor: string;
   /** Working draft: in-memory only. Rendered in main editor. */
   questions: QuestionItem[];
   /** Kağıt hazırla: Bölüm tanımları (original-desktop SectionRange) */
@@ -438,6 +453,9 @@ type EditorState = {
   setPageFrameInnerGapMm: (mm: number) => void;
   setPageFrameCornerRadiusMm: (mm: number) => void;
   setPageFrameLineStyle: (style: "solid" | "dashed" | "dotted") => void;
+  setScratchGridCornerRadiusPt: (pt: number) => void;
+  setScratchGridColorMode: (mode: ScratchGridColorMode) => void;
+  setScratchGridColor: (color: string) => void;
   setQuestionAnswer: (id: string, answer: AnswerOption) => Promise<void>;
   updateRemoveBackground: (id: string, removeBackground: boolean) => Promise<void>;
   removeQuestion: (id: string) => Promise<void>;
@@ -517,6 +535,13 @@ type EditorState = {
     questionIds: string[],
     frame: FasikulQuestionFrameSettings,
   ) => void;
+  /** Fasikül: soru altı kareli alan satır sayısı (null = otomatik) */
+  setQuestionScratchGridRows: (id: string, rows: number | null) => void;
+  /** Fasikül: sağ tık Ekle — boş hazır tasarım kutusunu sonrasına ekle */
+  insertEmptyFasikulFrameAfter: (
+    afterOrderIndex: number,
+    presetId: FasikulFramePresetId,
+  ) => string | null;
   setSections: (sections: SectionRange[]) => void;
   addSection: (section: SectionRange) => void;
   updateSection: (index: number, section: SectionRange) => void;
@@ -710,6 +735,9 @@ export type DraftFilePayload = {
     pageFramePaddingMm?: number;
     pageFrameCornerRadiusMm?: number;
     pageFrameLineStyle?: "solid" | "dashed" | "dotted";
+    scratchGridCornerRadiusPt?: number;
+    scratchGridColorMode?: ScratchGridColorMode;
+    scratchGridColor?: string;
   };
 };
 
@@ -900,6 +928,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   pageFrameInnerGapMm: 3,
   pageFrameCornerRadiusMm: 2,
   pageFrameLineStyle: "solid",
+  scratchGridCornerRadiusPt: SCRATCH_CORNER_RADIUS_DEFAULT_PT,
+  scratchGridColorMode: SCRATCH_COLOR_MODE_DEFAULT,
+  scratchGridColor: SCRATCH_COLOR_CUSTOM_DEFAULT,
   options: {
     includeDescription: false,
     addSpacingBetweenQuestions: false,
@@ -1634,6 +1665,22 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((s) =>
       commitPageDecorPatch(s, { pageFrameLineStyle: style }, { syncLegacy: false }),
     ),
+  setScratchGridCornerRadiusPt: (pt) =>
+    set({
+      scratchGridCornerRadiusPt: clampScratchCornerRadiusPt(pt),
+      isDirty: true,
+    }),
+  setScratchGridColorMode: (mode) =>
+    set({
+      scratchGridColorMode: normalizeScratchGridColorMode(mode),
+      isDirty: true,
+    }),
+  setScratchGridColor: (color) =>
+    set({
+      scratchGridColor: normalizeScratchGridColorHex(color),
+      scratchGridColorMode: "custom",
+      isDirty: true,
+    }),
   setQuestionAnswer: async (id, answer) => {
     const state = useEditorStore.getState();
     const q = state.questions.find((x) => x.id === id);
@@ -1940,11 +1987,22 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
   reorderQuestions: async (orderedIds) => {
     const state = useEditorStore.getState();
-    const hasPending = state.questions.some((q) => q.image_base64);
-    if (hasPending) {
-      const byId = Object.fromEntries(state.questions.map((q) => [q.id, q]));
-      const reordered = orderedIds.map((id, i) => ({ ...byId[id]!, order_index: i }));
-      set({ questions: reordered, isDirty: true });
+    const byId = Object.fromEntries(state.questions.map((q) => [q.id, q]));
+    const reorderedLocal = orderedIds
+      .map((id, i) => {
+        const q = byId[id];
+        if (!q) return null;
+        return { ...q, order_index: i };
+      })
+      .filter((q): q is QuestionItem => q != null)
+      .map((q, i) => ({ ...q, order_index: i }));
+
+    // Görseller veya istemci-only boş fasikül kutuları varsa store’u ezme
+    const keepLocal = state.questions.some(
+      (q) => q.image_base64 || (q.fasikulEmptyRows ?? 0) > 0,
+    );
+    if (keepLocal) {
+      set({ questions: reorderedLocal, isDirty: true });
       return;
     }
     try {
@@ -2247,6 +2305,57 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       isDirty: true,
     }));
   },
+  setQuestionScratchGridRows: (id, rows) =>
+    set((s) => ({
+      questions: s.questions.map((x) => {
+        if (x.id !== id) return x;
+        if (rows == null || !Number.isFinite(rows) || rows < 1) {
+          const { scratchGridRows: _removed, ...rest } = x;
+          void _removed;
+          return rest;
+        }
+        return { ...x, scratchGridRows: Math.round(rows) };
+      }),
+      isDirty: true,
+    })),
+  insertEmptyFasikulFrameAfter: (afterOrderIndex, presetId) => {
+    const state = get();
+    const sorted = [...state.questions].sort(
+      (a, b) => a.order_index - b.order_index,
+    );
+    const afterIdx = sorted.findIndex((q) => q.order_index === afterOrderIndex);
+    if (afterIdx < 0) return null;
+
+    const frame = {
+      ...applyFasikulPreset(DEFAULT_FASIKUL_QUESTION_FRAME, presetId),
+      enabled: true,
+      showScratchGrid: false,
+    };
+    const newId = crypto.randomUUID();
+    const insertAt = afterIdx + 1;
+    const item: QuestionItem = {
+      id: newId,
+      pdf_id: "",
+      page_number: 1,
+      crop: { x: 0, y: 0, width: 1, height: 1 },
+      answer_key: "",
+      order_index: insertAt,
+      content_type: "explanation",
+      remove_background: false,
+      /** İçi boş — görsel bağlanmaz */
+      fasikulFrame: normalizeFasikulQuestionFrame(frame),
+      fasikulEmptyRows: FASIKUL_EMPTY_BOX_ROWS,
+    };
+
+    const next = [
+      ...sorted.slice(0, insertAt),
+      item,
+      ...sorted.slice(insertAt),
+    ].map((q, i) => ({ ...q, order_index: i }));
+
+    set({ questions: next, isDirty: true });
+    return newId;
+  },
   setSections: (sections) => set({ sections, isDirty: true }),
   addSection: (section) =>
     set((s) => ({ sections: [...s.sections, section], isDirty: true })),
@@ -2547,6 +2656,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           state.pageFrameInnerGapMm,
         pageFrameCornerRadiusMm: es?.pageFrameCornerRadiusMm ?? state.pageFrameCornerRadiusMm,
         pageFrameLineStyle: es?.pageFrameLineStyle ?? state.pageFrameLineStyle,
+        scratchGridCornerRadiusPt:
+          es?.scratchGridCornerRadiusPt != null
+            ? clampScratchCornerRadiusPt(es.scratchGridCornerRadiusPt)
+            : state.scratchGridCornerRadiusPt,
+        scratchGridColorMode:
+          es?.scratchGridColorMode != null
+            ? normalizeScratchGridColorMode(es.scratchGridColorMode)
+            : state.scratchGridColorMode,
+        scratchGridColor:
+          es?.scratchGridColor != null
+            ? normalizeScratchGridColorHex(es.scratchGridColor)
+            : state.scratchGridColor,
       };
     });
     set((s) => ({ ...s, ...syncVisualLegacyFields(s) }));

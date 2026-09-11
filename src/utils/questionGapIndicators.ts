@@ -27,6 +27,24 @@ function itemImgYTopPt(
   return base == null ? null : base + yShiftPt;
 }
 
+/** Blok üstü = ÖRNEK badge üst kenarı (img_y_top + badge rezervi). */
+function itemBlockYTopPt(
+  item: LayoutItem,
+  dragLive?: QuestionDragLive | null,
+  yShiftPt = 0,
+): number | null {
+  const imgTop = itemImgYTopPt(item, dragLive, yShiftPt);
+  if (imgTop == null) return null;
+  const reserve = Math.max(
+    0,
+    (item.y_top_pt ?? item.img_y_top_pt ?? 0) - (item.img_y_top_pt ?? 0),
+  );
+  if (dragLive?.orderIndex === item.order_index) {
+    return dragLive.imgYTopPt + reserve;
+  }
+  return (item.y_top_pt ?? item.img_y_top_pt ?? 0) + yShiftPt;
+}
+
 export function computeQuestionGapIndicators(input: {
   layout: LayoutItem[];
   pageNum: number;
@@ -38,6 +56,11 @@ export function computeQuestionGapIndicators(input: {
   selectedQuestions: number[];
   dragLive?: QuestionDragLive | null;
   yShiftPtForItem?: (item: LayoutItem) => number;
+  /**
+   * Fasikül: üst soru görsel altı ↔ sonraki ÖRNEK üstü;
+   * çizgi bu aralıkta, soru görseli yatay ortasında.
+   */
+  fasikulGapMode?: boolean;
 }): QuestionGapIndicator[] {
   const {
     layout,
@@ -50,6 +73,7 @@ export function computeQuestionGapIndicators(input: {
     selectedQuestions,
     dragLive,
     yShiftPtForItem,
+    fasikulGapMode = false,
   } = input;
 
   const pageItems = layout.filter((l) => l.page_num === pageNum && l.kind !== "answer_key_page");
@@ -70,7 +94,6 @@ export function computeQuestionGapIndicators(input: {
       item.img_h_pt != null;
     if (!hasImg) return;
 
-    const colCenter = ((item.x_pt ?? 0) + xOffsetPt + (item.w_pt ?? 0) / 2) * scale;
     const currBottomPt = imgYTop - (item.img_h_pt ?? 0);
     const isLeft = (item.img_x_pt ?? 0) < midX;
     const below = pageItems.filter((l) => {
@@ -87,7 +110,17 @@ export function computeQuestionGapIndicators(input: {
         (itemImgYTopPt(b, dragLive, yShiftPtForItem?.(b) ?? 0) ?? 0) -
         (itemImgYTopPt(a, dragLive, yShiftPtForItem?.(a) ?? 0) ?? 0),
     )[0];
-    const yBottomPt = (next ? itemImgYTopPt(next, dragLive) : null) ?? footerTopPt;
+
+    let yBottomPt: number;
+    if (next) {
+      const nextShift = yShiftPtForItem?.(next) ?? 0;
+      yBottomPt = fasikulGapMode
+        ? (itemBlockYTopPt(next, dragLive, nextShift) ?? footerTopPt)
+        : (itemImgYTopPt(next, dragLive, nextShift) ?? footerTopPt);
+    } else {
+      yBottomPt = footerTopPt;
+    }
+
     const gapPt = currBottomPt - yBottomPt;
     if (gapPt <= 0) return;
 
@@ -99,8 +132,13 @@ export function computeQuestionGapIndicators(input: {
       : { visualTopPt: currBottomPt, visualBottomPt: yBottomPt };
     const gapMm = Math.round(gapPt * PT_TO_MM * 10) / 10;
 
+    // Fasikül: çizgiyi soru görselinin yatay ortasına koy (ÖRNEK–görsel aralığında okunaklı)
+    const lineXPx = fasikulGapMode
+      ? ((item.img_x_pt ?? 0) + (item.img_w_pt ?? 0) / 2) * scale
+      : ((item.x_pt ?? 0) + xOffsetPt + (item.w_pt ?? 0) / 2) * scale;
+
     indicators.push({
-      lineXPx: colCenter,
+      lineXPx,
       yTopPx: ptToCanvasY(pageHpt, endpoints.visualTopPt, scale),
       yBottomPx: ptToCanvasY(pageHpt, endpoints.visualBottomPt, scale),
       gapMm,

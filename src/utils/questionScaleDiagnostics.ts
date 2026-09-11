@@ -403,6 +403,8 @@ export function flushQuestionScaleDiagnostics(
   fingerprint: string,
   source: 'canvas-preview' | 'pdf-export',
 ): void {
+  // Rutin önizleme: 30+ soruda console.table ana iş parçacığını kilitler
+  if (source === 'canvas-preview') return
   if (rows.length === 0) return
   if (fingerprint === lastFlushFingerprint) return
   lastFlushFingerprint = fingerprint

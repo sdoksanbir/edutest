@@ -8,6 +8,11 @@ export function useQuestionImageSrc(question: QuestionItem): string {
   useEffect(() => {
     let cancelled = false
     const load = async () => {
+      // İstemci-only boş fasikül kutuları — store’da görsel yok, istek atma
+      if ((question.fasikulEmptyRows ?? 0) > 0) {
+        if (!cancelled) setSrc('')
+        return
+      }
       if (question.image_base64) {
         const value = question.image_base64.startsWith('data:')
           ? question.image_base64
@@ -17,7 +22,7 @@ export function useQuestionImageSrc(question: QuestionItem): string {
       }
       try {
         const dataUrl = await api.questions.getImageDataUrl(question.id)
-        if (!cancelled) setSrc(dataUrl)
+        if (!cancelled) setSrc(dataUrl || '')
       } catch {
         if (!cancelled) setSrc('')
       }
@@ -26,7 +31,12 @@ export function useQuestionImageSrc(question: QuestionItem): string {
     return () => {
       cancelled = true
     }
-  }, [question.id, question.image_base64, question.remove_background])
+  }, [
+    question.id,
+    question.image_base64,
+    question.remove_background,
+    question.fasikulEmptyRows,
+  ])
 
   return src
 }

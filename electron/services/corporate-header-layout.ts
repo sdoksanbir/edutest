@@ -112,6 +112,7 @@ export type HeaderConfig = {
   logoPadLeftPt: number
   showHeaderLeft: boolean
   showClassicInfoBar: boolean
+  showClassicInfoBarScore: boolean
   headerLeftMode: HeaderLeftMode
   institutionLine1: string
   institutionLine2: string
@@ -301,6 +302,7 @@ export function defaultHeaderConfig(): HeaderConfig {
     logoPadLeftPt: 4,
     showHeaderLeft: false,
     showClassicInfoBar: true,
+    showClassicInfoBarScore: true,
     headerLeftMode: 'logo',
     institutionLine1: '',
     institutionLine2: '',
@@ -541,6 +543,10 @@ export function parseHeaderConfig(raw: unknown): HeaderConfig {
     showClassicInfoBar: parseBool(
       o.showClassicInfoBar ?? o.show_classic_info_bar,
       d.showClassicInfoBar ?? true,
+    ),
+    showClassicInfoBarScore: parseBool(
+      o.showClassicInfoBarScore ?? o.show_classic_info_bar_score,
+      d.showClassicInfoBarScore ?? true,
     ),
     headerLeftMode: parseHeaderLeftMode(o.headerLeftMode ?? o.header_left_mode ?? d.headerLeftMode),
     institutionLine1: String(o.institutionLine1 ?? o.institution_line1 ?? d.institutionLine1),

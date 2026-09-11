@@ -18,6 +18,9 @@ export type QuestionCaptureMeta = {
 
 export const LEGACY_LAYOUT_ZOOM = 600 / 72
 
+/** Frontend: aynı order için CAPTURE_SCALE logunu bir kez yaz. */
+const loggedMissingCaptureOrders = new Set<string>()
+
 export type NativeSizePtResult = {
   nativeWidthPt: number
   nativeHeightPt: number
@@ -154,9 +157,13 @@ export function nativeSizePtFromCapture(
   }
 
   if (logMissingForOrder != null) {
-    console.log(
-      `[CAPTURE_SCALE_METADATA_MISSING] q=${logMissingForOrder} → legacy 600DPI (pt=px/${LEGACY_LAYOUT_ZOOM})`,
-    )
+    const key = String(logMissingForOrder)
+    if (!loggedMissingCaptureOrders.has(key)) {
+      loggedMissingCaptureOrders.add(key)
+      console.log(
+        `[CAPTURE_SCALE_METADATA_MISSING] q=${logMissingForOrder} → legacy 600DPI (pt=px/${LEGACY_LAYOUT_ZOOM})`,
+      )
+    }
   }
   return {
     nativeWidthPt: imageWidthPx / LEGACY_LAYOUT_ZOOM,

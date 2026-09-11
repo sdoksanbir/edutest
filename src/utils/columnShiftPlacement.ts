@@ -6,6 +6,7 @@ import type { LayoutItem } from "../api/client";
 import type { QuestionItem } from "../types";
 import { getColumnItemsSortedTopFirst, shiftLayoutItemYTop } from "./columnRedistribute";
 import { computeColumnGapSizesPt } from "./columnGapDistribution";
+import { fasikulMinScratchGapPt, fasikulOneLineGapPt, fasikulTrailingGapFloorPt } from "./questionScratchGrid";
 import { estimateQuestionNumberTextWidthPt } from "./questionNumberMetrics";
 import {
   columnIndexFromQuestionXPt,
@@ -18,12 +19,13 @@ import {
 } from "./pdfLayoutGeometry";
 import {
   getPageColumnShiftMeta,
+  nextColumnSlot,
   prevColumnSlot,
   resolveShiftTargetForBottom,
   type ColumnShiftDirection,
 } from "./columnShift";
-import { filterYTopOverridesForPlacementSave } from "./layoutYTopOverridesPayload";
 import { reapplyDisplayNumbersByReadingOrder } from "./layoutDisplayNumbers";
+import { reflowLayoutForFasikulBadgeTopReserve } from "./fasikulFrameBadgeLayout";
 
 export type { ColumnShiftDirection };
 
@@ -31,6 +33,30 @@ export type { ColumnShiftDirection };
 export const COLUMN_PLACEMENT_MIN_BOTTOM_GAP_MM = 6;
 
 const LAYOUT_EPS = 0.01;
+const PT_TO_MM = 25.4 / 72;
+
+function placementMinBottomGapMm(questions: QuestionItem[]): number {
+  const fasikul = questions.some((q) => q.fasikulFrame?.enabled);
+  if (!fasikul) return COLUMN_PLACEMENT_MIN_BOTTOM_GAP_MM;
+  const anyScratch = questions.some((q) => {
+    const f = q.fasikulFrame;
+    if (f?.enabled === true) return f.showScratchGrid === true;
+    return true;
+  });
+  const pt = anyScratch ? fasikulMinScratchGapPt() : fasikulOneLineGapPt();
+  return Math.ceil(pt * PT_TO_MM * 10) / 10;
+}
+
+function placementMinInterGapPt(questionGapMinMm: number, questions: QuestionItem[]): number {
+  const base = mmToPdfPt(Math.max(0, questionGapMinMm));
+  const fasikul = questions.some((q) => q.fasikulFrame?.enabled);
+  if (!fasikul) return base;
+  const floors = questions.map((q) =>
+    fasikulTrailingGapFloorPt(q.fasikulFrame ?? null),
+  );
+  const floor = floors.length > 0 ? Math.max(...floors) : fasikulOneLineGapPt();
+  return Math.max(base, floor);
+}
 
 export type LayoutPlacementOverride = {
   page_num: number;
@@ -170,6 +196,7 @@ function repackColumnWithStandardGaps(
   contentBottomPt: number,
   standardGapPt: number,
   minBottomGapPt: number,
+  fixedInterGaps = false,
 ): { ok: true; items: LayoutItem[] } | { ok: false; error: string } {
   if (items.length === 0) return { ok: true, items: [] };
 
@@ -189,6 +216,7 @@ function repackColumnWithStandardGaps(
     items.length,
     standardGapPt,
     minBottomGapPt,
+    { fixedInterGaps },
   );
   const out: LayoutItem[] = [];
   let y = contentTopPt;
@@ -213,7 +241,7 @@ function getColumnItemsAtSlot(
  * Önceki sütuna zincirleme taşıma: kaynak sütunun üstünden başlayarak,
  * standart aralık + min alt pay ile sığan tüm ardışık soruları hedefe ekler.
  */
-function computePrevColumnCascadeMoves(input: {
+export function computePrevColumnCascadeMoves(input: {
   effectiveLayout: LayoutItem[];
   questions: QuestionItem[];
   pageNum: number;
@@ -318,8 +346,9 @@ export function applyColumnPlacementToLayout(
 ): ApplyPlacementOk | ApplyPlacementErr {
   const { baseLayout, questions, placementOverrides, geometry, columns, questionGapMinMm, force = false, questionNumberingEnabled, questionNumberStart, questionNumberFontPt = 10, yOverridesByQuestionId = {} } =
     input;
-  const minGapPt = mmToPdfPt(Math.max(0, questionGapMinMm));
-  const minBottomGapPt = mmToPdfPt(COLUMN_PLACEMENT_MIN_BOTTOM_GAP_MM);
+  const minGapPt = placementMinInterGapPt(questionGapMinMm, questions);
+  const minBottomGapPt = mmToPdfPt(placementMinBottomGapMm(questions));
+  const fixedInterGaps = questions.some((q) => q.fasikulFrame?.enabled);
   const imageGapPt = questionNumberImageGapPt(geometry);
   const cols = Math.max(1, columns);
   const bandForPage = (page: number) => computePageColumnBand({ ...geometry, pageNum: page });
@@ -362,12 +391,21 @@ export function applyColumnPlacementToLayout(
     const contentBottom = band.contentBottomPt;
 
     const ordered = orderItemsInColumn(rawItems, placementOverrides, questions, yOverridesByQuestionId);
-    const placed = ordered.map((it) =>
-      setItemColumnGeometry(it, pageNum, colIdx, band, imageGapPt, questionNumberFontPt)
-    );
+    const placed = ordered.map((it) => {
+      const geo = setItemColumnGeometry(it, pageNum, colIdx, band, imageGapPt, questionNumberFontPt);
+      const qid = questionIdForOrder(questions, it.order_index);
+      return qid ? { ...geo, question_id: qid } : geo;
+    });
     const packed = force
       ? repackColumnItems(placed, contentTop, contentBottom, minGapPt, true)
-      : repackColumnWithStandardGaps(placed, contentTop, contentBottom, minGapPt, minBottomGapPt);
+      : repackColumnWithStandardGaps(
+          placed,
+          contentTop,
+          contentBottom,
+          minGapPt,
+          minBottomGapPt,
+          fixedInterGaps,
+        );
     if (!packed.ok) return packed;
 
     for (const it of packed.items) {
@@ -612,10 +650,10 @@ export function tryColumnShiftPlacement(
     maxQuestionPage,
     bandForPage
   ).get(orderIndex);
-  if (direction === "prev_column" && !shiftMeta?.showPrevColumnArrow) {
+  if (direction === "prev_column" && !force && !shiftMeta?.showPrevColumnArrow) {
     return { ok: false, error: "Bu soru önceki sütuna taşınamaz." };
   }
-  if (direction === "next_column" && !shiftMeta?.showNextColumnArrow) {
+  if (direction === "next_column" && !force && !shiftMeta?.showNextColumnArrow) {
     return { ok: false, error: "Bu soru sonraki sütuna taşınamaz." };
   }
 
@@ -633,8 +671,8 @@ export function tryColumnShiftPlacement(
         orderIndex,
         columns: cols,
         geometry,
-        standardGapPt: mmToPdfPt(Math.max(0, questionGapMinMm)),
-        minBottomGapPt: mmToPdfPt(COLUMN_PLACEMENT_MIN_BOTTOM_GAP_MM),
+        standardGapPt: placementMinInterGapPt(questionGapMinMm, questions),
+        minBottomGapPt: mmToPdfPt(placementMinBottomGapMm(questions)),
       });
       if (!cascade.ok) return cascade;
 
@@ -657,14 +695,26 @@ export function tryColumnShiftPlacement(
   } else {
     const colItems = getColumnItemsSortedTopFirst(effectiveLayout, pageNum, colIdx, band);
     const isTopOfColumn = colItems[0]?.order_index === orderIndex;
-    const target = resolveShiftTargetForBottom(pageNum, colIdx, cols, maxQuestionPage, {
+    const effectiveMaxPage = force
+      ? Math.max(maxQuestionPage, pageNum) + 1
+      : maxQuestionPage;
+    const target = resolveShiftTargetForBottom(pageNum, colIdx, cols, effectiveMaxPage, {
       layout: effectiveLayout,
       bottomOrderIndex: orderIndex,
-      isTopOfColumn,
+      isTopOfColumn: force ? false : isTopOfColumn,
     });
-    if (!target) return { ok: false, error: "Hedef sütun bulunamadı." };
-    targetSlot = { pageNum: target.pageNum, columnIndex: target.columnIndex };
-    insertAt = target.insertAt;
+    if (!target) {
+      // Son sütun/sayfa: zorla yeni sayfa
+      if (force) {
+        targetSlot = { pageNum: pageNum + 1, columnIndex: 0 };
+        insertAt = "top";
+      } else {
+        return { ok: false, error: "Hedef sütun bulunamadı." };
+      }
+    } else {
+      targetSlot = { pageNum: target.pageNum, columnIndex: target.columnIndex };
+      insertAt = target.insertAt;
+    }
   }
   if (!targetSlot) return { ok: false, error: "Hedef sütun bulunamadı." };
 
@@ -692,6 +742,104 @@ export function tryColumnShiftPlacement(
   };
 
   return commitPlacementOverrides(commitInput, questionId, placementOverride);
+}
+
+/**
+ * Boş kalan sütunlara sonraki sütunun üst sorusunu kurallara göre otomatik çek.
+ * Sığmazsa dokunma — kullanıcı zorla ok ile taşır.
+ * `skipOrderIndices`: az önce elle taşınan sorular (geri alma / ping-pong önleme).
+ */
+export function tryAutoPullTopsIntoEmptyPrevColumns(input: {
+  baseLayout: LayoutItem[];
+  effectiveLayout: LayoutItem[];
+  questions: QuestionItem[];
+  columns: number;
+  maxQuestionPage: number;
+  geometry: LayoutGeometryInput;
+  questionGapMinMm: number;
+  placementOverrides: Record<string, LayoutPlacementOverride>;
+  questionNumberingEnabled?: boolean;
+  questionNumberStart?: number;
+  questionNumberFontPt?: number;
+  skipOrderIndices?: ReadonlySet<number>;
+}): TryColumnShiftOk | null {
+  let layout = input.effectiveLayout;
+  let placement = { ...input.placementOverrides };
+  let lastOk: TryColumnShiftOk | null = null;
+  const cols = Math.max(1, input.columns);
+  const skip = input.skipOrderIndices ?? new Set<number>();
+
+  for (let guard = 0; guard < 64; guard += 1) {
+    const layoutMaxPage = Math.max(
+      1,
+      input.maxQuestionPage,
+      ...layout.filter((l) => l.kind !== "answer_key_page").map((l) => l.page_num ?? 1),
+    );
+    const pageNums = [
+      ...new Set(
+        layout
+          .filter((l) => l.kind !== "answer_key_page")
+          .map((l) => l.page_num)
+          .filter((p): p is number => typeof p === "number" && p > 0),
+      ),
+    ].sort((a, b) => a - b);
+    if (pageNums.length === 0) break;
+
+    let pulled = false;
+    for (const pageNum of pageNums) {
+      const bandForPage = (p: number) =>
+        computePageColumnBand({ ...input.geometry, pageNum: p, columns: cols });
+      for (let colIdx = 0; colIdx < cols; colIdx += 1) {
+        const items = getColumnItemsAtSlot(layout, pageNum, colIdx, bandForPage);
+        if (items.length > 0) continue;
+
+        const next = nextColumnSlot(pageNum, colIdx, cols, layoutMaxPage);
+        if (!next) continue;
+        // Sayfalar arası otomatik çekme yok — kareli alan/ sürükleme sonrası
+        // soru önceki sayfanın aynı sütununa “kaymasın”; kullanıcı zorla ok kullanır.
+        if (next.pageNum !== pageNum) continue;
+        const nextItems = getColumnItemsAtSlot(
+          layout,
+          next.pageNum,
+          next.columnIndex,
+          bandForPage,
+        );
+        if (nextItems.length === 0) continue;
+
+        const top = nextItems[0]!;
+        if (skip.has(top.order_index)) continue;
+
+        const result = tryColumnShiftPlacement({
+          baseLayout: input.baseLayout,
+          effectiveLayout: layout,
+          questions: input.questions,
+          pageNum: next.pageNum,
+          columns: cols,
+          maxQuestionPage: layoutMaxPage,
+          orderIndex: top.order_index,
+          direction: "prev_column",
+          geometry: { ...input.geometry, pageNum: next.pageNum },
+          questionGapMinMm: input.questionGapMinMm,
+          placementOverrides: placement,
+          force: false,
+          questionNumberingEnabled: input.questionNumberingEnabled,
+          questionNumberStart: input.questionNumberStart,
+          questionNumberFontPt: input.questionNumberFontPt,
+        });
+        if (!result.ok) continue;
+
+        layout = result.layout;
+        placement = result.placementOverrides;
+        lastOk = result;
+        pulled = true;
+        break;
+      }
+      if (pulled) break;
+    }
+    if (!pulled) break;
+  }
+
+  return lastOk;
 }
 
 /** Ham API layout → yerleşim override + dikey override uygulanmış önizleme layout. */
@@ -726,24 +874,6 @@ export function finalizePreviewLayout(input: {
     if (placed.ok) layout = placed.layout;
   }
 
-  const filteredY =
-    Object.keys(input.placementOverrides).length > 0
-      ? filterYTopOverridesForPlacementSave({
-          overridesByQuestionId: input.yOverridesByQuestionId,
-          placementOverrides: input.placementOverrides,
-          questions: input.questions,
-          layout,
-          baseLayout,
-          columns: input.columns,
-          pageWpt: input.geometry.pageWpt,
-          pageHpt: input.geometry.pageHpt,
-          marginTopMm: input.geometry.marginTopMm,
-          marginBottomMm: input.geometry.marginBottomMm,
-          marginLeftMm: input.geometry.marginLeftMm,
-          marginRightMm: input.geometry.marginRightMm,
-        })
-      : input.yOverridesByQuestionId;
-
   const yToApply = input.yOverridesByQuestionId;
 
   if (Object.keys(yToApply).length > 0) {
@@ -761,11 +891,16 @@ export function finalizePreviewLayout(input: {
     });
   }
 
-  const hasManualLayout =
-    Object.keys(input.placementOverrides).length > 0 ||
-    Object.keys(filteredY).length > 0;
-  if (!hasManualLayout) return layout;
+  // Dış başlık rezervi — banner / kareli alan çakışmasını önle
+  layout = reflowLayoutForFasikulBadgeTopReserve({
+    layout,
+    questions: input.questions,
+    geometry: input.geometry,
+    columns: input.columns,
+    questionGapMinMm: input.questionGapMinMm,
+  });
 
+  // Her zaman: sütun sütun okuma sırası + içerik kutularını numarasız bırak
   return reapplyDisplayNumbersByReadingOrder(layout, {
     columns: input.columns,
     geometry: input.geometry,

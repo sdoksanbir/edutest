@@ -7,6 +7,7 @@ import {
   columnIndexFromQuestionXPt,
   computePageColumnBand,
   contentTopPtForColumn,
+  FOOTER_TOP_OFFSET_MM,
   mmToPdfPt,
   questionNumberImageGapPt,
   type LayoutGeometryInput,
@@ -23,7 +24,7 @@ import AlignmentSpacingSliders from "../preview/AlignmentSpacingSliders";
 import AnswerKeyFooterPanel from "../preview/AnswerKeyFooterPanel";
 import YonergePanel from "../preview/YonergePanel";
 import OptikFormSidebar from "../preview/OptikFormSidebar";
-import { questionsInLayoutReadingOrder } from "../../utils/optikFormOrder";
+import { questionsInLayoutReadingOrder, isOptikAnswerableQuestion } from "../../utils/optikFormOrder";
 import { resolveOptikActiveOptions } from "../../utils/optikFormSettings";
 import { countOptikFormPagesForLayout } from "../../utils/optikFormCompactPlacement";
 import { buildOptikFormPdfOverlays } from "../../utils/optikFormExportOverlay";
@@ -52,7 +53,6 @@ import {
 import { bookletLetterFromGroup, buildWrittenPaperTitle } from "../../utils/writtenPaperTitle";
 import { buildPdfExportPayload } from "../../utils/buildPdfExportPayload";
 import { resolveThemedHeaderLogoUrl } from "../../utils/presetLogoRecolor";
-import { resolveLayoutFetchSkipImages } from "../../utils/pdfPreviewFetchOptions";
 import { isCorporateHeader, isLgsOfficialBannerConfig } from "../../utils/corporateHeaderLayout";
 import { normalizeClassicBannerConfig } from "../../utils/classicBannerTopRow";
 import { normalizeHeaderStyleId } from "../../utils/headerStyles";
@@ -89,6 +89,7 @@ import {
   applyDisplayScalePreviewToLayout,
   applyImgYTopToLayoutItem,
   layoutItemToCanvasRect,
+  reflowColumnForScratchRows,
   type QuestionDragLive,
 } from "../../utils/questionVerticalDrag";
 import {
@@ -98,7 +99,7 @@ import {
 } from "../../utils/displayScale";
 import {
   clampDisplayScalePctToColumn,
-  tryReflowAfterQuestionScale,
+  tryReflowAfterQuestionScaleChange,
 } from "../../utils/displayScaleColumn";
 import { resolveRequestedScale, resolveNormalizationScale, resolveManualScale } from "../../utils/questionScale";
 import {
@@ -131,18 +132,69 @@ import {
 import type { ColumnShiftDirection } from "../../utils/columnShift";
 import {
   finalizePreviewLayout,
+  tryAutoPullTopsIntoEmptyPrevColumns,
   tryColumnShiftPlacement,
   type LayoutPlacementOverride,
   type TryColumnShiftOk,
 } from "../../utils/columnShiftPlacement";
+import { reflowLayoutForFasikulBadgeTopReserve } from "../../utils/fasikulFrameBadgeLayout";
+import {
+  buildOgreniyorumFasikulFrame,
+  fasikulFrameBadgeTopReservePt,
+} from "../../utils/fasikulQuestionFrame";
+import { patchHeaderBadge } from "../../utils/headerBadgeByStyle";
+import { resolveBannerRightSlots } from "../../utils/bannerRightSlots";
+import { fasikulOneLineGapPt } from "../../utils/questionScratchGrid";
 import { reapplyDisplayNumbersByReadingOrder } from "../../utils/layoutDisplayNumbers";
 import { questionIdsInPlacementAffectedColumns } from "../../utils/layoutYTopOverridesPayload";
-import { mergeLayoutImagesFromQuestions } from "../../utils/layoutImageMerge";
+import { cloneLayoutGeometry, stripLayoutImages } from "../../utils/layoutClone";
 import { isQuestionGapLayoutDirty } from "../../utils/questionGapReset";
 import { resolveWatermarkAngleDeg } from "../../utils/visualProperties";
 
 /** Canvas / layout — 96 DPI CSS px ↔ PDF pt */
 const PREVIEW_PT_TO_PX = 96 / 72;
+/** 100+ soru: yalnızca mevcut sayfa ±N canvas mount (tüm sayfa ×2 katastrofik). */
+const PREVIEW_PAGE_MOUNT_RADIUS = 2;
+
+/** Değişen sayfa numaraları — scheduleAllPreviewRedraw yerine. */
+function collectDirtyLayoutPages(
+  before: LayoutItem[],
+  after: LayoutItem[],
+  extras?: Iterable<number>,
+): number[] {
+  const priorByOrder = new Map<number, LayoutItem>();
+  for (const it of before) {
+    if (typeof it.order_index === "number") priorByOrder.set(it.order_index, it);
+  }
+  const dirty = new Set<number>();
+  const mark = (p: number | undefined) => {
+    if (typeof p === "number" && p > 0) dirty.add(p);
+  };
+  for (const it of after) {
+    if (it.kind === "answer_key_page") continue;
+    const prev = priorByOrder.get(it.order_index);
+    if (
+      !prev ||
+      prev.page_num !== it.page_num ||
+      prev.x_pt !== it.x_pt ||
+      prev.y_top_pt !== it.y_top_pt ||
+      prev.img_y_top_pt !== it.img_y_top_pt ||
+      prev.img_w_pt !== it.img_w_pt ||
+      prev.img_h_pt !== it.img_h_pt ||
+      prev.h_pt !== it.h_pt ||
+      prev.w_pt !== it.w_pt
+    ) {
+      mark(it.page_num);
+      mark(prev?.page_num);
+    }
+    priorByOrder.delete(it.order_index);
+  }
+  for (const prev of priorByOrder.values()) mark(prev.page_num);
+  if (extras) {
+    for (const p of extras) mark(p);
+  }
+  return [...dirty];
+}
 
 function previewSharpnessForQuality(q: "normal" | "high" | "best"): number {
   if (q === "best") return 2.5;
@@ -242,6 +294,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
   const setQuestionGapMm = useEditorStore((s) => s.setQuestionGapMm);
   const setQuestionGapMinMm = useEditorStore((s) => s.setQuestionGapMinMm);
   const setAutoCompactSpacing = useEditorStore((s) => s.setAutoCompactSpacing);
+  const applyFasikulFrameToQuestions = useEditorStore((s) => s.applyFasikulFrameToQuestions);
   const headerStyleId = useEditorStore((s) => s.headerStyleId);
   const headerThemeEpoch = useEditorStore((s) => s.headerThemeEpoch);
   const syncActiveLayoutModule = useEditorStore((s) => s.syncActiveLayoutModule);
@@ -334,6 +387,10 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
   const applyQuestionLineHeightMatch = useEditorStore((s) => s.applyQuestionLineHeightMatch);
   const restoreQuestionsScaleSnapshot = useEditorStore((s) => s.restoreQuestionsScaleSnapshot);
   const setQuestionDisplayScale = useEditorStore((s) => s.setQuestionDisplayScale);
+  const setQuestionScratchGridRows = useEditorStore((s) => s.setQuestionScratchGridRows);
+  const insertEmptyFasikulFrameAfter = useEditorStore(
+    (s) => s.insertEmptyFasikulFrameAfter,
+  );
   const setQuestionsDisplayScale = useEditorStore((s) => s.setQuestionsDisplayScale);
   const setQuestionsBulkScales = useEditorStore((s) => s.setQuestionsBulkScales);
   const sections = useEditorStore((s) => s.sections);
@@ -366,6 +423,9 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
   const storePageFrameInnerGapMm = useEditorStore((s) => s.pageFrameInnerGapMm);
   const storePageFrameCornerRadiusMm = useEditorStore((s) => s.pageFrameCornerRadiusMm);
   const storePageFrameLineStyle = useEditorStore((s) => s.pageFrameLineStyle);
+  const scratchGridCornerRadiusPt = useEditorStore((s) => s.scratchGridCornerRadiusPt);
+  const scratchGridColorMode = useEditorStore((s) => s.scratchGridColorMode);
+  const scratchGridColor = useEditorStore((s) => s.scratchGridColor);
 
   const useLgsOfficialBanner =
     headerConfig.useExamBanner === true &&
@@ -495,11 +555,13 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     [schoolName, classSection, testName, examType]
   );
 
-  /** Yazılı ve deneme sınavında cevap anahtarı ayrı sayfada (footer’da değil) */
+  /** Yazılı, deneme ve fasikülde cevap anahtarı ayrı sayfada (footer’da değil) */
   const previewAnswerKeyMode = useMemo(() => {
-    if ((isWritten || isTrial) && options.includeAnswerKey) return "separate_page" as const;
+    if ((isWritten || isTrial || isFasikul) && options.includeAnswerKey) {
+      return "separate_page" as const;
+    }
     return (answerKeyMode ?? "per_page") as "per_page" | "separate_page" | "end_of_test";
-  }, [isWritten, isTrial, options.includeAnswerKey, answerKeyMode]);
+  }, [isWritten, isTrial, isFasikul, options.includeAnswerKey, answerKeyMode]);
 
   /** Seçenek açıkken en az bir imza satırı (boş da olsa); aksi halde önizleme/PDF bloğu hiç çizilmiyordu */
   const writtenTeachersForPreview = useMemo(() => {
@@ -520,7 +582,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
   const [layout, setLayout] = useState<LayoutItem[]>([]);
   const [pageWpt, setPageWpt] = useState(595.28);
   const [pageHpt, setPageHpt] = useState(841.89);
-  const [quality, setQuality] = useState<"normal" | "high" | "best">("best");
+  const [quality, setQuality] = useState<"normal" | "high" | "best">("normal");
   const [showThumbnailsPanel, setShowThumbnailsPanel] = useState(false);
   const [showLeftEditPanel, setShowLeftEditPanel] = useState(true);
   const [showRightThemePanel, setShowRightThemePanel] = useState(true);
@@ -657,6 +719,8 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
   const previewScrollAnchorRef = useRef<{ top: number; left: number } | null>(null);
   const gapSliderScrollSessionRef = useRef(0);
   const questionDragLiveRef = useRef<QuestionDragLive | null>(null);
+  /** Kareli alan tutamacı canlı satır — store’a her frame yazmadan canvas güncellenir */
+  const scratchLiveRef = useRef<{ orderIndex: number; rows: number } | null>(null);
   const layoutLiveRef = useRef<LayoutItem[] | null>(null);
   const alignmentPreviewLiveRef = useRef<{
     headerBottomGapMm?: number;
@@ -740,6 +804,39 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     });
   }, [restorePreviewScroll]);
 
+  /** Yalnızca etkilenen sayfalar — 30+ soruda tüm sayfa boyama fırtınasını keser. */
+  const scheduleDirtyPreviewRedraw = useCallback((pageNums: Iterable<number>) => {
+    const pages = [...new Set([...pageNums].filter((p) => p > 0))];
+    if (pages.length === 0) {
+      scheduleAllPreviewRedraw();
+      return;
+    }
+    if (previewRedrawRafRef.current != null) {
+      window.cancelAnimationFrame(previewRedrawRafRef.current);
+      previewRedrawRafRef.current = null;
+    }
+    previewRedrawRafRef.current = window.requestAnimationFrame(() => {
+      previewRedrawRafRef.current = null;
+      for (const p of pages) {
+        canvasRedrawersRef.current.get(p)?.();
+        gapOverlayRedrawersRef.current.get(p)?.();
+        verticalOverlayRedrawersRef.current.get(p)?.();
+      }
+    });
+  }, [scheduleAllPreviewRedraw]);
+
+  /** Ölçek sürüklerken: sadece canvas — React overlay re-render yok (takılmasın). */
+  const scheduleCanvasOnlyRedraw = useCallback(() => {
+    if (previewRedrawRafRef.current != null) {
+      window.cancelAnimationFrame(previewRedrawRafRef.current);
+      previewRedrawRafRef.current = null;
+    }
+    previewRedrawRafRef.current = window.requestAnimationFrame(() => {
+      previewRedrawRafRef.current = null;
+      canvasRedrawersRef.current.forEach((redraw) => redraw());
+    });
+  }, []);
+
   const registerCanvasRedraw = useCallback((pageNum: number, redraw: () => void) => {
     canvasRedrawersRef.current.set(pageNum, redraw);
     return () => {
@@ -767,6 +864,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       questionDragRedrawRafRef.current = null;
       canvasRedrawersRef.current.get(pageNum)?.();
       gapOverlayRedrawersRef.current.get(pageNum)?.();
+      // Dikey sürüklemede çerçeve CSS transform ile gider; React bump transform’u bozabilir
     });
   }, []);
 
@@ -779,10 +877,6 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     () => layout.filter((l) => l.display_number != null).length,
     [layout]
   );
-  const optikFormQuestions = useMemo(
-    () => questionsInLayoutReadingOrder(questions, layout),
-    [questions, layout]
-  );
   const answerKeyPages = useMemo(() => {
     if (!options.includeAnswerKey || previewAnswerKeyMode !== "separate_page") return 0;
     return countSeparateAnswerKeyPages({
@@ -790,6 +884,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       pageHpt,
       marginTopMm,
       marginBottomMm,
+      pairsPerRow: isFasikul ? 4 : undefined,
     });
   }, [
     options.includeAnswerKey,
@@ -798,78 +893,8 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     pageHpt,
     marginTopMm,
     marginBottomMm,
+    isFasikul,
   ]);
-  const optikFormPages = useMemo(() => {
-    const rows = optikFormQuestions.length;
-    const activeOpts = resolveOptikActiveOptions(optikFormQuestions, optikFormOptionCount);
-    let reservedAboveFooterPt = 0;
-    if (
-      options.includeAnswerKey &&
-      previewAnswerKeyMode === "end_of_test" &&
-      answerKeyItemCount > 0
-    ) {
-      const answerKeyItems: [number, string][] = layout
-        .filter((l) => l.display_number != null)
-        .sort((a, b) => (a.display_number as number) - (b.display_number as number))
-        .map((l) => [
-          l.display_number as number,
-          (l.answer_key || "?").trim().toUpperCase() || "?",
-        ]);
-      const colWApprox = (pageWpt - mmToPdfPt(marginLeftMm) - mmToPdfPt(marginRightMm)) / Math.max(1, columns);
-      const ak = computeAnswerKeyLayout({
-        items: answerKeyItems,
-        totalWidthPx: colWApprox,
-        columnCount: 2,
-        scale: 1,
-      });
-      reservedAboveFooterPt = ak.tableHeightPx + 6;
-    }
-    return countOptikFormPagesForLayout({
-      enabled: optikFormEnabled,
-      placement: optikFormPlacement,
-      rowCount: rows,
-      layout,
-      pageWpt,
-      pageHpt,
-      marginTopMm,
-      marginBottomMm,
-      marginLeftMm,
-      marginRightMm,
-      columns,
-      columnGapMm: 8,
-      bookletType: optikFormBookletType,
-      optionCount: activeOpts.length,
-      reservedAboveFooterPt,
-      headerStyleId,
-      headerConfig,
-      headerBottomGapMm,
-      otherPageHeaderBottomGapMm,
-      writtenPaperHeader: isWritten,
-    });
-  }, [
-    optikFormEnabled,
-    optikFormPlacement,
-    optikFormQuestions,
-    optikFormOptionCount,
-    optikFormBookletType,
-    layout,
-    pageWpt,
-    pageHpt,
-    marginTopMm,
-    marginBottomMm,
-    marginLeftMm,
-    marginRightMm,
-    columns,
-    options.includeAnswerKey,
-    previewAnswerKeyMode,
-    answerKeyItemCount,
-    headerStyleId,
-    headerConfig,
-    headerBottomGapMm,
-    otherPageHeaderBottomGapMm,
-    isWritten,
-  ]);
-  const totalPages = maxQuestionPage + answerKeyPages + optikFormPages;
 
   const previewScale = PREVIEW_PT_TO_PX * zoom;
   const previewPageWpx = pageWpt * previewScale;
@@ -928,6 +953,98 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     ]
   );
 
+  const optikFormQuestions = useMemo(
+    () =>
+      questionsInLayoutReadingOrder(questions, layout, {
+        columns,
+        geometry: layoutGeometryInput,
+      }),
+    [questions, layout, columns, layoutGeometryInput],
+  );
+  const optikAnswerableQuestions = useMemo(
+    () => optikFormQuestions.filter(isOptikAnswerableQuestion),
+    [optikFormQuestions],
+  );
+  const optikFormPages = useMemo(() => {
+    const rows = optikAnswerableQuestions.length;
+    const activeOpts = resolveOptikActiveOptions(
+      optikAnswerableQuestions,
+      optikFormOptionCount,
+    );
+    let reservedAboveFooterPt = 0;
+    if (
+      options.includeAnswerKey &&
+      previewAnswerKeyMode === "end_of_test" &&
+      answerKeyItemCount > 0
+    ) {
+      const answerKeyItems: [number, string][] = layout
+        .filter((l) => l.display_number != null)
+        .sort(
+          (a, b) =>
+            (a.display_number as number) - (b.display_number as number),
+        )
+        .map((l) => [
+          l.display_number as number,
+          (l.answer_key || "?").trim().toUpperCase() || "?",
+        ]);
+      const colWApprox =
+        (pageWpt - mmToPdfPt(marginLeftMm) - mmToPdfPt(marginRightMm)) /
+        Math.max(1, columns);
+      const ak = computeAnswerKeyLayout({
+        items: answerKeyItems,
+        totalWidthPx: colWApprox,
+        columnCount: 2,
+        scale: 1,
+      });
+      reservedAboveFooterPt = ak.tableHeightPx + 6;
+    }
+    return countOptikFormPagesForLayout({
+      enabled: optikFormEnabled,
+      placement: optikFormPlacement,
+      rowCount: rows,
+      layout,
+      pageWpt,
+      pageHpt,
+      marginTopMm,
+      marginBottomMm,
+      marginLeftMm,
+      marginRightMm,
+      columns,
+      columnGapMm: 8,
+      bookletType: optikFormBookletType,
+      optionCount: activeOpts.length,
+      reservedAboveFooterPt,
+      headerStyleId,
+      headerConfig,
+      headerBottomGapMm,
+      otherPageHeaderBottomGapMm,
+      writtenPaperHeader: isWritten,
+    });
+  }, [
+    optikFormEnabled,
+    optikFormPlacement,
+    optikAnswerableQuestions,
+    optikFormOptionCount,
+    optikFormBookletType,
+    layout,
+    pageWpt,
+    pageHpt,
+    marginTopMm,
+    marginBottomMm,
+    marginLeftMm,
+    marginRightMm,
+    columns,
+    options.includeAnswerKey,
+    previewAnswerKeyMode,
+    answerKeyItemCount,
+    headerStyleId,
+    headerConfig,
+    headerBottomGapMm,
+    otherPageHeaderBottomGapMm,
+    isWritten,
+  ]);
+  const totalPages = maxQuestionPage + answerKeyPages + optikFormPages;
+
   const handleQuestionYTopChange = useCallback(
     (
       orderIndex: number,
@@ -960,6 +1077,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         questions,
       });
       layoutRef.current = next;
+      layoutLiveRef.current = null;
       setLayout(next);
 
       // setLayout updater içinde store setState yasak (React render uyarısı)
@@ -985,6 +1103,192 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       questionNumberFontPt,
       scheduleQuestionDragRedraw,
     ]
+  );
+
+  /** Kareli alan tutamacı: satır + alttakileri kaydır; sığmazsa sonraki sütun/sayfaya zorla (gerekirse yeni sayfa) */
+  const handleScratchHandleRowsChange = useCallback(
+    (
+      orderIndex: number,
+      rows: number,
+      cellPt: number,
+      phase: "move" | "commit",
+    ) => {
+      const qs = useEditorStore.getState().questions;
+      const q = qs.find((x) => x.order_index === orderIndex);
+      if (!q || !(cellPt > 0)) return;
+
+      let layout = layoutRef.current;
+      let overrides = {
+        ...useEditorStore.getState().layoutPlacementOverridesByQuestionId,
+      };
+      const desiredRows = Math.max(1, Math.round(rows));
+      const footerTopPt =
+        mmToPdfPt(layoutGeometryInput.marginBottomMm) +
+        mmToPdfPt(FOOTER_TOP_OFFSET_MM);
+
+      let yUpdates = new Map<number, number>();
+      let appliedRows = desiredRows;
+
+      for (let guard = 0; guard < 48; guard += 1) {
+        const item = layout.find((l) => l.order_index === orderIndex);
+        if (!item) break;
+        const pageNum = item.page_num ?? 1;
+        const band = computePageColumnBand({
+          ...layoutGeometryInput,
+          pageNum,
+          columns,
+        });
+        const colIdx = columnIndexFromQuestionXPt(item.x_pt, band);
+        const colItems = getColumnItemsSortedTopFirst(
+          layout,
+          pageNum,
+          colIdx,
+          band,
+        );
+        const idx = colItems.findIndex((l) => l.order_index === orderIndex);
+        if (idx < 0) break;
+        const below = colItems.slice(idx + 1);
+
+        const yResult = reflowColumnForScratchRows({
+          layout,
+          orderIndex,
+          rows: desiredRows,
+          cellPt,
+          band,
+          pageNum,
+          footerTopPt,
+          contentTopPt: contentTopPtForColumn(
+            { ...layoutGeometryInput, pageNum, columns },
+            colIdx,
+          ),
+        });
+        appliedRows = yResult.rows;
+        yUpdates = yResult.yUpdatesByOrderIndex;
+        layout = yResult.layout;
+
+        if (appliedRows >= desiredRows || below.length === 0) {
+          break;
+        }
+
+        // Boşluk yetmiyor → sütundaki en alttaki (bu sorunun altındaki) soruyu zorla sonraki sütun/sayfaya at
+        const victim = below[below.length - 1]!;
+        const victimPage = victim.page_num ?? pageNum;
+        const layoutMaxPage = Math.max(
+          1,
+          ...layout.map((l) => l.page_num ?? 1),
+          maxQuestionPage,
+        );
+        const shift = tryColumnShiftPlacement({
+          baseLayout: layout,
+          effectiveLayout: layout,
+          questions: qs,
+          pageNum: victimPage,
+          columns,
+          maxQuestionPage: layoutMaxPage,
+          orderIndex: victim.order_index,
+          direction: "next_column",
+          geometry: { ...layoutGeometryInput, pageNum: victimPage },
+          questionGapMinMm: questionGapMm,
+          placementOverrides: overrides,
+          force: true,
+          questionNumberingEnabled,
+          questionNumberStart,
+          questionNumberFontPt,
+        });
+        if (!shift.ok) {
+          break;
+        }
+        overrides = shift.placementOverrides;
+        layout = shift.layout;
+        yUpdates = new Map(
+          Object.entries(shift.yTopUpdatesByQuestionId).map(([id, y]) => {
+            const oi = qs.find((x) => x.id === id)?.order_index;
+            return oi != null ? ([oi, y] as const) : null;
+          }).filter((x): x is readonly [number, number] => x != null),
+        );
+      }
+
+      const priorForImages = layoutRef.current;
+      scratchLiveRef.current = { orderIndex, rows: appliedRows };
+      if (phase === "commit") {
+        scratchLiveRef.current = null;
+        setQuestionScratchGridRows(q.id, appliedRows);
+        mergeLayoutPlacementOverridesByQuestionId(overrides);
+        const yPartial: Record<string, number> = {};
+        for (const [oi, yTop] of yUpdates) {
+          const qq = qs.find((x) => x.order_index === oi);
+          if (qq) yPartial[qq.id] = yTop;
+        }
+        if (Object.keys(yPartial).length > 0) {
+          mergeLayoutYTopOverridesByQuestionId(yPartial);
+        }
+      }
+      // move: store yazma — yalnızca layoutLiveRef + dirty sayfa boyama
+
+      const layoutWithImages = stripLayoutImages(layout);
+
+      const priorByOrder = new Map<number, (typeof priorForImages)[number]>();
+      for (const it of priorForImages) {
+        if (typeof it.order_index === "number") priorByOrder.set(it.order_index, it);
+      }
+      const dirtyPages = new Set<number>();
+      const markDirty = (page: number | undefined) => {
+        if (typeof page === "number" && page > 0) dirtyPages.add(page);
+      };
+      for (const it of layoutWithImages) {
+        if (it.kind === "answer_key_page") continue;
+        const prev = priorByOrder.get(it.order_index);
+        if (
+          !prev ||
+          prev.page_num !== it.page_num ||
+          prev.x_pt !== it.x_pt ||
+          prev.y_top_pt !== it.y_top_pt ||
+          prev.img_y_top_pt !== it.img_y_top_pt ||
+          prev.h_pt !== it.h_pt ||
+          prev.w_pt !== it.w_pt
+        ) {
+          markDirty(it.page_num);
+          markDirty(prev?.page_num);
+        }
+        priorByOrder.delete(it.order_index);
+      }
+      for (const prev of priorByOrder.values()) {
+        markDirty(prev.page_num);
+      }
+      markDirty(
+        layoutWithImages.find((l) => l.order_index === orderIndex)?.page_num,
+      );
+
+      const liveMaxPage = Math.max(1, ...layoutWithImages.map((l) => l.page_num ?? 1));
+      layoutRef.current = layoutWithImages;
+
+      if (phase === "move") {
+        layoutLiveRef.current = layoutWithImages;
+        if (liveMaxPage > maxQuestionPage) {
+          setLayout(layoutWithImages);
+        }
+        scheduleDirtyPreviewRedraw(dirtyPages);
+        return;
+      }
+
+      layoutLiveRef.current = null;
+      setLayout(layoutWithImages);
+      layoutRef.current = layoutWithImages;
+      scheduleDirtyPreviewRedraw(dirtyPages);
+    },
+    [
+      layoutGeometryInput,
+      columns,
+      maxQuestionPage,
+      questionGapMm,
+      questionNumberingEnabled,
+      questionNumberStart,
+      questionNumberFontPt,
+      setQuestionScratchGridRows,
+      mergeLayoutYTopOverridesByQuestionId,
+      mergeLayoutPlacementOverridesByQuestionId,
+      scheduleDirtyPreviewRedraw,
+    ],
   );
 
   const getColumnOverlayRectsPx = useCallback(
@@ -1198,7 +1502,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
 
   const handleColumnOverlayPointerDown = useCallback(
     (pageNum: number, col0: number, clientX: number, clientY: number) => {
-      const snap = JSON.parse(JSON.stringify(layout)) as LayoutItem[];
+      const snap = cloneLayoutGeometry(layout);
       columnPanelOpenLayoutRef.current = snap;
       const gi: LayoutGeometryInput = {
         ...layoutGeometryInput,
@@ -1257,7 +1561,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
 
   const handleColumnRedistCancel = useCallback(() => {
     if (columnRedistPreviewActive && columnRedistBaseLayout) {
-      setLayout(JSON.parse(JSON.stringify(columnRedistBaseLayout)) as LayoutItem[]);
+      setLayout(cloneLayoutGeometry(columnRedistBaseLayout));
     }
     setColumnPanel(null);
     setColumnRedistBaseLayout(null);
@@ -1311,6 +1615,9 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     clearLayoutPlacementOverrides();
     clearLayoutYTopOverrides();
     baseLayoutRef.current = [];
+    /** Stale live layout boyutları yeni sıra görselleriyle karışmasın */
+    layoutLiveRef.current = null;
+    scalePreviewSessionRef.current = null;
     reorderQuestions(reorderedIds).then(() => {
       if (focusIndex != null) {
         setSelectedQuestion(focusIndex);
@@ -1365,11 +1672,6 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       lastLayoutGapMmRef.current = gap;
       const paper = getPaperSizePayload(paperSize, paperWidthMm, paperHeightMm, orientation);
       const exportState = useEditorStore.getState();
-      const skipImages = resolveLayoutFetchSkipImages(
-        exportState.layoutPlacementOverridesByQuestionId,
-        exportState.layoutYTopOverridesByQuestionIdPt,
-        opts?.skipImages
-      );
       const exportHeaderStyleId = exportState.headerStyleId;
       const exportHeaderConfig = exportState.headerConfig;
       // syncActiveLayoutModule ile aynı tick’te çağrılınca closure bayat kalabilir —
@@ -1389,14 +1691,20 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         school_name: schoolName?.trim() || "",
         include_answer_key: exportState.options.includeAnswerKey,
         answer_key_mode:
-          (isWritten || isTrial) && exportState.options.includeAnswerKey
+          (isWritten || isTrial || isFasikul) && exportState.options.includeAnswerKey
             ? "separate_page"
             : answerKeyMode ?? "per_page",
         columns,
         target_question_line_pt: exportState.targetQuestionLinePt ?? 10,
         allow_slight_overflow: exportState.allowSlightOverflow === true,
-        question_gap_mm: gap,
-        question_gap_min_mm: gap,
+        question_gap_mm: isFasikul
+          ? Math.max(gap, (fasikulOneLineGapPt() * 25.4) / 72)
+          : gap,
+        question_gap_min_mm: isFasikul
+          ? Math.max(gap, (fasikulOneLineGapPt() * 25.4) / 72)
+          : gap,
+        show_question_scratch_grid: isFasikul === true,
+        fasikul_answer_key_labels: isFasikul === true,
         auto_compact_spacing: false,
         page_preset: paper.page_preset,
         page_width_mm: paper.page_width_mm,
@@ -1461,7 +1769,10 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
           explanation_caption_box_corner: q.explanation_caption_box_corner ?? "rounded",
           explanation_caption_box_width: q.explanation_caption_box_width ?? "full",
           remove_background: q.remove_background ?? false,
-          image_base64: q.image_base64,
+          // Layout IPC: base64 gönderme — boyut electron tarafında çözülür
+          image_base64: undefined,
+          image_width_px: q.capture?.cropWidthPx,
+          image_height_px: q.capture?.cropHeightPx,
           custom_gap_mm: q.custom_gap_mm,
           display_scale: resolveRequestedScale(q),
           manual_scale: q.manualScale ?? 1,
@@ -1474,9 +1785,12 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
           layout_mode: q.layoutMode ?? 'single-column',
           ocr_font_matched: q.ocr_font_matched,
           font_line_px: q.font_line_px,
+          fasikulFrame: q.fasikulFrame,
+          scratchGridRows: q.scratchGridRows,
+          fasikulEmptyRows: q.fasikulEmptyRows,
         })),
         sections: sections.length > 0 ? sections : undefined,
-        skip_images: skipImages,
+        skip_images: true,
         include_description: exportIncludeDescription,
         description_column_count: exportDescriptionColumnCount,
         description_texts: exportDescriptionTexts,
@@ -1535,9 +1849,8 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
           : {}),
       };
       const data = await api.exports.layout(payload);
-      const rawLayout = skipImages
-        ? mergeLayoutImagesFromQuestions(data.layout, qsEffective)
-        : data.layout;
+      // Görseller layout state’te tutulmaz — Canvas sayfa başına yükler (127× base64 kopyası yok)
+      const rawLayout = stripLayoutImages(data.layout);
       baseLayoutRef.current = rawLayout;
 
       const placementOv = exportState.layoutPlacementOverridesByQuestionId;
@@ -1597,9 +1910,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         questionGapInitialLayoutRef.current === null &&
         !opts?.livePreviewOnly
       ) {
-        questionGapInitialLayoutRef.current = JSON.parse(
-          JSON.stringify(layoutToSet),
-        ) as LayoutItem[];
+        questionGapInitialLayoutRef.current = cloneLayoutGeometry(layoutToSet);
         setQuestionGapInitialMm(gap);
       }
       if (opts?.livePreviewOnly) {
@@ -1611,6 +1922,9 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       }
       if (opts?.silent) {
         layoutLiveRef.current = layoutToSet;
+      } else {
+        /** Tam layout yenilemesi — eski canlı önizleme boyutlarını at */
+        layoutLiveRef.current = null;
       }
       setLayout(layoutToSet);
       setPageWpt(data.page_w_pt);
@@ -1698,6 +2012,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       applyPendingDisplayScales,
       scheduleAllPreviewRedraw,
       isOpen,
+      isFasikul,
     ]
   );
 
@@ -1723,11 +2038,12 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       );
       mergeLayoutPlacementOverridesByQuestionId(result.placementOverrides);
       mergeLayoutYTopOverridesByQuestionId(result.yTopUpdatesByQuestionId);
-      setLayout(result.layout);
-      layoutRef.current = result.layout;
+      const withImages = stripLayoutImages(result.layout);
+      setLayout(withImages);
+      layoutRef.current = withImages;
 
       if (focusOrderIndex != null) {
-        const moved = result.layout.find((l) => l.order_index === focusOrderIndex);
+        const moved = withImages.find((l) => l.order_index === focusOrderIndex);
         if (moved) goToPage(moved.page_num ?? 1);
       }
     },
@@ -1739,6 +2055,29 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       removeLayoutYTopOverridesForQuestionIds,
       goToPage,
     ]
+  );
+
+  const handleInsertEmptyFasikulFrameAfter = useCallback(
+    (
+      afterOrderIndex: number,
+      presetId: import("../../utils/fasikulQuestionFrame").FasikulFramePresetId,
+    ) => {
+      const newId = insertEmptyFasikulFrameAfter(afterOrderIndex, presetId);
+      if (!newId) return;
+      clearLayoutYTopOverrides();
+      layoutLiveRef.current = null;
+      setLoading(true);
+      void fetchLayout()
+        .then(() => {
+          setLayoutReady(true);
+          setLoading(false);
+        })
+        .catch((e) => {
+          setError(e instanceof Error ? e.message : "Önizleme güncellenemedi");
+          setLoading(false);
+        });
+    },
+    [insertEmptyFasikulFrameAfter, clearLayoutYTopOverrides, fetchLayout],
   );
 
   const handleColumnShift = useCallback(
@@ -1776,15 +2115,53 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         return;
       }
 
+      let applied = result;
       applyColumnPlacementResult(result, base, qs, orderIndex);
+
+      const bandForMoved = (p: number) =>
+        computePageColumnBand({ ...layoutGeometryInput, pageNum: p });
+      const colOf = (layoutItems: LayoutItem[], oi: number) => {
+        const it = layoutItems.find((l) => l.order_index === oi && l.kind !== "answer_key_page");
+        if (!it) return null;
+        return `${it.page_num}:${columnIndexFromQuestionXPt(it.x_pt, bandForMoved(it.page_num))}`;
+      };
+      const skipMoved = new Set<number>();
+      for (const it of effectiveLayout) {
+        if (it.kind === "answer_key_page") continue;
+        const before = colOf(effectiveLayout, it.order_index);
+        const after = colOf(result.layout, it.order_index);
+        if (before != null && after != null && before !== after) {
+          skipMoved.add(it.order_index);
+        }
+      }
+
+      const auto = tryAutoPullTopsIntoEmptyPrevColumns({
+        baseLayout: base,
+        effectiveLayout: result.layout,
+        questions: qs,
+        columns,
+        maxQuestionPage,
+        geometry: layoutGeometryInput,
+        questionGapMinMm,
+        placementOverrides: result.placementOverrides,
+        questionNumberingEnabled,
+        questionNumberStart,
+        questionNumberFontPt,
+        skipOrderIndices: skipMoved,
+      });
+      if (auto) {
+        applied = auto;
+        applyColumnPlacementResult(auto, base, qs);
+      }
+
       layoutLiveRef.current = null;
       const session = scalePreviewSessionRef.current;
       if (session?.orderIndex === orderIndex) {
-        const movedItem = result.layout.find((l) => l.order_index === orderIndex);
+        const movedItem = applied.layout.find((l) => l.order_index === orderIndex);
         if (movedItem) {
-          session.baseLayout = JSON.parse(JSON.stringify(result.layout)) as LayoutItem[];
-          session.baseItem = JSON.parse(JSON.stringify(movedItem)) as LayoutItem;
-          session.placementOverrides = { ...result.placementOverrides };
+          session.baseLayout = cloneLayoutGeometry(applied.layout);
+          session.baseItem = cloneLayoutGeometry([movedItem])[0]!;
+          session.placementOverrides = { ...applied.placementOverrides };
         }
       }
       scheduleAllPreviewRedraw();
@@ -1990,6 +2367,106 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
   ]);
   // banner boşluk sürgüsü layoutGeometryInput’u değiştirir; bu effect onu kasıtlı kullanmaz
 
+  /** Fasikül: tüm sorulara Örnek (numara) modeli — çerçevesiz, kırmızı, 01/02… */
+  const fasikulOgreniyorumApplyRef = useRef(false);
+  useEffect(() => {
+    if (!isOpen || !isFasikul) {
+      fasikulOgreniyorumApplyRef.current = false;
+      return;
+    }
+    if (fasikulOgreniyorumApplyRef.current) return;
+    const qs = useEditorStore.getState().questions;
+    if (qs.length === 0) return;
+    fasikulOgreniyorumApplyRef.current = true;
+    applyFasikulFrameToQuestions(
+      qs.map((q) => q.id),
+      buildOgreniyorumFasikulFrame(),
+    );
+  }, [isOpen, isFasikul, questions.length, applyFasikulFrameToQuestions]);
+
+  /** Fasikül Standart: D/Y/B rozetini kaldır */
+  const fasikulStripScoreRef = useRef(false);
+  useEffect(() => {
+    if (!isOpen || !isFasikul) {
+      fasikulStripScoreRef.current = false;
+      return;
+    }
+    if (fasikulStripScoreRef.current) return;
+    fasikulStripScoreRef.current = true;
+    const s = useEditorStore.getState();
+    const cfg = s.headerConfig;
+    const overlaySlots = cfg.badgeByStyle?.style_1?.bannerRightSlots;
+    const mergedSlots = resolveBannerRightSlots({
+      ...cfg,
+      bannerRightSlots: overlaySlots ?? cfg.bannerRightSlots,
+      bannerRightMode: cfg.badgeByStyle?.style_1?.bannerRightMode ?? cfg.bannerRightMode,
+    });
+    const nextSlots = (
+      mergedSlots.includes("score") || !overlaySlots
+        ? mergedSlots.filter((x) => x !== "score")
+        : overlaySlots.filter((x) => x !== "score")
+    );
+    const slots = nextSlots.length > 0 ? nextSlots : (["examType"] as const);
+    s.updateHeaderConfig(
+      patchHeaderBadge(cfg, "style_1", {
+        bannerRightSlots: [...slots],
+        bannerRightMode: (slots[0] as "examType" | "testNo") ?? "examType",
+      }),
+    );
+  }, [isOpen, isFasikul]);
+
+  /** Fasikül dış başlık açılınca / konumu üst olunca üst rezerv — banner & kareli alan çakışması */
+  const fasikulBadgeReserveSig = useMemo(
+    () =>
+      isFasikul
+        ? questions
+            .map(
+              (q) =>
+                `${q.order_index}:${fasikulFrameBadgeTopReservePt(q.fasikulFrame).toFixed(2)}`,
+            )
+            .join("|")
+        : "",
+    [isFasikul, questions],
+  );
+  const fasikulBadgeReserveSkipRef = useRef(true);
+  useEffect(() => {
+    if (!isOpen || !layoutReady || !isFasikul || questions.length === 0) {
+      if (!isOpen) fasikulBadgeReserveSkipRef.current = true;
+      return;
+    }
+    const hasReserve = questions.some(
+      (q) => fasikulFrameBadgeTopReservePt(q.fasikulFrame) > 0,
+    );
+    if (fasikulBadgeReserveSkipRef.current) {
+      fasikulBadgeReserveSkipRef.current = false;
+      /** İlk açılışta henüz çerçeve yoksa atla; ÖRNEK rezervi varsa hemen reflow */
+      if (!hasReserve) return;
+    }
+    setLayout((prev) => {
+      if (prev.length === 0) return prev;
+      const next = reflowLayoutForFasikulBadgeTopReserve({
+        layout: prev,
+        questions: useEditorStore.getState().questions,
+        geometry: layoutGeometryInput,
+        columns,
+        questionGapMinMm: questionGapMm,
+      });
+      layoutRef.current = next;
+      return next;
+    });
+    scheduleAllPreviewRedraw();
+  }, [
+    fasikulBadgeReserveSig,
+    isOpen,
+    layoutReady,
+    isFasikul,
+    questions.length,
+    layoutGeometryInput,
+    columns,
+    questionGapMm,
+    scheduleAllPreviewRedraw,
+  ]);
+
   const headerBottomGapSkipRef = useRef(true);
   useEffect(() => {
     if (!isOpen || !layoutReady || questions.length === 0) {
@@ -2106,7 +2583,12 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
           alignmentPreviewLiveRef.current?.otherPageHeaderBottomGapMm ??
           otherPageHeaderBottomGapMm,
       };
-      const rawReflowed = reflowLayoutWithFixedGapMm(base, questionGapMm, geometry);
+      const gapMmForLayout = isFasikul
+        ? Math.max(questionGapMm, (fasikulOneLineGapPt() * 25.4) / 72)
+        : questionGapMm;
+      const rawReflowed = reflowLayoutWithFixedGapMm(base, gapMmForLayout, geometry, {
+        fixedInterGaps: isFasikul,
+      });
       const layoutToSet = finalizePreviewLayout({
         rawLayout: rawReflowed,
         baseLayout: base,
@@ -2115,7 +2597,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         yOverridesByQuestionId: {},
         geometry,
         columns,
-        questionGapMinMm: questionGapMm,
+        questionGapMinMm: gapMmForLayout,
         questionNumberingEnabled: exportState.questionNumberingEnabled,
         questionNumberStart: exportState.questionNumberStart,
         questionNumberFontPt: exportState.questionNumberFontPt,
@@ -2123,7 +2605,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       layoutRef.current = layoutToSet;
       if (syncReactState) {
         layoutLiveRef.current = null;
-        baseLayoutRef.current = JSON.parse(JSON.stringify(layoutToSet)) as LayoutItem[];
+        baseLayoutRef.current = cloneLayoutGeometry(layoutToSet);
         setLayout(layoutToSet);
         scheduleAllPreviewRedraw();
       } else {
@@ -2142,6 +2624,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       otherPageHeaderBottomGapMm,
       scheduleAllPreviewRedraw,
       setLayout,
+      isFasikul,
     ],
   );
 
@@ -2372,9 +2855,9 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     const initialLayout = questionGapInitialLayoutRef.current;
 
     if (initialLayout && initialLayout.length > 0) {
-      const restored = JSON.parse(JSON.stringify(initialLayout)) as LayoutItem[];
+      const restored = cloneLayoutGeometry(initialLayout);
       layoutRef.current = restored;
-      baseLayoutRef.current = JSON.parse(JSON.stringify(restored)) as LayoutItem[];
+      baseLayoutRef.current = cloneLayoutGeometry(restored);
       clearLayoutYTopOverrides();
       clearLayoutPlacementOverrides();
       setLayout(restored);
@@ -2510,9 +2993,15 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       scaledLayout: LayoutItem[],
       orderIndex: number,
       placementOverrides: Record<string, LayoutPlacementOverride>,
-    ): { layout: LayoutItem[]; placementOverrides: Record<string, LayoutPlacementOverride> } | null => {
+      previousScale: number,
+      newScale: number,
+    ): {
+      layout: LayoutItem[];
+      placementOverrides: Record<string, LayoutPlacementOverride>;
+      yTopUpdatesByQuestionId: Record<string, number>;
+    } | null => {
       const exportState = useEditorStore.getState();
-      const result = tryReflowAfterQuestionScale({
+      const result = tryReflowAfterQuestionScaleChange({
         rawLayout: scaledLayout,
         questions: exportState.questions,
         orderIndex,
@@ -2521,6 +3010,8 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         maxQuestionPage,
         questionGapMinMm: questionGapMm,
         placementOverrides,
+        previousScale,
+        newScale,
         questionNumberingEnabled: exportState.questionNumberingEnabled,
         questionNumberStart: exportState.questionNumberStart,
         questionNumberFontPt: exportState.questionNumberFontPt,
@@ -2530,7 +3021,11 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         return null;
       }
       setColumnShiftError(null);
-      return { layout: result.layout, placementOverrides: result.placementOverrides };
+      return {
+        layout: result.layout,
+        placementOverrides: result.placementOverrides,
+        yTopUpdatesByQuestionId: result.yTopUpdatesByQuestionId,
+      };
     },
     [layoutGeometryInput, columns, maxQuestionPage, questionGapMm, questionNumberFontPt],
   );
@@ -2552,14 +3047,16 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         scaledLayout,
         orderIndex,
         session.placementOverrides,
+        session.baseScale,
+        newScale,
       );
       const nextLayout = reflowed?.layout ?? scaledLayout;
       if (reflowed) {
         session.placementOverrides = reflowed.placementOverrides;
-        session.baseLayout = JSON.parse(JSON.stringify(reflowed.layout)) as LayoutItem[];
+        session.baseLayout = cloneLayoutGeometry(reflowed.layout);
         const scaledItem = reflowed.layout.find((l) => l.order_index === orderIndex);
         if (scaledItem) {
-          session.baseItem = JSON.parse(JSON.stringify(scaledItem)) as LayoutItem;
+          session.baseItem = cloneLayoutGeometry([scaledItem])[0]!;
           session.baseScale = newScale;
         }
       }
@@ -2624,7 +3121,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         if (!data) return;
 
         const exportState = useEditorStore.getState();
-        const rawLayout = mergeLayoutImagesFromQuestions(data.layout, exportState.questions);
+        const rawLayout = stripLayoutImages(data.layout);
         baseLayoutRef.current = rawLayout;
 
         const startOverrides =
@@ -2632,7 +3129,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
             ? session.placementOverrides
             : exportState.layoutPlacementOverridesByQuestionId;
 
-        const result = tryReflowAfterQuestionScale({
+        const result = tryReflowAfterQuestionScaleChange({
           rawLayout,
           questions: exportState.questions,
           orderIndex,
@@ -2641,6 +3138,8 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
           maxQuestionPage,
           questionGapMinMm: questionGapMm,
           placementOverrides: startOverrides,
+          previousScale: baseScale,
+          newScale,
           questionNumberingEnabled: exportState.questionNumberingEnabled,
           questionNumberStart: exportState.questionNumberStart,
           questionNumberFontPt: exportState.questionNumberFontPt,
@@ -2677,7 +3176,9 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
           orderIndex,
         );
         clearLayoutLivePreview();
-        scheduleAllPreviewRedraw();
+        scheduleDirtyPreviewRedraw(
+          collectDirtyLayoutPages(rawLayout, result.layout, [pageNum]),
+        );
       } catch (e) {
         setColumnShiftError(e instanceof Error ? e.message : "Soru boyutu uygulanamadı");
       }
@@ -2692,7 +3193,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       fetchLayout,
       applyColumnPlacementResult,
       clearLayoutLivePreview,
-      scheduleAllPreviewRedraw,
+      scheduleDirtyPreviewRedraw,
       pendingRequestedScale,
     ],
   );
@@ -2726,7 +3227,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     (
       orderIndex: number,
       sizePct: number,
-      phase: "start" | "move" | "commit" | "cancel" | "persist"
+      phase: "start" | "move" | "commit" | "cancel" | "persist" | "persistSoft"
     ) => {
       const qs = useEditorStore.getState().questions;
       const q = qs.find((x) => x.order_index === orderIndex);
@@ -2751,9 +3252,9 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         scaleInteractionByQuestionRef.current[q.id] = interaction;
         scalePreviewSessionRef.current = {
           orderIndex,
-          baseItem: JSON.parse(JSON.stringify(baseItem)) as LayoutItem,
+          baseItem: cloneLayoutGeometry([baseItem])[0]!,
           baseScale: effectiveScale(),
-          baseLayout: JSON.parse(JSON.stringify(layoutRef.current)) as LayoutItem[],
+          baseLayout: cloneLayoutGeometry(layoutRef.current),
           placementOverrides: { ...exportState.layoutPlacementOverridesByQuestionId },
           interaction,
         };
@@ -2782,7 +3283,13 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         }
         scalePreviewSessionRef.current = null;
         clearLayoutLivePreview();
-        scheduleAllPreviewRedraw();
+        scheduleDirtyPreviewRedraw(
+          collectDirtyLayoutPages(
+            session?.baseLayout ?? layoutRef.current,
+            layoutRef.current,
+            session?.baseItem.page_num != null ? [session.baseItem.page_num] : undefined,
+          ),
+        );
         setColumnShiftError(null);
         return;
       }
@@ -2804,9 +3311,9 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         const exportState = useEditorStore.getState();
         session = {
           orderIndex,
-          baseItem: JSON.parse(JSON.stringify(baseItem)) as LayoutItem,
+          baseItem: cloneLayoutGeometry([baseItem])[0]!,
           baseScale: effectiveScale(),
-          baseLayout: JSON.parse(JSON.stringify(layoutRef.current)) as LayoutItem[],
+          baseLayout: cloneLayoutGeometry(layoutRef.current),
           placementOverrides: { ...exportState.layoutPlacementOverridesByQuestionId },
           interaction,
         };
@@ -2836,21 +3343,118 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
 
       if (phase === "move") {
         pendingDisplayScaleRef.current[q.id] = pending;
-        const nextLayout = applyScalePreviewLayout(session, orderIndex, newScale);
-        clearLayoutLivePreview();
+        // Canlı sürükleme: reflow/setState yok — sadece boyut önizlemesi (takılmasın).
+        const factor = newScale / session.baseScale;
+        const nextLayout = applyDisplayScalePreviewToLayout(
+          session.baseLayout,
+          orderIndex,
+          session.baseItem,
+          factor,
+        );
         layoutRef.current = nextLayout;
-        setLayout(nextLayout);
-        scheduleAllPreviewRedraw();
+        layoutLiveRef.current = nextLayout;
+        scheduleCanvasOnlyRedraw();
         return;
       }
 
       if (phase === "commit") {
         pendingDisplayScaleRef.current[q.id] = pending;
+        const prior = layoutRef.current;
         const nextLayout = applyScalePreviewLayout(session, orderIndex, newScale);
         clearLayoutLivePreview();
         layoutRef.current = nextLayout;
         setLayout(nextLayout);
-        scheduleAllPreviewRedraw();
+        scheduleDirtyPreviewRedraw(
+          collectDirtyLayoutPages(prior, nextLayout, [
+            session.baseItem.page_num ?? 1,
+          ]),
+        );
+        return;
+      }
+
+      /** Köşe tutamaç bırakma: ölçek + sütun reflow (büyütünce ileri, küçülünce geri paketle) */
+      if (phase === "persistSoft") {
+        const prevScale = session.baseScale;
+        const factor = newScale / prevScale;
+        const scaledLayout = applyDisplayScalePreviewToLayout(
+          session.baseLayout,
+          orderIndex,
+          session.baseItem,
+          factor,
+        );
+        const placementSnapshot = { ...session.placementOverrides };
+        delete pendingDisplayScaleRef.current[q.id];
+        scalePreviewSessionRef.current = null;
+
+        const storeScale = resolveRequestedScale(q);
+        if (Math.abs(storeScale - newScale) > 0.0001) {
+          setQuestionDisplayScale(q.id, newScale);
+        }
+
+        const exportState = useEditorStore.getState();
+        const reflowed = reflowScaledQuestionLayout(
+          scaledLayout,
+          orderIndex,
+          placementSnapshot,
+          prevScale,
+          newScale,
+        );
+
+        if (reflowed) {
+          const pageNum =
+            reflowed.layout.find((l) => l.order_index === orderIndex)?.page_num ??
+            session.baseItem.page_num ??
+            1;
+          const band = computePageColumnBand({
+            ...layoutGeometryInput,
+            pageNum,
+            columns,
+          });
+          const itemNow =
+            reflowed.layout.find((l) => l.order_index === orderIndex) ?? session.baseItem;
+          const colIdx = columnIndexFromQuestionXPt(itemNow.x_pt, band);
+          const existingOv =
+            exportState.layoutPlacementOverridesByQuestionId[q.id];
+          const placementOverride =
+            reflowed.placementOverrides[q.id] ??
+            existingOv ?? {
+              page_num: pageNum,
+              column_index: colIdx,
+              insert_at: "bottom" as const,
+            };
+          applyColumnPlacementResult(
+            {
+              ok: true,
+              layout: reflowed.layout,
+              questionId: q.id,
+              placementOverride,
+              placementOverrides: reflowed.placementOverrides,
+              yTopUpdatesByQuestionId: reflowed.yTopUpdatesByQuestionId,
+            },
+            scaledLayout,
+            exportState.questions,
+            // Sayfa zıplamasın — kullanıcı kaldığı yerde kalsın
+            undefined,
+          );
+          clearLayoutLivePreview();
+          scheduleDirtyPreviewRedraw(
+            collectDirtyLayoutPages(scaledLayout, reflowed.layout, [pageNum]),
+          );
+        } else {
+          const prior = layoutRef.current;
+          layoutRef.current = scaledLayout;
+          layoutLiveRef.current = null;
+          setLayout(scaledLayout);
+          const item = scaledLayout.find((l) => l.order_index === orderIndex);
+          if (item) {
+            mergeLayoutYTopOverridesByQuestionId({ [q.id]: item.y_top_pt });
+          }
+          scheduleDirtyPreviewRedraw(
+            collectDirtyLayoutPages(prior, scaledLayout, [
+              session.baseItem.page_num ?? 1,
+            ]),
+          );
+        }
         return;
       }
 
@@ -2862,9 +3466,14 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       questionNumberFontPt,
       applySingleQuestionScaleReflow,
       applyScalePreviewLayout,
+      reflowScaledQuestionLayout,
+      applyColumnPlacementResult,
       clearLayoutLivePreview,
-      scheduleAllPreviewRedraw,
+      scheduleDirtyPreviewRedraw,
+      scheduleCanvasOnlyRedraw,
       pendingRequestedScale,
+      setQuestionDisplayScale,
+      mergeLayoutYTopOverridesByQuestionId,
     ],
   );
 
@@ -2896,7 +3505,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         entries.push({
           orderIndex: q.order_index,
           questionId: q.id,
-          baseItem: JSON.parse(JSON.stringify(baseItem)) as LayoutItem,
+          baseItem: cloneLayoutGeometry([baseItem])[0]!,
           baseline,
         });
       }
@@ -2946,27 +3555,26 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         applyBulkScaleToBaseline(entry.baseline, relativeFactor),
       );
       logBulkScalePreview(relativeFactor, applyResults);
-      setLayout((prev) => {
-        let next = prev;
-        for (let i = 0; i < session.entries.length; i++) {
-          const entry = session.entries[i]!;
-          const result = applyResults[i]!;
-          pendingDisplayScaleRef.current[entry.questionId] = pendingFromBulkApply(
-            entry.baseline,
-            result,
-          );
-          next = applyDisplayScalePreviewToLayout(
-            next,
-            entry.orderIndex,
-            entry.baseItem,
-            result.previewScaleFactor,
-          );
-        }
-        layoutRef.current = next;
-        return next;
-      });
+      let next = layoutLiveRef.current ?? layoutRef.current;
+      for (let i = 0; i < session.entries.length; i++) {
+        const entry = session.entries[i]!;
+        const result = applyResults[i]!;
+        pendingDisplayScaleRef.current[entry.questionId] = pendingFromBulkApply(
+          entry.baseline,
+          result,
+        );
+        next = applyDisplayScalePreviewToLayout(
+          next,
+          entry.orderIndex,
+          entry.baseItem,
+          result.previewScaleFactor,
+        );
+      }
+      layoutRef.current = next;
+      layoutLiveRef.current = next;
+      scheduleCanvasOnlyRedraw();
     },
-    [],
+    [scheduleCanvasOnlyRedraw],
   );
 
   const commitBulkScale = useCallback(
@@ -3098,6 +3706,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
 
       resetSlider();
       clearLayoutYTopOverrides();
+      layoutLiveRef.current = null;
       void fetchLayout(undefined, useEditorStore.getState().questions, { silent: true }).then(
         () => {
           // Layout refresh sonrası hâlâ aynı mı?
@@ -3143,13 +3752,17 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
           next = next.map((l) => (l.order_index === entry.orderIndex ? entry.baseItem : l));
         }
         layoutRef.current = next;
+        layoutLiveRef.current = null;
         return next;
       });
       bulkScaleSessionRef.current = null;
       endBulkScaleRun();
       resetSlider();
+      scheduleDirtyPreviewRedraw(
+        session.entries.map((e) => e.baseItem.page_num ?? 1),
+      );
     },
-    [],
+    [scheduleDirtyPreviewRedraw],
   );
 
   const handleAllQuestionsScalePreview = useCallback(
@@ -3529,7 +4142,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     const includeDescription =
       s.options.includeDescription && !isCorporateHeader(s.headerStyleId);
     const exportAnswerKeyMode =
-      (isWritten || isTrial) && s.options.includeAnswerKey
+      (isWritten || isTrial || isFasikul) && s.options.includeAnswerKey
         ? "separate_page"
         : s.answerKeyMode ?? "per_page";
     const writtenTitle = buildWrittenPaperTitle({
@@ -3575,8 +4188,19 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       schoolName: s.schoolName?.trim() || "",
       includeAnswerKey: s.options.includeAnswerKey,
       answerKeyMode: exportAnswerKeyMode,
-      questionGapMm: lastLayoutGapMmRef.current,
-      questionGapMinMm: s.questionGapMinMm,
+      questionGapMm: isFasikul
+        ? Math.max(
+            lastLayoutGapMmRef.current,
+            (fasikulOneLineGapPt() * 25.4) / 72,
+          )
+        : lastLayoutGapMmRef.current,
+      questionGapMinMm: isFasikul
+        ? Math.max(
+            s.questionGapMinMm,
+            lastLayoutGapMmRef.current,
+            (fasikulOneLineGapPt() * 25.4) / 72,
+          )
+        : s.questionGapMinMm,
       autoCompactSpacing: s.autoCompactSpacing,
       paperSize: s.paperSize,
       paperWidthMm: s.paperWidthMm,
@@ -3640,6 +4264,10 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       pageNumberStart: s.pageNumberStart,
       pageNumberFormat: s.pageNumberFormat,
       showQuestionScratchGrid: isFasikul,
+      fasikulAnswerKeyLabels: isFasikul,
+      scratchGridCornerRadiusPt: isFasikul ? scratchGridCornerRadiusPt : undefined,
+      scratchGridColorMode: isFasikul ? scratchGridColorMode : undefined,
+      scratchGridColor: isFasikul ? scratchGridColor : undefined,
       writtenBlock: isWritten
         ? {
             written_paper_header: true,
@@ -3693,6 +4321,10 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     trialTestNameBgOpacityPct,
     trialTestNameBgColor,
     pageDecor,
+    isFasikul,
+    scratchGridCornerRadiusPt,
+    scratchGridColorMode,
+    scratchGridColor,
   ]);
 
   const buildLiveExportPayloadAsync = useCallback(async () => {
@@ -3729,7 +4361,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
           schoolName: s.schoolName?.trim() || "",
           includeAnswerKey: s.options.includeAnswerKey,
           answerKeyMode:
-            (isWritten || isTrial) && s.options.includeAnswerKey
+            (isWritten || isTrial || isFasikul) && s.options.includeAnswerKey
               ? "separate_page"
               : s.answerKeyMode ?? "per_page",
           answerKeyPageCount: answerKeyPages,
@@ -4110,6 +4742,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
             questionGapMm={questionGapMm}
             questionGapInitialMm={questionGapInitialMm}
             questionGapLayoutDirty={questionGapLayoutDirty}
+            fasikulGapMode={isFasikul}
             onQuestionGapPreview={handleQuestionGapPreview}
             onQuestionGapCommit={handleQuestionGapCommit}
             onQuestionGapReset={handleQuestionGapReset}
@@ -4142,7 +4775,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
 
           {!isWritten && <YonergePanel trialMode={isTrial} />}
 
-          <AnswerKeyFooterPanel trialMode={isTrial} />
+          <AnswerKeyFooterPanel trialMode={isTrial || isFasikul} />
 
           <AlignmentSpacingSliders
             headerBottomGapMm={headerBottomGapMm}
@@ -4321,6 +4954,8 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                 <div className="flex flex-col items-center gap-10 py-4">
                   {Array.from({ length: totalPages }, (_, i) => {
                     const pageNum = i + 1;
+                    const mountHeavy =
+                      Math.abs(pageNum - currentPage) <= PREVIEW_PAGE_MOUNT_RADIUS;
                     const pageGeometry: LayoutGeometryInput = {
                       ...layoutGeometryInput,
                       pageNum,
@@ -4341,6 +4976,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                         <div className={`pdf-preview-page-canvas-wrap inline-block ${ui.previewCanvasWrap}`}>
                           <div className="pdf-preview-page-canvas-shell">
                           {previewSurface === "canvas" ? (
+                            mountHeavy ? (
                             <>
                               <CanvasPdfPreview
                                 key={`cv-${pageNum}-${headerStyleId}-${headerThemeEpoch}-${isTrial ? "t" : "x"}`}
@@ -4361,7 +4997,8 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                                 answerKeyMode={previewAnswerKeyMode}
                                 optikFormEnabled={optikFormEnabled}
                                 optikFormPlacement={optikFormPlacement}
-                                optikFormQuestions={optikFormQuestions}
+                                optikFormQuestions={optikAnswerableQuestions}
+                                answerKeyQuestions={isFasikul ? optikFormQuestions : undefined}
                                 optikFormOptionCount={optikFormOptionCount}
                                 optikFormBookletType={optikFormBookletType}
                                 optikFormInstructionEnabled={optikFormInstructionEnabled}
@@ -4416,6 +5053,9 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                                 pageFrameLineStyle={pageFrameLineStyle}
                                 writtenPaperHeader={isWritten}
                                 showQuestionScratchGrid={isFasikul}
+                                scratchGridCornerRadiusPt={scratchGridCornerRadiusPt}
+                                scratchGridColorMode={scratchGridColorMode}
+                                scratchGridColor={scratchGridColor}
                                 writtenPaperTitle={isWritten ? writtenTitleForPreview : undefined}
                                 writtenPaperFieldLines={
                                   isWritten ? writtenHeaderFieldLines : emptyWrittenHeaderFieldLines()
@@ -4444,6 +5084,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                                 drawSelectionOutline={false}
                                 drawGapIndicators={false}
                                 questionDragLiveRef={questionDragLiveRef}
+                                scratchLiveRef={scratchLiveRef}
                                 layoutLiveRef={layoutLiveRef}
                                 alignmentPreviewLiveRef={alignmentPreviewLiveRef}
                                 onRegisterRedraw={(redraw) => registerCanvasRedraw(pageNum, redraw)}
@@ -4502,6 +5143,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                                 }
                                 onColumnShift={handleColumnShift}
                                 onDisplayScaleChange={handleQuestionDisplayScaleChange}
+                                onScratchHandleRowsChange={handleScratchHandleRowsChange}
                                 getDisplayScaleMaxPct={getDisplayScaleMaxPctForOrder}
                                 questionNumberLeftOffsetMm={questionNumberLeftOffsetMm}
                                 questionNumberImageGapMm={questionNumberImageGapMm}
@@ -4513,6 +5155,9 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                                   registerVerticalOverlayRedraw(pageNum, redraw)
                                 }
                                 fasikulFrameControls={isFasikul}
+                                onInsertEmptyFasikulFrameAfter={
+                                  isFasikul ? handleInsertEmptyFasikulFrameAfter : undefined
+                                }
                               />
                               <OptikFormDragOverlay
                                 enabled={
@@ -4536,7 +5181,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                                 marginLeftMm={marginLeftMm}
                                 marginRightMm={marginRightMm}
                                 columns={columns}
-                                questions={optikFormQuestions}
+                                questions={optikAnswerableQuestions}
                                 optionCount={optikFormOptionCount}
                                 bookletType={optikFormBookletType}
                                 offsetYPt={optikFormOffsetYPt}
@@ -4576,14 +5221,26 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                                 otherPageHeaderBottomGapMm={otherPageHeaderBottomGapMm}
                                 selectedQuestions={selectedQuestionOrders}
                                 questionDragLiveRef={questionDragLiveRef}
+                                scratchLiveRef={scratchLiveRef}
                                 layoutLiveRef={layoutLiveRef}
                                 alignmentPreviewLiveRef={alignmentPreviewLiveRef}
+                                fasikulGapMode={isFasikul}
                                 onRegisterRedraw={(redraw) =>
                                   registerGapOverlayRedraw(pageNum, redraw)
                                 }
                               />
                             </>
-                          ) : (
+                            ) : (
+                              <div
+                                className="bg-white shadow-sm"
+                                style={{
+                                  width: previewPageWpx,
+                                  height: previewPageHpx,
+                                }}
+                                aria-hidden
+                              />
+                            )
+                          ) : mountHeavy ? (
                             <PdfCanvasViewer
                               pdfDoc={verifiedPdfDoc}
                               layout={layout}
@@ -4595,6 +5252,15 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                               onQuestionSelect={(idx, options) =>
                                 selectQuestionOnPage(idx, pageNum, options)
                               }
+                            />
+                          ) : (
+                            <div
+                              className="bg-white shadow-sm"
+                              style={{
+                                width: previewPageWpx,
+                                height: previewPageHpx,
+                              }}
+                              aria-hidden
                             />
                           )}
                           </div>
@@ -4706,103 +5372,32 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                 {Array.from({ length: totalPages }, (_, i) => {
                   const pageNum = i + 1;
                   const isActive = currentPage === pageNum;
+                  const thumbH = pageHpt > 0 && pageWpt > 0
+                    ? Math.round(thumbCanvasWidthPx * (pageHpt / pageWpt))
+                    : Math.round(thumbCanvasWidthPx * 1.414);
                   return (
                     <button
                       key={pageNum}
                       type="button"
                       onClick={() => goToPage(pageNum)}
                       className="flex w-full justify-center overflow-hidden rounded-md transition hover:opacity-95"
-                      style={{ padding: 2 }}
+                      style={{
+                        padding: 2,
+                        outline: isActive ? "2px solid #3b82f6" : undefined,
+                      }}
                       aria-label={`Sayfa ${pageNum}`}
                       aria-pressed={isActive}
                     >
-                      <CanvasPdfPreview
-                        key={`cv2-${pageNum}-${headerStyleId}-${headerThemeEpoch}-${isTrial ? "t" : "x"}`}
-                        layout={layout}
-                        pageWpt={pageWpt}
-                        pageHpt={pageHpt}
-                        currentPage={pageNum}
-                        zoom={0.16}
-                        thumbnailWidthPx={thumbCanvasWidthPx}
-                        selectedQuestions={selectedQuestionOrders}
-                        onQuestionSelect={() => {}}
-                        testTitle={testName?.trim() || "TEST"}
-                        schoolName={schoolName?.trim() || ""}
-                        themeColor={themeColor}
-                        includeAnswerKey={options.includeAnswerKey}
-                        answerKeyMode={previewAnswerKeyMode}
-                        optikFormEnabled={optikFormEnabled}
-                        optikFormPlacement={optikFormPlacement}
-                        optikFormQuestions={optikFormQuestions}
-                        optikFormOptionCount={optikFormOptionCount}
-                        optikFormBookletType={optikFormBookletType}
-                        optikFormInstructionEnabled={optikFormInstructionEnabled}
-                        optikFormInstructionText={optikFormInstructionText}
-                        optikFormNetRule={optikFormNetRule}
-                        optikFormOffsetYPt={optikFormOffsetYPt}
-                        answerKeyPageCount={answerKeyPages}
-                        columns={columns}
-                        headerStyleId={headerStyleId}
-                        headerConfig={headerConfig}
-                        marginTopMm={marginTopMm}
-                        marginBottomMm={marginBottomMm}
-                        marginLeftMm={marginLeftMm}
-                        marginRightMm={marginRightMm}
-                        columnGapMm={8}
-                        interactive={false}
-                        includeDescription={options.includeDescription}
-                        descriptionColumnCount={descriptionColumnCount ?? 1}
-                        descriptionTexts={descriptionTexts ?? []}
-                        descriptionBoxPadYPt={descriptionBoxPadYPt ?? 5}
-                        descriptionBoxPadXPt={descriptionBoxPadXPt ?? 8}
-                        descriptionColumnDividers={descriptionColumnDividers}
-                        trialDescriptionMeta={trialDescriptionMeta}
-                        addTextOnLine={options.addTextOnLine}
-                        centerLineText={centerLineText}
-                        centerLineBold={centerLineBold}
-                        centerLineItalic={centerLineItalic}
-                        centerLineTextDirection={centerLineTextDirection}
-                        watermarkEnabled={watermarkEnabled}
-                        watermarkSettings={watermarkSettings}
-                        showColumnDivider={showColumnDivider}
-                        columnDividerText={columnDividerText}
-                        columnDividerColor={columnDividerColor}
-                        columnDividerWidthPt={columnDividerWidthPt}
-                        showColumnDividerText={showColumnDividerText}
-                        showWatermark={showWatermark}
-                        watermarkText={watermarkText}
-                        watermarkLayout={watermarkLayout}
-                        watermarkAngleDeg={watermarkAngleDeg}
-                        watermarkOpacity={watermarkOpacity}
-                        watermarkSize={watermarkSize}
-                        watermarkLogoUrl={watermarkLogoUrl}
-                        showPageFrame={showPageFrame}
-                        pageFrameColorMode={pageFrameColorMode}
-                        pageFrameColor={pageFrameColor}
-                        pageFrameWidthPt={pageFrameWidthPt}
-                        pageFrameInnerGapMm={pageFrameInnerGapMm}
-                        pageFrameCornerRadiusMm={pageFrameCornerRadiusMm}
-                        pageFrameLineStyle={pageFrameLineStyle}
-                        writtenPaperHeader={isWritten}
-                        showQuestionScratchGrid={isFasikul}
-                        writtenPaperTitle={isWritten ? writtenTitleForPreview : undefined}
-                        writtenPaperFieldLines={isWritten ? writtenHeaderFieldLines : emptyWrittenHeaderFieldLines()}
-                        writtenPaperFieldLabels={isWritten ? writtenHeaderFieldLabels : emptyWrittenHeaderFieldLabels()}
-                        writtenPaperFieldHidden={isWritten ? writtenHeaderFieldHidden : emptyWrittenHeaderFieldHidden()}
-                        writtenPaperBookletLetter={isWritten ? bookletLetterFromGroup(group) : "A"}
-                        writtenPaperShowTeachers={writtenShowTeachers}
-                        writtenPaperTeachers={writtenTeachersForPreview}
-                        lastQuestionPage={isTrial ? maxQuestionPage : undefined}
-                        questionNumberLeftOffsetMm={questionNumberLeftOffsetMm}
-                        questionNumberImageGapMm={questionNumberImageGapMm}
-                        questionNumberingEnabled={questionNumberingEnabled}
-                        questionNumberColorMode={questionNumberColorMode}
-                        questionNumberFontPt={questionNumberFontPt}
-                        pageNumberingEnabled={pageNumberingEnabled}
-                        pageNumberStart={pageNumberStart}
-                        pageNumberFormat={pageNumberFormat}
-                        otherPageHeaderBottomGapMm={otherPageHeaderBottomGapMm}
-                      />
+                      <div
+                        className="relative flex items-end justify-center bg-white text-[10px] font-semibold text-slate-500 shadow-sm"
+                        style={{
+                          width: thumbCanvasWidthPx,
+                          height: thumbH,
+                          border: "1px solid #cbd5e1",
+                        }}
+                      >
+                        <span className="mb-1.5 rounded bg-slate-100/90 px-1.5 py-0.5">{pageNum}</span>
+                      </div>
                     </button>
                   );
                 })}

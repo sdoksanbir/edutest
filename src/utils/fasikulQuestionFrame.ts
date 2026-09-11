@@ -5,6 +5,15 @@
 
 export type FasikulFramePresetId =
   | "none"
+  | "kural"
+  | "ogreniyorum"
+  | "formul"
+  | "unutma"
+  | "bilgi-notu"
+  | "onemli"
+  | "ipucu"
+  | "kisa-yol"
+  /** Eski taslaklar */
   | "classic-label"
   | "green-label"
   | "warning-label"
@@ -51,8 +60,21 @@ export type FasikulLabelPosition =
 /** Sol/sağ orta rozetlerde dikey yazı yönü */
 export type FasikulLabelSideTextDir = "ttb" | "btt";
 
-/** Başlık rozeti şekli (görsel 2) */
+/**
+ * Başlık şekilleri — referans görseldeki stiller.
+ * slash-trail = Örnek/Formül, slash-corner-dot = Kısa Yol (+ sağ üst nokta)
+ */
 export type FasikulBadgeStyle =
+  | "slash-trail"
+  | "ring-pill"
+  | "fold-flag"
+  | "flat-bar-dots"
+  | "chevron-bar"
+  | "tip-pill"
+  | "note-pill"
+  | "warn-pill"
+  | "slash-corner-dot"
+  /** Eski */
   | "classic"
   | "folded-tab"
   | "angular-ribbon"
@@ -85,17 +107,57 @@ export type FasikulQuestionFrameSettings = {
   /** Başlık kutusu ince ayar ofseti (px) */
   badgeOffsetX: number;
   badgeOffsetY: number;
+  /**
+   * Soru altı kareli alan.
+   * Örnek (numara) dışında hazır tasarım seçilince varsayılan kapalı.
+   */
+  showScratchGrid: boolean;
 };
 
 export const FASIKUL_BADGE_STYLES: {
   id: FasikulBadgeStyle;
   name: string;
 }[] = [
-  { id: "classic", name: "Klasik" },
-  { id: "folded-tab", name: "Katlı sekme" },
-  { id: "angular-ribbon", name: "Köşeli şerit" },
-  { id: "reverse-angular-ribbon", name: "Ters köşeli şerit" },
+  { id: "slash-trail", name: "Eğik şerit" },
+  { id: "ring-pill", name: "Örnek + no" },
+  { id: "fold-flag", name: "Katlı bayrak" },
+  { id: "flat-bar-dots", name: "Şerit + noktalar" },
+  { id: "chevron-bar", name: "Chevron şerit" },
+  { id: "tip-pill", name: "Kural hap" },
+  { id: "note-pill", name: "Not hap" },
+  { id: "warn-pill", name: "Unutma hap" },
+  { id: "slash-corner-dot", name: "Eğik + köşe nokta" },
 ];
+
+const LEGACY_BADGE_MAP: Record<string, FasikulBadgeStyle> = {
+  classic: "ring-pill",
+  "folded-tab": "fold-flag",
+  "angular-ribbon": "slash-trail",
+  "reverse-angular-ribbon": "slash-trail",
+};
+
+export function normalizeFasikulBadgeStyle(raw: unknown): FasikulBadgeStyle {
+  const v = String(raw || "");
+  if (LEGACY_BADGE_MAP[v]) return LEGACY_BADGE_MAP[v]!;
+  if (FASIKUL_BADGE_STYLES.some((s) => s.id === v)) return v as FasikulBadgeStyle;
+  return "slash-trail";
+}
+
+const LEGACY_PRESET_MAP: Record<string, FasikulFramePresetId> = {
+  "classic-label": "kural",
+  "green-label": "ogreniyorum",
+  "warning-label": "unutma",
+  "navy-header": "onemli",
+  "burgundy-header": "formul",
+  "turquoise-header": "ipucu",
+  "red-ribbon": "kisa-yol",
+  "gold-ribbon": "bilgi-notu",
+  "seal-badge": "ogreniyorum",
+  "seal-badge-pink": "formul",
+  "tab-label": "unutma",
+  "dotted-separator": "bilgi-notu",
+  "classic-double-line": "kural",
+};
 
 export const FASIKUL_LABEL_POSITIONS: {
   id: Exclude<FasikulLabelPosition, "left" | "center" | "right">;
@@ -201,164 +263,157 @@ export type FasikulFramePresetDef = {
   defaultLabel: string;
   accent: string;
   fill: string;
-  kind: "corner-tag" | "header-bar" | "ribbon" | "seal" | "tab" | "dotted" | "double-line";
+  badgeStyle: FasikulBadgeStyle;
   defaultIcon: FasikulFrameIconId;
   borderStyle?: FasikulBorderStyle;
+  borderWidth?: 1 | 2 | 3 | 4;
+  /** Preset seçilince iç boşluk (px); yoksa mevcut değer korunur */
+  defaultInnerPaddingPx?: number;
 };
 
+/** Referans görseldeki 8 çerçeve + başlık */
 export const FASIKUL_FRAME_PRESETS: FasikulFramePresetDef[] = [
   {
-    id: "classic-label",
-    name: "Klasik Etiket",
-    defaultLabel: "SORU",
-    accent: "#6d28d9",
-    fill: "#ede9fe",
-    kind: "corner-tag",
-    defaultIcon: "pin",
-    borderStyle: "solid",
-  },
-  {
-    id: "green-label",
-    name: "Yeşil Etiket",
-    defaultLabel: "SORU",
-    accent: "#15803d",
-    fill: "#dcfce7",
-    kind: "corner-tag",
-    defaultIcon: "check",
-    borderStyle: "solid",
-  },
-  {
-    id: "warning-label",
-    name: "Uyarı Etiketi",
-    defaultLabel: "UYARI",
-    accent: "#ea580c",
-    fill: "#ffedd5",
-    kind: "corner-tag",
-    defaultIcon: "warning",
-    borderStyle: "solid",
-  },
-  {
-    id: "navy-header",
-    name: "Lacivert Başlık Çubuğu",
-    defaultLabel: "SORU",
-    accent: "#1e3a5f",
-    fill: "#ffffff",
-    kind: "header-bar",
-    defaultIcon: "star",
-    borderStyle: "solid",
-  },
-  {
-    id: "burgundy-header",
-    name: "Bordo Başlık Çubuğu",
-    defaultLabel: "ETKİNLİK",
-    accent: "#9f1239",
-    fill: "#ffffff",
-    kind: "header-bar",
-    defaultIcon: "notepad",
-    borderStyle: "solid",
-  },
-  {
-    id: "turquoise-header",
-    name: "Turkuaz Başlık Çubuğu",
-    defaultLabel: "İNCELE",
-    accent: "#0f766e",
-    fill: "#ffffff",
-    kind: "header-bar",
-    defaultIcon: "target",
-    borderStyle: "solid",
-  },
-  {
-    id: "red-ribbon",
-    name: "Kırmızı Köşe Şeridi",
-    defaultLabel: "YENİ",
-    accent: "#dc2626",
-    fill: "#ffffff",
-    kind: "ribbon",
+    id: "kural",
+    name: "ÖSYM Sorusu",
+    defaultLabel: "ÖSYM SORUSU",
+    accent: "#E65100",
+    fill: "#FFF3E0",
+    badgeStyle: "slash-trail",
     defaultIcon: "none",
     borderStyle: "solid",
+    borderWidth: 2,
+    defaultInnerPaddingPx: 3,
   },
   {
-    id: "gold-ribbon",
-    name: "Altın Köşe Şeridi",
+    id: "ogreniyorum",
+    name: "Örnek (numara)",
+    defaultLabel: "ÖRNEK",
+    accent: "#C62828",
+    fill: "#FFFFFF",
+    badgeStyle: "ring-pill",
+    defaultIcon: "none",
+    borderStyle: "none",
+    borderWidth: 1,
+    defaultInnerPaddingPx: 3,
+  },
+  {
+    id: "formul",
+    name: "Formül",
+    defaultLabel: "FORMÜL",
+    accent: "#8B1D47",
+    fill: "#F8EFF4",
+    badgeStyle: "slash-trail",
+    defaultIcon: "none",
+    borderStyle: "solid",
+    borderWidth: 2,
+    defaultInnerPaddingPx: 3,
+  },
+  {
+    id: "unutma",
+    name: "Unutma",
+    defaultLabel: "UNUTMA",
+    accent: "#1565C0",
+    fill: "#E3F2FD",
+    badgeStyle: "warn-pill",
+    defaultIcon: "none",
+    borderStyle: "solid",
+    borderWidth: 2,
+    defaultInnerPaddingPx: 3,
+  },
+  {
+    id: "bilgi-notu",
+    name: "Bilgi Notu",
+    defaultLabel: "BİLGİ NOTU",
+    accent: "#F9A825",
+    fill: "#FFF8E1",
+    badgeStyle: "note-pill",
+    defaultIcon: "none",
+    borderStyle: "solid",
+    borderWidth: 2,
+    defaultInnerPaddingPx: 3,
+  },
+  {
+    id: "onemli",
+    name: "Önemli",
     defaultLabel: "ÖNEMLİ",
-    accent: "#d97706",
-    fill: "#ffffff",
-    kind: "ribbon",
+    accent: "#1A5A8A",
+    fill: "#EDF7FC",
+    badgeStyle: "chevron-bar",
     defaultIcon: "none",
     borderStyle: "solid",
+    borderWidth: 2,
+    defaultInnerPaddingPx: 3,
   },
   {
-    id: "seal-badge",
-    name: "Mühür Rozet",
-    defaultLabel: "1",
-    accent: "#2563eb",
-    fill: "#dbeafe",
-    kind: "seal",
+    id: "ipucu",
+    name: "Kural",
+    defaultLabel: "KURAL",
+    accent: "#2E7D32",
+    fill: "#E8F5E9",
+    badgeStyle: "tip-pill",
     defaultIcon: "none",
     borderStyle: "solid",
+    borderWidth: 2,
+    defaultInnerPaddingPx: 3,
   },
   {
-    id: "seal-badge-pink",
-    name: "Mühür Rozet (Pembe)",
-    defaultLabel: "★",
-    accent: "#db2777",
-    fill: "#fce7f3",
-    kind: "seal",
-    defaultIcon: "star",
-    borderStyle: "solid",
-  },
-  {
-    id: "tab-label",
-    name: "Sekme Etiketi",
-    defaultLabel: "SORU",
-    accent: "#475569",
-    fill: "#ffffff",
-    kind: "tab",
+    id: "kisa-yol",
+    name: "Kısa Yol",
+    defaultLabel: "KISA YOL",
+    accent: "#7B1FA2",
+    fill: "#F3E5F5",
+    badgeStyle: "slash-corner-dot",
     defaultIcon: "none",
     borderStyle: "solid",
-  },
-  {
-    id: "dotted-separator",
-    name: "Noktalı Ayraç",
-    defaultLabel: "SORU",
-    accent: "#64748b",
-    fill: "#ffffff",
-    kind: "dotted",
-    defaultIcon: "none",
-    borderStyle: "dotted",
-  },
-  {
-    id: "classic-double-line",
-    name: "Klasik Çift Çizgi",
-    defaultLabel: "SORU",
-    accent: "#0f172a",
-    fill: "#ffffff",
-    kind: "double-line",
-    defaultIcon: "none",
-    borderStyle: "double",
+    borderWidth: 2,
+    defaultInnerPaddingPx: 3,
   },
 ];
 
+export function resolveFasikulPresetId(raw: unknown): FasikulFramePresetId {
+  const v = String(raw || "");
+  if (LEGACY_PRESET_MAP[v]) return LEGACY_PRESET_MAP[v]!;
+  if (v === "none" || FASIKUL_FRAME_PRESETS.some((p) => p.id === v)) {
+    return v as FasikulFramePresetId;
+  }
+  return "kural";
+}
+
+/** Köşe yuvarlaklığı (px) — menü kaydırıcısı / clamp */
+export const FASIKUL_CORNER_RADIUS_DEFAULT_PX = 5;
+export const FASIKUL_CORNER_RADIUS_MIN_PX = 0;
+export const FASIKUL_CORNER_RADIUS_MAX_PX = 40;
+
+export function clampFasikulCornerRadiusPx(px: number): number {
+  if (!Number.isFinite(px)) return FASIKUL_CORNER_RADIUS_DEFAULT_PX;
+  return Math.max(
+    FASIKUL_CORNER_RADIUS_MIN_PX,
+    Math.min(FASIKUL_CORNER_RADIUS_MAX_PX, Math.round(px)),
+  );
+}
+
 export const DEFAULT_FASIKUL_QUESTION_FRAME: FasikulQuestionFrameSettings = {
   enabled: false,
-  presetId: "classic-label",
+  presetId: "kural",
   iconId: "none",
   iconTextPlacement: "before",
   labelPosition: "top-left",
   labelSideTextDir: "ttb",
-  badgeStyle: "folded-tab",
+  badgeStyle: "slash-trail",
   labelAlign: "left",
-  labelColor: "#0f766e",
-  labelText: "KURAL",
+  labelColor: "#E65100",
+  labelText: "ÖSYM SORUSU",
   borderStyle: "solid",
   borderWidth: 2,
-  borderColor: "#0f766e",
-  cornerRadiusPx: 12,
-  fillColor: "#e8f4f4",
+  borderColor: "#E65100",
+  cornerRadiusPx: FASIKUL_CORNER_RADIUS_DEFAULT_PX,
+  fillColor: "#FFF3E0",
   fillOpacityPct: 100,
-  innerPaddingPx: 8,
+  innerPaddingPx: 3,
   badgeOffsetX: 0,
   badgeOffsetY: 0,
+  showScratchGrid: true,
 };
 
 function isHex(c: unknown): c is string {
@@ -368,18 +423,116 @@ function isHex(c: unknown): c is string {
 export function getFasikulFramePreset(
   id: FasikulFramePresetId,
 ): FasikulFramePresetDef | undefined {
-  return FASIKUL_FRAME_PRESETS.find((p) => p.id === id);
+  const resolved = resolveFasikulPresetId(id);
+  return FASIKUL_FRAME_PRESETS.find((p) => p.id === resolved);
 }
 
 export function getFasikulFrameIcon(id: FasikulFrameIconId) {
   return FASIKUL_FRAME_ICONS.find((i) => i.id === id);
 }
 
-/** Çerçeve açıkken soru numarası çizilmez. */
+/** Çerçeve açıkken soru numarası çizilmez (numara rozette gösterilir). */
 export function fasikulFrameHidesQuestionNumber(
   frame: FasikulQuestionFrameSettings | null | undefined,
 ): boolean {
   return Boolean(frame?.enabled);
+}
+
+/** Görünür kutu (kenarlık / dolgu) var mı? Rozet-only modda false. */
+export function fasikulFrameHasVisibleBox(
+  frame: FasikulQuestionFrameSettings | null | undefined | unknown,
+): boolean {
+  const f = normalizeFasikulQuestionFrame(frame);
+  if (!f.enabled) return false;
+  if (f.borderStyle !== "none") return true;
+  return f.fillOpacityPct > 0;
+}
+
+/** Soru numarası rozet metni: 01, 02, … */
+export function formatFasikulBadgeQuestionNumber(n: number): string {
+  const v = Math.max(1, Math.round(Number(n) || 1));
+  return String(v).padStart(2, "0");
+}
+
+/** Örnek (numara) — ring-pill çerçeve; sıra numarası yalnızca bunlarda artar */
+export function isFasikulOrnekNumberedFrame(
+  frame: FasikulQuestionFrameSettings | null | undefined | unknown,
+): boolean {
+  const f = normalizeFasikulQuestionFrame(frame);
+  return f.enabled && normalizeFasikulBadgeStyle(f.badgeStyle) === "ring-pill";
+}
+
+/**
+ * Layout sırasına göre Örnek rozet numarası (01, 02…).
+ * Örnek dışı çerçeveli / çerçevesiz sorular atlanır.
+ */
+export function buildFasikulOrnekNumberByOrderIndex(
+  questions: Array<{ order_index?: number; fasikulFrame?: unknown }>,
+): Map<number, number> {
+  const sorted = [...questions].sort(
+    (a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0),
+  );
+  const map = new Map<number, number>();
+  let n = 0;
+  for (const q of sorted) {
+    const oi = Number(q.order_index);
+    if (!Number.isFinite(oi)) continue;
+    if (!isFasikulOrnekNumberedFrame(q.fasikulFrame)) continue;
+    n += 1;
+    map.set(oi, n);
+  }
+  return map;
+}
+
+/** Öğreniyorum / Örnek-numara hazır ayarı */
+export function buildOgreniyorumFasikulFrame(
+  current?: Partial<FasikulQuestionFrameSettings>,
+): FasikulQuestionFrameSettings {
+  return applyFasikulPreset(
+    { ...DEFAULT_FASIKUL_QUESTION_FRAME, ...current },
+    "ogreniyorum",
+  );
+}
+
+/**
+ * Dış başlık (üst konum) için dikey rezerv — kutu üstünde çakışmayı önler.
+ * ring-pill yuvarlağı 28px; üstteki kareli alan ile ekstra boşluk.
+ */
+export const FASIKUL_FRAME_BADGE_HEIGHT_PX = 28;
+export const FASIKUL_FRAME_BADGE_OUTSIDE_GAP_PX = 16;
+export const FASIKUL_FRAME_BADGE_TOP_RESERVE_PX =
+  FASIKUL_FRAME_BADGE_HEIGHT_PX + FASIKUL_FRAME_BADGE_OUTSIDE_GAP_PX;
+export const FASIKUL_FRAME_BADGE_TOP_RESERVE_PT =
+  FASIKUL_FRAME_BADGE_TOP_RESERVE_PX * 0.75;
+
+export function fasikulFrameNeedsTopBadgeReserve(
+  frame: FasikulQuestionFrameSettings | null | undefined | unknown,
+): boolean {
+  const f = normalizeFasikulQuestionFrame(frame);
+  if (!f.enabled) return false;
+  const pos = normalizeLabelPosition(f.labelPosition);
+  return pos === "top-left" || pos === "top-center" || pos === "top-right";
+}
+
+export function fasikulFrameBadgeTopReservePt(
+  frame: FasikulQuestionFrameSettings | null | undefined | unknown,
+): number {
+  return fasikulFrameNeedsTopBadgeReserve(frame)
+    ? FASIKUL_FRAME_BADGE_TOP_RESERVE_PT
+    : 0;
+}
+
+/**
+ * Çerçeve dış kutusu — kareli alan ile aynı sol kenar / genişlik
+ * (soru solundan sütun sağına).
+ */
+export function resolveFasikulFrameOuterWidthPt(args: {
+  leftPt: number;
+  columnXPt: number;
+  columnWidthPt: number;
+}): number {
+  const colRight = args.columnXPt + args.columnWidthPt;
+  return Math.max(0, colRight - args.leftPt);
 }
 
 export function normalizeFasikulQuestionFrame(
@@ -387,7 +540,6 @@ export function normalizeFasikulQuestionFrame(
 ): FasikulQuestionFrameSettings {
   if (!raw || typeof raw !== "object") return { ...DEFAULT_FASIKUL_QUESTION_FRAME };
   const o = raw as Partial<FasikulQuestionFrameSettings>;
-  const presetOk = FASIKUL_FRAME_PRESETS.some((p) => p.id === o.presetId) || o.presetId === "none";
   const iconOk = FASIKUL_FRAME_ICONS.some((i) => i.id === o.iconId);
   const borderStyles: FasikulBorderStyle[] = ["none", "solid", "dashed", "dotted", "double"];
   const borderStyle = borderStyles.includes(o.borderStyle as FasikulBorderStyle)
@@ -411,16 +563,12 @@ export function normalizeFasikulQuestionFrame(
   const badgeOffsets = clampBadgeOffsetForPosition(labelPosition, badgeOx, badgeOy);
   return {
     enabled: Boolean(o.enabled),
-    presetId: presetOk
-      ? (o.presetId as FasikulFramePresetId)
-      : DEFAULT_FASIKUL_QUESTION_FRAME.presetId,
+    presetId: resolveFasikulPresetId(o.presetId),
     iconId: iconOk ? (o.iconId as FasikulFrameIconId) : DEFAULT_FASIKUL_QUESTION_FRAME.iconId,
     iconTextPlacement: o.iconTextPlacement === "after" ? "after" : "before",
     labelPosition,
     labelSideTextDir: o.labelSideTextDir === "btt" ? "btt" : "ttb",
-    badgeStyle: FASIKUL_BADGE_STYLES.some((s) => s.id === o.badgeStyle)
-      ? (o.badgeStyle as FasikulBadgeStyle)
-      : DEFAULT_FASIKUL_QUESTION_FRAME.badgeStyle,
+    badgeStyle: normalizeFasikulBadgeStyle(o.badgeStyle),
     labelAlign:
       o.labelAlign === "center" || o.labelAlign === "right" ? o.labelAlign : "left",
     labelColor: isHex(o.labelColor) ? o.labelColor : DEFAULT_FASIKUL_QUESTION_FRAME.labelColor,
@@ -432,7 +580,7 @@ export function normalizeFasikulQuestionFrame(
     borderWidth,
     borderColor: isHex(o.borderColor) ? o.borderColor : DEFAULT_FASIKUL_QUESTION_FRAME.borderColor,
     cornerRadiusPx: Number.isFinite(corner)
-      ? Math.max(0, Math.min(24, Math.round(corner)))
+      ? clampFasikulCornerRadiusPx(corner)
       : DEFAULT_FASIKUL_QUESTION_FRAME.cornerRadiusPx,
     fillColor: isHex(o.fillColor) ? o.fillColor : DEFAULT_FASIKUL_QUESTION_FRAME.fillColor,
     fillOpacityPct: Number.isFinite(opacity)
@@ -446,6 +594,13 @@ export function normalizeFasikulQuestionFrame(
     })(),
     badgeOffsetX: badgeOffsets.badgeOffsetX,
     badgeOffsetY: badgeOffsets.badgeOffsetY,
+    showScratchGrid: (() => {
+      if (typeof o.showScratchGrid === "boolean") return o.showScratchGrid;
+      const style = normalizeFasikulBadgeStyle(o.badgeStyle);
+      // Eski kayıtlar: Örnek (numara) dışında çerçevede kareli alan kapalı
+      if (Boolean(o.enabled) && style !== "ring-pill") return false;
+      return DEFAULT_FASIKUL_QUESTION_FRAME.showScratchGrid;
+    })(),
   };
 }
 
@@ -453,28 +608,47 @@ export function applyFasikulPreset(
   current: FasikulQuestionFrameSettings,
   presetId: FasikulFramePresetId,
 ): FasikulQuestionFrameSettings {
-  const preset = getFasikulFramePreset(presetId);
-  if (!preset) return { ...current, enabled: true, presetId };
+  const resolved = resolveFasikulPresetId(presetId);
+  const preset = getFasikulFramePreset(resolved);
+  if (!preset) return { ...current, enabled: true, presetId: resolved };
+  const isRing = preset.badgeStyle === "ring-pill";
   return {
     ...current,
     enabled: true,
-    presetId,
-    iconId: preset.defaultIcon,
+    presetId: resolved,
+    iconId: "none",
     labelText: preset.defaultLabel,
     labelColor: preset.accent,
     borderColor: preset.accent,
     fillColor: preset.fill,
+    /** Hazır şablonlarda dolgu varsayılan kapalı */
+    fillOpacityPct: 0,
     borderStyle: preset.borderStyle ?? "solid",
+    borderWidth: preset.borderWidth ?? 2,
+    badgeStyle: preset.badgeStyle,
+    labelPosition: "top-left",
+    badgeOffsetX: 0,
+    badgeOffsetY: 0,
+    innerPaddingPx: preset.defaultInnerPaddingPx ?? 3,
+    /** Örnek (numara) dışında kareli alan varsayılan kapalı */
+    showScratchGrid: isRing,
   };
+}
+
+/** Çerçeve açıkken bu soruda kareli alan çizilsin mi? */
+export function fasikulFrameShowsScratchGrid(
+  frame: FasikulQuestionFrameSettings | null | undefined | unknown,
+): boolean {
+  const f = normalizeFasikulQuestionFrame(frame);
+  if (!f.enabled) return true;
+  return f.showScratchGrid === true;
 }
 
 export function withBorderStyle(
   current: FasikulQuestionFrameSettings,
   borderStyle: FasikulBorderStyle,
 ): FasikulQuestionFrameSettings {
-  if (borderStyle === "none") {
-    return { ...current, borderStyle, enabled: false };
-  }
+  // Kenarlık yok = yalnızca rozet / dolgu; çerçeveyi kapatmaz (checkbox kapatır)
   return { ...current, borderStyle, enabled: true };
 }
 
@@ -546,7 +720,7 @@ export function drawFasikulFramePaperTint(
 ): void {
   if (!args.frame.enabled) return;
   const rgba = fasikulFillRgba(args.frame.fillColor, args.frame.fillOpacityPct);
-  if (!rgba) return;
+  if (!rgba || rgba.a <= 0) return;
   const r = Math.max(0, Math.min(args.frame.cornerRadiusPx, args.w / 2, args.h / 2));
   ctx.save();
   ctx.beginPath();
@@ -561,4 +735,105 @@ export function drawFasikulFramePaperTint(
   ctx.fillStyle = `rgb(${rgba.r},${rgba.g},${rgba.b})`;
   ctx.fillRect(args.x, args.y, args.w, args.h);
   ctx.restore();
+}
+
+/**
+ * Soru görselindeki kağıt beyazını şeffaf yapar — çerçeve dolgusu altta görünür.
+ * threshold: bu değerin üstündeki griye-yakın pikseller silinir.
+ * Sonuç canvas önbellekte tutulur (30+ soruda her boyamada getImageData spam’i olmasın).
+ */
+const knockoutCache = new WeakMap<
+  CanvasImageSource,
+  Map<string, HTMLCanvasElement>
+>();
+
+function knockoutCacheKey(
+  tw: number,
+  th: number,
+  thr: number,
+  fillHex: string | undefined,
+): string {
+  return `${tw}x${th}|${thr}|${fillHex ?? ""}`;
+}
+
+export function drawImageWithNearWhiteKnockout(
+  ctx: CanvasRenderingContext2D,
+  img: CanvasImageSource,
+  dx: number,
+  dy: number,
+  dw: number,
+  dh: number,
+  opts?: { threshold?: number; fillHex?: string },
+): void {
+  const tw = Math.max(1, Math.round(dw));
+  const th = Math.max(1, Math.round(dh));
+  const thr = Math.max(200, Math.min(255, opts?.threshold ?? 242));
+  const soft = Math.max(0, thr - 22);
+  const fillHex = opts?.fillHex;
+  const fillMatch = /^#?([0-9a-f]{6})$/i.exec(String(fillHex ?? "").trim());
+  const fill = fillMatch
+    ? {
+        r: parseInt(fillMatch[1]!.slice(0, 2), 16),
+        g: parseInt(fillMatch[1]!.slice(2, 4), 16),
+        b: parseInt(fillMatch[1]!.slice(4, 6), 16),
+      }
+    : null;
+
+  const key = knockoutCacheKey(tw, th, thr, fillHex);
+  let byKey = knockoutCache.get(img);
+  if (!byKey) {
+    byKey = new Map();
+    knockoutCache.set(img, byKey);
+  }
+  let off = byKey.get(key);
+  if (!off) {
+    off = document.createElement("canvas");
+    off.width = tw;
+    off.height = th;
+    const o = off.getContext("2d", { willReadFrequently: true });
+    if (!o) {
+      ctx.drawImage(img, dx, dy, dw, dh);
+      return;
+    }
+    o.drawImage(img, 0, 0, tw, th);
+    const imageData = o.getImageData(0, 0, tw, th);
+    const d = imageData.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i]!;
+      const g = d[i + 1]!;
+      const b = d[i + 2]!;
+      const minC = Math.min(r, g, b);
+      const maxC = Math.max(r, g, b);
+      const isPaperish = maxC - minC <= 18 && minC >= soft;
+      if (!isPaperish) continue;
+      if (fill) {
+        if (minC >= thr) {
+          d[i] = fill.r;
+          d[i + 1] = fill.g;
+          d[i + 2] = fill.b;
+          d[i + 3] = 255;
+        } else {
+          const t = (thr - minC) / Math.max(1, thr - soft);
+          const k = 1 - t;
+          d[i] = Math.round(r * t + fill.r * k);
+          d[i + 1] = Math.round(g * t + fill.g * k);
+          d[i + 2] = Math.round(b * t + fill.b * k);
+          d[i + 3] = 255;
+        }
+      } else if (minC >= thr) {
+        d[i + 3] = 0;
+      } else {
+        const t = (thr - minC) / Math.max(1, thr - soft);
+        d[i + 3] = Math.round(d[i + 3]! * t);
+      }
+    }
+    o.putImageData(imageData, 0, 0);
+    // Boyut başına en fazla birkaç varyant tut
+    if (byKey.size > 8) {
+      const first = byKey.keys().next().value;
+      if (first != null) byKey.delete(first);
+    }
+    byKey.set(key, off);
+  }
+  ctx.drawImage(off, dx, dy, dw, dh);
 }

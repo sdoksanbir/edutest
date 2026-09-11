@@ -24,6 +24,7 @@ import {
   type LgsPageDecor,
 } from "../../utils/lgsPageDecor";
 import { useEditorStore, type WatermarkLayout } from "../../store/editorStore";
+import { FASIKUL_THEME_PRIMARY } from "../../utils/testThemeDefaults";
 import type { HeaderConfig } from "../../utils/corporateHeaderLayout";
 import type { HeaderLeftMode } from "../../utils/headerLeftColumn";
 import {
@@ -205,6 +206,13 @@ import {
   PAGE_FRAME_INNER_GAP_MAX_MM,
   PAGE_FRAME_INNER_GAP_MIN_MM,
 } from "../../utils/pageFrame";
+import {
+  SCRATCH_COLOR_BLACK,
+  SCRATCH_COLOR_SOFT_GRAY,
+  SCRATCH_CORNER_RADIUS_MAX_PT,
+  SCRATCH_CORNER_RADIUS_MIN_PT,
+  type ScratchGridColorMode,
+} from "../../utils/questionScratchGrid";
 
 const COLOR_SWATCH_PALETTE = APP_COLOR_SWATCH_PALETTE;
 const PRIMARY_PALETTE = APP_PRIMARY_PALETTE;
@@ -504,6 +512,94 @@ function PageFrameColorRow({
           onColorChange={onCustomColorChange}
           palette={palette}
           disabled={disabled}
+          customTitle="Özel renk"
+        />
+      </div>
+    </div>
+  );
+}
+
+function ScratchGridColorRow({
+  themeColor,
+  colorMode,
+  customColor,
+  palette,
+  onGraySelect,
+  onBlackSelect,
+  onThemeSelect,
+  onCustomColorChange,
+}: {
+  themeColor: string;
+  colorMode: ScratchGridColorMode;
+  customColor: string;
+  palette: readonly { label: string; color: string }[];
+  onGraySelect: () => void;
+  onBlackSelect: () => void;
+  onThemeSelect: () => void;
+  onCustomColorChange: (c: string) => void;
+}) {
+  const { tokens: ui } = usePdfPreviewUi();
+  const graySelected = colorMode === "gray";
+  const blackSelected = colorMode === "black";
+  const themeSelected = colorMode === "theme";
+  const pickerColor =
+    colorMode === "custom"
+      ? customColor
+      : colorMode === "theme"
+        ? themeColor
+        : colorMode === "black"
+          ? SCRATCH_COLOR_BLACK
+          : SCRATCH_COLOR_SOFT_GRAY;
+
+  return (
+    <div className="pdf-preview-color-row">
+      <span className={`pdf-preview-field-label ${ui.microLabel}`}>Renk</span>
+      <div className="flex shrink-0 items-center gap-0.5">
+        <button
+          type="button"
+          onClick={onGraySelect}
+          title="Yumuşak gri"
+          aria-label="Yumuşak gri"
+          className={`flex h-3.5 shrink-0 items-center rounded-[2px] border px-1 text-[7px] font-semibold transition ${
+            graySelected
+              ? "border-white ring-1 ring-blue-400 ring-offset-1 ring-offset-slate-950 text-slate-900"
+              : "border-slate-600/70 bg-slate-900 text-slate-400 hover:border-slate-400"
+          }`}
+          style={graySelected ? { backgroundColor: SCRATCH_COLOR_SOFT_GRAY } : undefined}
+        >
+          Gri
+        </button>
+        <button
+          type="button"
+          onClick={onBlackSelect}
+          title="Siyah"
+          aria-label="Siyah"
+          className={`flex h-3.5 shrink-0 items-center rounded-[2px] border px-1 text-[7px] font-semibold transition ${
+            blackSelected
+              ? "border-white ring-1 ring-blue-400 ring-offset-1 ring-offset-slate-950 bg-black text-white"
+              : "border-slate-600/70 bg-slate-900 text-slate-400 hover:border-slate-400"
+          }`}
+        >
+          Siyah
+        </button>
+        <button
+          type="button"
+          onClick={onThemeSelect}
+          title="Tema rengi"
+          aria-label="Tema rengi"
+          className={`flex h-3.5 shrink-0 items-center rounded-[2px] border px-1 text-[7px] font-semibold transition ${
+            themeSelected
+              ? "border-white ring-1 ring-blue-400 ring-offset-1 ring-offset-slate-950 text-white"
+              : "border-slate-600/70 bg-slate-900 text-slate-400 hover:border-slate-400"
+          }`}
+          style={themeSelected ? { backgroundColor: themeColor } : undefined}
+        >
+          Tema
+        </button>
+        <ColorSwatchCluster
+          color={pickerColor}
+          onColorChange={onCustomColorChange}
+          palette={palette}
           customTitle="Özel renk"
         />
       </div>
@@ -1056,6 +1152,52 @@ export default function ThemeCustomizerSidebar({
     const hasStyle2Badge =
       !!headerConfig.badgeByStyle?.style_2 &&
       Object.keys(headerConfig.badgeByStyle.style_2).length > 0;
+    /** Fasikül Minimal: sol kurum adı yok; alt şerit açık; Sınıf görünür; şerit D/Y/B kapalı; Test No kapalı */
+    if (isFasikul) {
+      applyHeaderStyleAndConfig("style_2", {
+        useYaprakBanner: false,
+        useExamBanner: false,
+        showClassicInfoBar: true,
+        showClassicInfoBarScore: false,
+        showHeaderLeft: false,
+        fieldHidden: {
+          ...(headerConfig.fieldHidden ?? {}),
+          examType: false,
+        },
+        ...patchHeaderBadge(headerConfig, "style_2", {
+          bannerRightMode: "examType",
+          bannerRightSlots: ["examType"],
+          testNoWidthPt: 60,
+          testNoHeightPt: 18,
+          testNoFillColor: "",
+          testNoBorderColor: "",
+          testNoLabelFontPt: 11.5,
+          testNoNumFontPt: 10,
+          scoreBoxOffsetYPt: -1,
+          examTypeBoxBorderStyle: "none",
+          examTypeBoxFillEnabled: true,
+          examTypeBoxFillColor: FASIKUL_THEME_PRIMARY,
+        }),
+      });
+      updateHeaderConfig({
+        showClassicInfoBar: true,
+        showClassicInfoBarScore: false,
+        showHeaderLeft: false,
+        fieldHidden: {
+          ...(useEditorStore.getState().headerConfig.fieldHidden ?? {}),
+          examType: false,
+        },
+        ...patchHeaderBadge(useEditorStore.getState().headerConfig, "style_2", {
+          bannerRightMode: "examType",
+          bannerRightSlots: ["examType"],
+          scoreBoxOffsetYPt: -1,
+          examTypeBoxBorderStyle: "none",
+          examTypeBoxFillEnabled: true,
+          examTypeBoxFillColor: FASIKUL_THEME_PRIMARY,
+        }),
+      });
+      return;
+    }
     applyHeaderStyleAndConfig("style_2", {
       useYaprakBanner: false,
       useExamBanner: false,
@@ -1123,18 +1265,37 @@ export default function ThemeCustomizerSidebar({
   const line1FontPt = headerConfig.institutionLine1FontPt ?? (isClassicBanner ? 11.5 : 9);
   const line2FontPt = headerConfig.institutionLine2FontPt ?? 7;
   const badgeStyleId = isClassicBanner ? "style_2" : activeStyle;
-  const badgeConfig = mergeHeaderBadgeConfig(headerConfig, badgeStyleId);
+  const badgeConfigRaw = mergeHeaderBadgeConfig(headerConfig, badgeStyleId);
+  /** Fasikül Standart: D/Y/B rozeti yok (Şerit D/Y/B kullanır); Minimal’de Test No + Sınıf */
+  const badgeConfig =
+    isFasikul && !isClassicBanner
+      ? {
+          ...badgeConfigRaw,
+          bannerRightSlots: (resolveBannerRightSlots(badgeConfigRaw) as BannerRightSlot[]).filter(
+            (s) => s !== "score",
+          ),
+          bannerRightMode:
+            resolveBannerRightSlots(badgeConfigRaw).filter((s) => s !== "score")[0] ??
+            "hidden",
+        }
+      : badgeConfigRaw;
   const bannerRightModeRaw = resolveBannerRightMode(badgeConfig);
-  /** Minimal: yalnızca Test No / Kapalı */
+  /** Minimal (test): yalnızca Test No / Kapalı; Fasikül Minimal: slot’lar */
   const bannerRightMode: BannerRightMode = isClassicBanner
-    ? bannerRightModeRaw === "hidden"
-      ? "hidden"
-      : "testNo"
+    ? isFasikul
+      ? bannerRightModeRaw
+      : bannerRightModeRaw === "hidden"
+        ? "hidden"
+        : "testNo"
     : bannerRightModeRaw;
   const bannerRightSlots: BannerRightSlot[] = isClassicBanner
-    ? bannerRightMode === "hidden"
-      ? []
-      : ["testNo"]
+    ? isFasikul
+      ? resolveBannerRightSlots(badgeConfig).filter(
+          (s): s is BannerRightSlot => s === "testNo" || s === "examType",
+        )
+      : bannerRightMode === "hidden"
+        ? []
+        : ["testNo"]
     : resolveBannerRightSlots(badgeConfig);
 
   const examTypeLine1 = badgeConfig.examTypeLine1 ?? "SINIF";
@@ -1214,6 +1375,12 @@ export default function ThemeCustomizerSidebar({
   const setPageFrameInnerGapMm = useEditorStore((s) => s.setPageFrameInnerGapMm);
   const setPageFrameCornerRadiusMm = useEditorStore((s) => s.setPageFrameCornerRadiusMm);
   const setPageFrameLineStyle = useEditorStore((s) => s.setPageFrameLineStyle);
+  const scratchGridCornerRadiusPt = useEditorStore((s) => s.scratchGridCornerRadiusPt);
+  const setScratchGridCornerRadiusPt = useEditorStore((s) => s.setScratchGridCornerRadiusPt);
+  const scratchGridColorMode = useEditorStore((s) => s.scratchGridColorMode);
+  const scratchGridColor = useEditorStore((s) => s.scratchGridColor);
+  const setScratchGridColorMode = useEditorStore((s) => s.setScratchGridColorMode);
+  const setScratchGridColor = useEditorStore((s) => s.setScratchGridColor);
 
   const pageDecor = resolvePageDecorForBanner(
     useLgsOfficialBanner,
@@ -1415,8 +1582,14 @@ export default function ThemeCustomizerSidebar({
     updateHeaderConfig(patchHeaderBadge(headerConfig, badgeStyleId, partial));
   };
 
-  /** Minimal: Test No / Kapalı (tek seçim) */
+  /** Minimal: Test No / Kapalı (tek seçim); Fasikül Minimal slot kullanır */
   const setBannerRightMode = (mode: BannerRightMode) => {
+    if (isClassicBanner && isFasikul) {
+      const next =
+        mode === "hidden" ? ([] as BannerRightSlot[]) : (["testNo"] as BannerRightSlot[]);
+      setBannerRightSlots(next);
+      return;
+    }
     const next =
       isClassicBanner && (mode === "score" || mode === "examType") ? "testNo" : mode;
     const slots: BannerRightSlot[] = next === "hidden" ? [] : next === "testNo" ? ["testNo"] : [];
@@ -1425,15 +1598,19 @@ export default function ThemeCustomizerSidebar({
 
   /** Kurumsal: Sınıf / D·Y·B / Test No — görünürlük (en fazla 3) */
   const setBannerRightSlots = (slots: BannerRightSlot[]) => {
-    const mode = bannerRightModeFromSlots(slots);
+    const cleaned = isFasikul ? slots.filter((s) => s !== "score") : slots;
+    const mode = bannerRightModeFromSlots(cleaned);
     const hidden = { ...(headerConfig.fieldHidden ?? {}) };
-    if (slots.includes("examType")) delete hidden.examType;
+    if (cleaned.includes("examType")) delete hidden.examType;
     else hidden.examType = true;
+    const openInfoForSinif =
+      isFasikul && isClassicBanner && cleaned.includes("examType");
     updateHeaderConfig({
       fieldHidden: hidden,
+      ...(openInfoForSinif ? { showClassicInfoBar: true } : {}),
       ...patchHeaderBadge(headerConfig, badgeStyleId, {
         bannerRightMode: mode,
-        bannerRightSlots: slots,
+        bannerRightSlots: cleaned,
       }),
     });
   };
@@ -1479,6 +1656,10 @@ export default function ThemeCustomizerSidebar({
                           applyHeaderStyleAndConfig("style_1", {
                             useYaprakBanner: false,
                             useExamBanner: false,
+                            ...patchHeaderBadge(headerConfig, "style_1", {
+                              bannerRightMode: "examType",
+                              bannerRightSlots: ["examType"],
+                            }),
                           });
                           return;
                         }
@@ -1699,22 +1880,26 @@ export default function ThemeCustomizerSidebar({
               <p className={`mt-2 ${ui.labelMuted}`}>
                 {isOsymTrialTemplate
                   ? "ÖSYM: sol sınav kodu, orta test adı, sağ kitapçık; alt bilgi şeridi yoktur."
-                  : "Orta kutu ders adını, sağ kutu Test No’yu gösterir; sol kutuda logo sola yaslıdır. D / Y / B alt şeridin sağındadır. Açıklama kutusu sol panelde Yönerge ile açılır."}
+                  : isFasikul
+                    ? "Orta kutu ders adını gösterir. Sınıf alt şeridin sağında; Test No üst sağda; D / Y / B alt şeridin ortasında (Başlık Rozeti’nden)."
+                    : "Orta kutu ders adını, sağ kutu Test No’yu gösterir; sol kutuda logo sola yaslıdır. D / Y / B alt şeridin sağındadır. Açıklama kutusu sol panelde Yönerge ile açılır."}
               </p>
             ) : null}
             {isClassicBanner && !isOsymTrialTemplate ? (
-              <div className="mt-3 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <span className={ui.labelStrong}>Alt bilgi şeridi</span>
-                  <p className={`mt-0.5 text-[11px] leading-snug ${ui.labelMuted}`}>
-                    Konu, alt konu ve D / Y / B kutusunu gösterir
-                  </p>
+              <div className="mt-3 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <span className={ui.labelStrong}>Alt bilgi şeridi</span>
+                    <p className={`mt-0.5 text-[11px] leading-snug ${ui.labelMuted}`}>
+                      Konu ve alt konuyu gösterir
+                    </p>
+                  </div>
+                  <PinkToggle
+                    checked={headerConfig.showClassicInfoBar !== false}
+                    onChange={(v) => updateHeaderConfig({ showClassicInfoBar: v })}
+                    label="Alt bilgi şeridi"
+                  />
                 </div>
-                <PinkToggle
-                  checked={headerConfig.showClassicInfoBar !== false}
-                  onChange={(v) => updateHeaderConfig({ showClassicInfoBar: v })}
-                  label="Alt bilgi şeridi"
-                />
               </div>
             ) : null}
           </div>
@@ -1752,7 +1937,13 @@ export default function ThemeCustomizerSidebar({
             contentClassName="space-y-0 pdf-preview-badge-sections"
             defaultOpen={
               isTrial ||
-              (isClassicBanner ? bannerRightMode !== "hidden" : true)
+              (isClassicBanner
+                ? isFasikul
+                  ? bannerRightSlots.includes("examType") ||
+                    bannerRightSlots.includes("testNo") ||
+                    headerConfig.showClassicInfoBarScore !== false
+                  : bannerRightMode !== "hidden"
+                : true)
             }
           >
             {isTrial ? (
@@ -1760,6 +1951,39 @@ export default function ThemeCustomizerSidebar({
             ) : (
               <>
                 {isClassicBanner ? (
+                  isFasikul ? (
+                  <div className="space-y-1.5">
+                    <div className="grid min-w-0 grid-cols-3 gap-1">
+                      {(
+                        [
+                          { id: "examType" as BannerRightSlot, label: "Sınıf" },
+                          { id: "testNo" as BannerRightSlot, label: "Test No" },
+                          { id: "score" as BannerRightSlot, label: "D / Y / B" },
+                        ] as const
+                      ).map(({ id, label }) => {
+                        const visible =
+                          id === "score"
+                            ? headerConfig.showClassicInfoBarScore !== false
+                            : bannerRightSlots.includes(id);
+                        return (
+                          <SegBtn
+                            key={id}
+                            active={visible}
+                            onClick={() => setBadgePanel(id)}
+                            className={`py-1.5 text-[10px] ${
+                              badgePanel === id ? "ring-2 ring-rose-300/80 ring-offset-1" : ""
+                            }`}
+                          >
+                            {label}
+                          </SegBtn>
+                        );
+                      })}
+                    </div>
+                    <p className={`text-[10px] leading-snug ${ui.labelMuted}`}>
+                      Kırmızı = görünür — Sınıf şerit sağında; Test No üstte; D/Y/B şerit ortasında
+                    </p>
+                  </div>
+                  ) : (
                   <div className="grid min-w-0 grid-cols-2 gap-1">
                     {(
                       [
@@ -1777,13 +2001,16 @@ export default function ThemeCustomizerSidebar({
                       </SegBtn>
                     ))}
                   </div>
+                  )
                 ) : (
                   <div className="space-y-1.5">
                     <div className="grid min-w-0 grid-cols-3 gap-1">
                       {(
                         [
                           { id: "examType" as BannerRightSlot, label: "Sınıf" },
-                          { id: "score" as BannerRightSlot, label: "D / Y / B" },
+                          ...(isFasikul
+                            ? []
+                            : [{ id: "score" as BannerRightSlot, label: "D / Y / B" }]),
                           { id: "testNo" as BannerRightSlot, label: "Test No" },
                         ] as const
                       ).map(({ id, label }) => {
@@ -1809,7 +2036,7 @@ export default function ThemeCustomizerSidebar({
                 )}
 
                 <div className="space-y-2.5">
-                  {isClassicBanner ? (
+                  {isClassicBanner && !isFasikul ? (
                     bannerRightMode === "hidden" ? (
                       <p className={`text-[11px] leading-snug ${ui.labelMuted}`}>
                         Sağ alan kapalı — göstermek için bir sekme seçin
@@ -2046,10 +2273,30 @@ export default function ThemeCustomizerSidebar({
                       {badgePanel === "score" && (
                         <div className="pdf-preview-collapsible-section space-y-2.5">
                           <div className="flex items-center justify-between gap-3">
-                            <SectionHeading>D / Y / B</SectionHeading>
+                            <SectionHeading>
+                              {isFasikul ? "Şerit D / Y / B" : "D / Y / B"}
+                            </SectionHeading>
                             <PinkToggle
-                              checked={bannerRightSlots.includes("score")}
-                              onChange={(v) => setSlotVisible("score", v)}
+                              checked={
+                                isFasikul
+                                  ? headerConfig.showClassicInfoBarScore !== false
+                                  : bannerRightSlots.includes("score")
+                              }
+                              onChange={(v) => {
+                                if (isFasikul) {
+                                  updateHeaderConfig({
+                                    showClassicInfoBarScore: v,
+                                    ...(v ? { showClassicInfoBar: true } : {}),
+                                  });
+                                  if (v && bannerRightSlots.includes("score")) {
+                                    setBannerRightSlots(
+                                      bannerRightSlots.filter((s) => s !== "score"),
+                                    );
+                                  }
+                                } else {
+                                  setSlotVisible("score", v);
+                                }
+                              }}
                               label="D/Y/B göster"
                             />
                           </div>
@@ -3306,6 +3553,46 @@ export default function ThemeCustomizerSidebar({
             </div>
           </div>
         </CollapsibleCard>
+
+        {isFasikul ? (
+          <CollapsibleCard
+            title="Kareli alan"
+            className="mb-0 pdf-preview-collapsible"
+            contentClassName="pdf-preview-theme-groups"
+            defaultOpen={false}
+          >
+            <ScratchGridColorRow
+              themeColor={primaryColor}
+              colorMode={scratchGridColorMode}
+              customColor={scratchGridColor}
+              palette={PRIMARY_PALETTE}
+              onGraySelect={() => setScratchGridColorMode("gray")}
+              onBlackSelect={() => setScratchGridColorMode("black")}
+              onThemeSelect={() => setScratchGridColorMode("theme")}
+              onCustomColorChange={(c) => setScratchGridColor(c)}
+            />
+            <div className="pdf-preview-slider-field">
+              <div className="pdf-preview-slider-field__meta">
+                <span className={`pdf-preview-field-label ${ui.label}`}>Köşe</span>
+                <span className={`shrink-0 tabular-nums ${ui.valueBadge}`}>
+                  {scratchGridCornerRadiusPt.toFixed(1)} pt
+                </span>
+              </div>
+              <input
+                type="range"
+                min={SCRATCH_CORNER_RADIUS_MIN_PT}
+                max={SCRATCH_CORNER_RADIUS_MAX_PT}
+                step={0.5}
+                value={scratchGridCornerRadiusPt}
+                onChange={(e) =>
+                  setScratchGridCornerRadiusPt(Number(e.target.value))
+                }
+                className="pdf-preview-range"
+                style={{ height: 4 }}
+              />
+            </div>
+          </CollapsibleCard>
+        ) : null}
       </div>
       </CollapseGroupProvider>
     </aside>

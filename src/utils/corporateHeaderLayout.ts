@@ -242,6 +242,8 @@ export type HeaderConfig = {
   showHeaderLeft: boolean
   /** Minimal — konu / alt konu / D·Y·B bilgi şeridi */
   showClassicInfoBar: boolean
+  /** Minimal alt şerit içinde D / Y / B kutusu (varsayılan açık; fasikülde kapalı başlar) */
+  showClassicInfoBarScore: boolean
   /** Sol sütun içeriği */
   headerLeftMode: HeaderLeftMode
   /** Yayın adı — 1. satır */
@@ -506,6 +508,7 @@ export function defaultHeaderConfig(): HeaderConfig {
     logoPadLeftPt: 4,
     showHeaderLeft: true,
     showClassicInfoBar: true,
+    showClassicInfoBarScore: true,
     headerLeftMode: 'logo',
     institutionLine1: '',
     institutionLine2: '',
@@ -725,6 +728,10 @@ export function parseHeaderConfig(raw: unknown): HeaderConfig {
     showClassicInfoBar: parseBool(
       o.showClassicInfoBar ?? o.show_classic_info_bar,
       d.showClassicInfoBar,
+    ),
+    showClassicInfoBarScore: parseBool(
+      o.showClassicInfoBarScore ?? o.show_classic_info_bar_score,
+      d.showClassicInfoBarScore ?? true,
     ),
     headerLeftMode: parseHeaderLeftMode(o.headerLeftMode ?? o.header_left_mode ?? d.headerLeftMode),
     institutionLine1: String(o.institutionLine1 ?? o.institution_line1 ?? d.institutionLine1),

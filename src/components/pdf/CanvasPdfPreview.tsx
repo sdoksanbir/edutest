@@ -7,6 +7,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObje
 import { useEditorStore } from "../../store/editorStore";
 import type { QuestionDragLive } from "../../utils/questionVerticalDrag";
 import type { LayoutItem } from "../../api/client";
+import { api } from "../../api/client";
 import {
   approxWrittenHeaderHeightPt,
   approxWrittenRuleDownFromInnerTopPt,
@@ -33,6 +34,10 @@ import {
   separateAnswerKeyCapacity,
 } from "../../utils/separateAnswerKeyTable";
 import {
+  answerKeyItemsAsTuples,
+  buildFasikulAnswerKeyItems,
+} from "../../utils/fasikulAnswerKeyRows";
+import {
   drawQuestionSelectionOutline,
   questionSelectionGapEndpointsPt,
 } from "../../utils/questionSelectionOutline";
@@ -52,28 +57,31 @@ import {
   type OptikFormOptionCount,
 } from "../../utils/optikFormSettings";
 import type { QuestionItem } from "../../types";
-import { resolveRequestedScale } from "../../utils/questionScale";
-import { fasikulFrameHidesQuestionNumber, normalizeFasikulQuestionFrame, drawFasikulFrameFillBehind, drawFasikulFramePaperTint } from "../../utils/fasikulQuestionFrame";
+import {
+  fasikulFrameHidesQuestionNumber,
+  fasikulFrameHasVisibleBox,
+  fasikulFrameShowsScratchGrid,
+  normalizeFasikulQuestionFrame,
+  drawFasikulFrameFillBehind,
+  drawFasikulFramePaperTint,
+  drawImageWithNearWhiteKnockout,
+  resolveFasikulFrameOuterWidthPt,
+} from "../../utils/fasikulQuestionFrame";
 import {
   drawScratchGridOnCanvas,
   resolveScratchGridRectPt,
+  resolveScratchGridStrokeHex,
   SCRATCH_BORDER_WIDTH_PT,
-  SCRATCH_CORNER_RADIUS_PT,
+  SCRATCH_CORNER_RADIUS_DEFAULT_PT,
   SCRATCH_PAD_BOTTOM_PT,
   SCRATCH_STROKE_WIDTH_PT,
+  FASIKUL_MIN_SCRATCH_ROWS,
+  type ScratchGridColorMode,
 } from "../../utils/questionScratchGrid";
 import {
-  computeColumnImageBounds,
-  IMG_COL_RIGHT_PAD_PT,
-} from "../../utils/questionColumnClamp";
-import {
-  buildLayoutScaleDiagMeta,
-  composeQuestionScaleDiagRow,
-  flushQuestionScaleDiagnostics,
-  getQuestionFontMeasureForDiag,
-  measureInkBoundsFromImage,
-  type QuestionScaleDiagRow,
-} from "../../utils/questionScaleDiagnostics";
+  getCachedQuestionImage,
+  loadQuestionImageFromData,
+} from "../../utils/questionImageCache";
 import {
   computeDescriptionLayout,
   descriptionHeaderBlockHeightPt,
@@ -126,12 +134,19 @@ import {
 import {
   drawStyle1ScoreBoxCanvas,
   drawStyle1TestNoCanvas,
-  resolveBannerRightMode,
+  isClassicInfoBarScoreEnabled,
   resolveClassicBannerAndInfoHeightPt,
   resolveClassicInfoBarHeightPt,
   resolveClassicTopBannerHeightPt,
+  resolveScoreBoxOffsetYPt,
   style1ClassicDyBSizePt,
 } from "../../utils/bannerRightMode";
+import {
+  classicBannerTopRightSlots,
+  layoutBannerRightSlotTops,
+  resolveBannerRightSlots,
+  style1RightSlotWidthPt,
+} from "../../utils/bannerRightSlots";
 import {
   drawExamTypeBoxBorderCanvas,
   drawExamTypeBoxFillCanvas,
@@ -186,14 +201,13 @@ import {
 import { usesHtmlBannerOverlay } from "../../utils/headerBannerMode";
 import { drawFooterDecorativeStripesCanvas } from "../../utils/decorativeStripeCanvas";
 import { footerPageNumberCircleRadiusPt } from "../../utils/footerBandLayout";
-import { questionImageLeftPt, questionNumberLeftPt } from "../../utils/questionVerticalDrag";
+import { resolveLayoutItemImageXPt } from "../../utils/questionVerticalDrag";
 import {
   questionNumberLabel,
   QUESTION_NUM_FONT_PT,
 } from "../../utils/questionNumberMetrics";
 
 const PT_PER_INCH = 72;
-const DEFAULT_TARGET_QUESTION_LINE_PT = 10;
 /** Ekranda sayfa boyutu (CSS) — overlay / tıklama ile aynı kalır. */
 const DISPLAY_DPI = 96;
 const DISPLAY_PT_TO_PX = DISPLAY_DPI / PT_PER_INCH;
@@ -239,6 +253,8 @@ type CanvasPdfPreviewProps = {
   optikFormEnabled?: boolean;
   optikFormPlacement?: "per_page" | "separate_page" | "end_of_test";
   optikFormQuestions?: QuestionItem[];
+  /** Fasikül cevap anahtarı etiketleri (ÖRNEK 1, ÖSYM) — soru listesi */
+  answerKeyQuestions?: QuestionItem[];
   optikFormOptionCount?: OptikFormOptionCount;
   optikFormBookletType?: OptikFormBookletType;
   optikFormInstructionEnabled?: boolean;
@@ -338,6 +354,10 @@ type CanvasPdfPreviewProps = {
   drawGapIndicators?: boolean;
   /** Fasikül: soru altı kareli çözüm alanı (boşluğa göre büyür/küçülür) */
   showQuestionScratchGrid?: boolean;
+  /** Fasikül: kareli alan köşe yuvarlaklığı (pt) */
+  scratchGridCornerRadiusPt?: number;
+  scratchGridColorMode?: ScratchGridColorMode;
+  scratchGridColor?: string;
   /** Thumbnail genişliği (px) - verilirse zoom otomatik hesaplanır, sütuna tam sığar */
   thumbnailWidthPx?: number;
   /**
@@ -373,6 +393,8 @@ type CanvasPdfPreviewProps = {
   headerBottomGapMm?: number;
   /** Sürükleme önizlemesi — layout commit edilmeden canvas konumu */
   questionDragLiveRef?: RefObject<QuestionDragLive | null>;
+  /** Kareli alan tutamacı canlı satır */
+  scratchLiveRef?: RefObject<{ orderIndex: number; rows: number } | null>;
   /** Slider sürüklemesi — React state güncellenmeden layout / hizalama */
   layoutLiveRef?: RefObject<LayoutItem[] | null>;
   alignmentPreviewLiveRef?: RefObject<{
@@ -401,6 +423,7 @@ export default function CanvasPdfPreview({
   optikFormEnabled = false,
   optikFormPlacement = "end_of_test",
   optikFormQuestions = [],
+  answerKeyQuestions = [],
   optikFormOptionCount = "auto",
   optikFormBookletType = "none",
   optikFormInstructionEnabled = true,
@@ -448,6 +471,9 @@ export default function CanvasPdfPreview({
   drawSelectionOutline = true,
   drawGapIndicators = true,
   showQuestionScratchGrid = false,
+  scratchGridCornerRadiusPt = SCRATCH_CORNER_RADIUS_DEFAULT_PT,
+  scratchGridColorMode = "gray",
+  scratchGridColor = "#94A3B8",
   canvasFrameClassName,
   thumbnailWidthPx,
   previewSharpness = DEFAULT_PREVIEW_SHARPNESS,
@@ -476,19 +502,46 @@ export default function CanvasPdfPreview({
   otherPageHeaderBottomGapMm = DEFAULT_OTHER_PAGE_HEADER_BOTTOM_GAP_MM,
   headerBottomGapMm = DEFAULT_HEADER_BOTTOM_GAP_MM,
   questionDragLiveRef,
+  scratchLiveRef,
   layoutLiveRef,
   alignmentPreviewLiveRef,
   onRegisterRedraw,
 }: CanvasPdfPreviewProps) {
   /** Obje referansı bazen güncellenmese bile içerik değişiminde çizimi tetikler (ör. PUAN etiketi) */
   const writtenFieldLabelsSig = JSON.stringify(writtenPaperFieldLabels);
+  const pageOrdersSig = layout
+    .filter((l) => l.page_num === currentPage && l.kind !== "answer_key_page")
+    .map((l) => l.order_index)
+    .join(",");
+  /** Bu sayfadaki soruların çerçeve/kareli alanı — diğer sayfa chrome değişiminde re-render yok */
+  const questionChromeSig = useEditorStore((s) => {
+    const onPage = new Set(
+      pageOrdersSig
+        ? pageOrdersSig.split(",").map((x) => Number(x))
+        : [],
+    );
+    if (onPage.size === 0) return "";
+    return s.questions
+      .filter((q) => onPage.has(q.order_index))
+      .map((q) => {
+        const f = q.fasikulFrame;
+        return `${q.order_index}:${q.scratchGridRows ?? ""}:${f?.enabled ? 1 : 0}:${f?.showScratchGrid ? 1 : 0}:${f?.fillColor ?? ""}:${f?.fillOpacityPct ?? ""}:${f?.cornerRadiusPx ?? ""}:${f?.innerPaddingPx ?? ""}:${f?.borderStyle ?? ""}:${f?.borderWidth ?? ""}:${f?.borderColor ?? ""}:${f?.badgeStyle ?? ""}:${f?.labelText ?? ""}:${f?.labelColor ?? ""}`;
+      })
+      .join("|");
+  });
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const offscreenRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [images, setImages] = useState<Map<number, HTMLImageElement>>(new Map());
+  const [images, setImages] = useState<Map<string, HTMLImageElement>>(new Map());
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
   const [watermarkImage, setWatermarkImage] = useState<HTMLImageElement | null>(null);
   const [logoImage, setLogoImage] = useState<HTMLImageElement | null>(null);
+  /** Aynı geometriyi tekrar boyamayı atla (köşe resize bırakınca blink olmasın) */
+  const lastPaintedGeomSigRef = useRef("");
+  const visualEpochRef = useRef(0);
+  const lastPaintedVisualEpochRef = useRef(-1);
 
   useEffect(() => {
     let cancelled = false;
@@ -562,50 +615,74 @@ export default function CanvasPdfPreview({
   /** Thumbnail’da bellek için keskinlik 1; ana önizlemede kaliteye göre. */
   const sharpness = thumbnailWidthPx != null ? 1 : Math.max(1, Math.min(3, previewSharpness));
 
-  // Layout + soru store görsellerini yükle (remount sonrası boş kalmasın)
+  // Bu sayfadaki soru görsellerini yükle — paylaşılan cache (sayfalar arası decode yok)
   useEffect(() => {
     let cancelled = false;
-    const next = new Map<number, HTMLImageElement>();
-    let pending = 0;
-    const sources = new Map<number, string>();
-    layout.forEach((item) => {
-      const b64 = item.image_base64;
-      if (b64) sources.set(item.order_index, b64);
-    });
-    // Layout skip_images ise store'dan tamamla
-    try {
-      const qs = useEditorStore.getState().questions;
-      for (const q of qs) {
-        if (sources.has(q.order_index)) continue;
-        const b64 = q.image_base64;
-        if (b64) sources.set(q.order_index, b64);
+    const qs = useEditorStore.getState().questions;
+    const qByOrder = new Map(qs.map((q) => [q.order_index, q]));
+    const neededIds = new Set<string>();
+    const sources = new Map<string, string>();
+
+    for (const item of layout) {
+      if (item.page_num !== currentPage || item.kind === "answer_key_page") continue;
+      const q =
+        (item.question_id
+          ? qs.find((x) => x.id === item.question_id)
+          : undefined) ?? qByOrder.get(item.order_index);
+      if (!q || (q.fasikulEmptyRows ?? 0) > 0) continue;
+      neededIds.add(q.id);
+      if (q.image_base64) sources.set(q.id, q.image_base64);
+      else if (item.image_base64) sources.set(q.id, item.image_base64);
+    }
+
+    setImages((prev) => {
+      const kept = new Map<string, HTMLImageElement>();
+      for (const id of neededIds) {
+        const cached = getCachedQuestionImage(id) ?? prev.get(id);
+        if (cached?.complete) kept.set(id, cached);
       }
-    } catch {
-      /* store yoksa layout yeterli */
-    }
-    sources.forEach((b64, orderIdx) => {
-      const img = new Image();
-      pending++;
-      img.onload = () => {
-        if (cancelled) return;
-        next.set(orderIdx, img);
-        setImages((prev) => new Map([...prev.entries(), ...next.entries()]));
-      };
-      img.onerror = () => {
-        if (cancelled) return;
-        pending--;
-        if (pending === 0) setImages((prev) => new Map([...prev.entries(), ...next.entries()]));
-      };
-      const prefix = b64.startsWith("data:") ? "" : "data:image/png;base64,";
-      img.src = prefix + b64;
+      return kept;
     });
-    if (pending === 0 && sources.size > 0) {
-      setImages(next);
-    }
+
+    const applyImg = (qid: string, img: HTMLImageElement) => {
+      if (cancelled) return;
+      setImages((prev) => {
+        if (prev.get(qid) === img) return prev;
+        const m = new Map(prev);
+        m.set(qid, img);
+        return m;
+      });
+    };
+
+    void (async () => {
+      for (const qid of neededIds) {
+        if (cancelled) return;
+        const cached = getCachedQuestionImage(qid);
+        if (cached) {
+          applyImg(qid, cached);
+          continue;
+        }
+        const b64 = sources.get(qid);
+        if (b64) {
+          const img = await loadQuestionImageFromData(qid, b64);
+          if (img) applyImg(qid, img);
+          continue;
+        }
+        try {
+          const dataUrl = await api.questions.getImageDataUrl(qid);
+          if (cancelled || !dataUrl) continue;
+          const img = await loadQuestionImageFromData(qid, dataUrl);
+          if (img) applyImg(qid, img);
+        } catch {
+          /* boş fasikül / eksik id */
+        }
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
-  }, [layout]);
+  }, [layout, currentPage]);
 
   const ptToCanvas = useCallback(
     (xPt: number, yTopPt: number) => {
@@ -632,6 +709,24 @@ export default function CanvasPdfPreview({
     const otherPageHeaderGapMm =
       live?.otherPageHeaderBottomGapMm ?? otherPageHeaderBottomGapMm;
     if (!visibleCanvas || layoutData.length === 0) return;
+
+    const geomSig = layoutData
+      .map(
+        (i) =>
+          `${i.order_index}:${i.page_num}:${i.img_x_pt}:${i.img_y_top_pt}:${i.img_w_pt}:${i.img_h_pt}:${i.x_pt}:${i.y_top_pt}:${i.w_pt}:${i.h_pt}`,
+      )
+      .join("|");
+    const dragLive = questionDragLiveRef?.current;
+    const dragActiveOnPage =
+      dragLive != null && dragLive.pageNum === currentPage;
+    // Sürüklerken layout geomSig değişmez; canlı Y ile arkaplan/görsel yeniden boyanmalı
+    if (
+      !dragActiveOnPage &&
+      geomSig === lastPaintedGeomSigRef.current &&
+      visualEpochRef.current === lastPaintedVisualEpochRef.current
+    ) {
+      return;
+    }
 
     const dpr = window.devicePixelRatio || 1;
     const bufferScale = dpr * sharpness;
@@ -689,13 +784,21 @@ export default function CanvasPdfPreview({
               .map((l) => l.page_num),
           )
         : 1;
-    const answerKeyItems: [number, string][] = layoutData
-      .filter((l) => l.display_number != null)
-      .sort((a, b) => (a.display_number as number) - (b.display_number as number))
-      .map((l) => [
-        l.display_number as number,
-        (l.answer_key || "?").trim().toUpperCase() || "?",
-      ]);
+    const answerKeyItems: [string | number, string][] =
+      answerKeyQuestions.length > 0
+        ? answerKeyItemsAsTuples(
+            buildFasikulAnswerKeyItems(layoutData, answerKeyQuestions),
+          )
+        : layoutData
+            .filter((l) => l.display_number != null)
+            .sort(
+              (a, b) =>
+                (a.display_number as number) - (b.display_number as number),
+            )
+            .map((l) => [
+              l.display_number as number,
+              (l.answer_key || "?").trim().toUpperCase() || "?",
+            ]);
     const optikRowsEarly =
       optikFormEnabled && optikFormQuestions.length > 0
         ? optikRowsFromLayoutItems(layoutData, optikFormQuestions)
@@ -1258,7 +1361,14 @@ export default function CanvasPdfPreview({
       isClassicTestBannerHeader(headerStyleId)
     ) {
       const classicCfg = normalizeClassicBannerConfig(headerConfig);
-      const boxH = resolveClassicTopBannerHeightPt(classicCfg, headerStyleId);
+      const badgeConfigForH = {
+        ...mergeHeaderBadgeConfig(classicCfg, headerStyleId),
+        primaryColor: themeRgb,
+      };
+      const boxH = resolveClassicTopBannerHeightPt(
+        { ...classicCfg, ...badgeConfigForH },
+        headerStyleId,
+      );
       const totalH = boxH;
       const boxY = pageHpt - mtPt - totalH;
       const boxYCanvas = (pageHpt - boxY - totalH) * scale;
@@ -1451,31 +1561,63 @@ export default function CanvasPdfPreview({
         ...mergeHeaderBadgeConfig(classicCfg, headerStyleId),
         primaryColor: themeRgb,
       };
-      const rightModeRaw = resolveBannerRightMode(badgeConfig);
-      /** Minimal info bar: Sınav Türü çizilmez */
-      const rightMode =
-        rightModeRaw === "score" || rightModeRaw === "examType" ? "testNo" : rightModeRaw;
-      if (!trialBanner) {
-        if (rightMode === "testNo") {
-          const testRightEdge =
-            xRight * scale + rightWpx - CLASSIC_TEST_NO_INSET_X_PT * scale;
-          drawStyle1TestNoCanvas(
-            ctx,
-            testRightEdge,
-            innerBoxYCanvas,
-            innerH * scale,
-            badgeConfig,
-            scale,
-            classicFont,
-          );
+      const topRightSlots = classicBannerTopRightSlots(badgeConfig);
+      const rightSlots = resolveBannerRightSlots(badgeConfig);
+      const showInfoExamType =
+        rightSlots.includes("examType") && shouldDrawExamTypeBoxContent(badgeConfig);
+      if (!trialBanner && topRightSlots.length > 0) {
+        const placed = layoutBannerRightSlotTops({
+          slots: topRightSlots,
+          bodyTop: 0,
+          bodyH: innerH,
+          config: badgeConfig,
+        });
+        const rightEdgePt = (pageWpx - mr) / scale;
+        for (const { slot, top: topPt, h: slotHPt } of placed) {
+          const slotTop = innerBoxYCanvas + topPt * scale;
+          const slotH = slotHPt * scale;
+          if (slot === "score") {
+            const boxW = style1RightSlotWidthPt(slot, badgeConfig) * scale;
+            const boxX = rightEdgePt * scale - boxW;
+            drawStyle1ScoreBoxCanvas(
+              ctx,
+              boxX,
+              slotTop,
+              boxW,
+              slotH,
+              badgeConfig,
+              scale,
+              classicFont,
+            );
+          } else if (slot === "testNo") {
+            drawStyle1TestNoCanvas(
+              ctx,
+              rightEdgePt * scale,
+              slotTop,
+              slotH,
+              badgeConfig,
+              scale,
+              classicFont,
+            );
+          }
         }
       }
 
+      const showStripScore = isClassicInfoBarScoreEnabled(classicCfg);
       const infoY = innerBoxYCanvas + innerH * scale + DESC_BANNER_GAP_PT * scale;
       let infoHPt = 0;
       let infoHpx = 0;
       if (showClassicInfoBar) {
+      const examTypeWPt = showInfoExamType
+        ? resolveExamTypeBoxWidthPt(badgeConfig, contentW * 0.45)
+        : 0;
       infoHPt = resolveClassicInfoBarHeightPt(badgeConfig, headerStyleId, contentW);
+      if (showInfoExamType) {
+        infoHPt = Math.max(
+          infoHPt,
+          resolveExamTypeBoxHeightPt(badgeConfig) + CLASSIC_INFO_BAR_BADGE_INSET_PT * 2,
+        );
+      }
       const infoPadX = CLASSIC_INFO_PAD_X_PT * scale;
       const topicTxt = visibleTopicText(classicCfg);
       const subTopicTxt = visibleSubTopicText(classicCfg);
@@ -1483,10 +1625,20 @@ export default function CanvasPdfPreview({
       const subSizePt = getHeaderFieldFontPt("subTopic", headerStyleId, classicCfg);
       const topicSubGapPt = classicCfg.topicSubTopicGapPt ?? 3;
       const dybSize = style1ClassicDyBSizePt(badgeConfig);
-      const dybGroupWPt = dybSize.wPt;
+      const dybGroupWPt = showStripScore ? dybSize.wPt : 0;
+      /** Şerit D/Y/B ortada — konu metni sol yarıda kalsın */
       const textMaxWPt = Math.max(
         40,
-        contentW - CLASSIC_INFO_PAD_X_PT * 2 - dybGroupWPt - CLASSIC_DYB_INSET_X_PT - 8,
+        showStripScore
+          ? contentW / 2 -
+              dybGroupWPt / 2 -
+              CLASSIC_INFO_PAD_X_PT -
+              8
+          : contentW -
+              CLASSIC_INFO_PAD_X_PT * 2 -
+              examTypeWPt -
+              (showInfoExamType ? CLASSIC_DYB_INSET_X_PT + 8 : 0) -
+              8,
       );
       const topicMarker = classicInfoMarkerLayout(topicSizePt, "square").textOffsetX;
       const subMarker = classicInfoMarkerLayout(
@@ -1578,8 +1730,7 @@ export default function CanvasPdfPreview({
       }
       const badgeInset = CLASSIC_INFO_BAR_BADGE_INSET_PT * scale;
       const rightEdge = pageWpx - mr - badgeInset;
-      let dybRightEdgePt = (pageWpx - mr) / scale - CLASSIC_DYB_INSET_X_PT;
-      if (rightMode === "examType" && !trialBanner && shouldDrawExamTypeBoxContent(badgeConfig)) {
+      if (showInfoExamType && !trialBanner) {
         const boxHExam = resolveExamTypeBoxHeightPt(badgeConfig) * scale;
         const maxBoxWPt = contentW * 0.45;
         const boxW = resolveExamTypeBoxWidthPt(badgeConfig, maxBoxWPt) * scale;
@@ -1588,24 +1739,29 @@ export default function CanvasPdfPreview({
         drawExamTypeBoxFillCanvas(ctx, boxX, boxYExam, boxW, boxHExam, badgeConfig, scale);
         drawExamTypeBoxBorderCanvas(ctx, boxX, boxYExam, boxW, boxHExam, badgeConfig, scale);
         drawExamTypeTextInBox(ctx, boxX, boxYExam, boxW, boxHExam, badgeConfig, scale, classicFont);
-        dybRightEdgePt = boxX / scale - 4;
       }
 
       const dybHPt = dybSize.hPt;
       const dybBoxW = dybSize.wPt * scale;
       const dybBoxH = dybHPt * scale;
-      const dybBoxX = dybRightEdgePt * scale - dybBoxW;
-      const dybBoxY = infoY + (infoHpx - dybBoxH) / 2;
-      drawStyle1ScoreBoxCanvas(
-        ctx,
-        dybBoxX,
-        dybBoxY,
-        dybBoxW,
-        dybBoxH,
-        badgeConfig,
-        scale,
-        classicFont,
-      );
+      /** Şerit D/Y/B — alt bilgi şeridinin yatay ortası */
+      const dybBoxX = ml + (contentW * scale - dybBoxW) / 2;
+      const dybBoxY =
+        infoY +
+        (infoHpx - dybBoxH) / 2 +
+        resolveScoreBoxOffsetYPt(badgeConfig) * scale;
+      if (showStripScore) {
+        drawStyle1ScoreBoxCanvas(
+          ctx,
+          dybBoxX,
+          dybBoxY,
+          dybBoxW,
+          dybBoxH,
+          badgeConfig,
+          scale,
+          classicFont,
+        );
+      }
       }
 
       if (includeDescription) {
@@ -1837,7 +1993,9 @@ export default function CanvasPdfPreview({
       otherPageHeaderBottomGapMm,
     });
 
-    const scaleDiagRows: QuestionScaleDiagRow[] = [];
+    const questionsByOrder = new Map(
+      useEditorStore.getState().questions.map((q) => [q.order_index, q]),
+    );
     pageItems.forEach((item) => {
       if (item.kind === "answer_key_page") return;
       const hasImg =
@@ -1862,17 +2020,11 @@ export default function CanvasPdfPreview({
       const sec = item.section;
 
       const dn = item.display_number;
-      let imgX = questionImageLeftPt(item, numOffsetMm, numGapMm);
-      if (dn != null) {
-        const numLabel = questionNumberLabel(dn);
-        const numFontPt = questionNumberFontPt;
-        ctx.font = `bold ${numFontPt * scale}px Helvetica, Arial`;
-        const numTextWPt = ctx.measureText(numLabel).width / scale;
-        imgX =
-          questionNumberLeftPt(item, numOffsetMm) +
-          numTextWPt +
-          mmToPt(numGapMm);
-      }
+      // Layout img_x_pt ile HTML çerçeve aynı sol kenar (measureText sapması yok)
+      const imgX = resolveLayoutItemImageXPt(item, numOffsetMm, numGapMm, {
+        committedLeftOffsetMm: questionNumberLeftOffsetMm,
+        committedImageGapMm: questionNumberImageGapMm,
+      });
 
       const imgY =
         (questionDragLiveRef?.current?.orderIndex === item.order_index
@@ -1994,103 +2146,77 @@ export default function CanvasPdfPreview({
       const imgWpx = imgW * scale;
       const imgHpx = imgH * scale;
 
-      const imgEl = images.get(item.order_index);
+      const qForEmpty = questionsByOrder.get(item.order_index);
+      const imgEl = qForEmpty?.id
+        ? images.get(qForEmpty.id)
+        : item.question_id
+          ? images.get(item.question_id)
+          : undefined;
+      const isEmptyFasikulBox = (qForEmpty?.fasikulEmptyRows ?? 0) > 0;
 
-      // Teşhis: final drawImage hemen önce (yerleşim değiştirilmez)
-      {
-        const q = useEditorStore.getState().questions.find((x) => x.order_index === item.order_index);
-        const requestedScale = q
-          ? resolveRequestedScale(q)
-          : Number(item.scale_diag?.requestedScale ?? 1) || 1;
-        const measure = getQuestionFontMeasureForDiag(item.order_index);
-        const detectedFontPx =
-          measure?.detectedFontPx ?? q?.detected_font_px ?? null;
-        const srcW = imgEl?.naturalWidth || item.scale_diag?.sourceWidthPx || 0;
-        const srcH = imgEl?.naturalHeight || item.scale_diag?.sourceHeightPx || 0;
-        const metaBase =
-          item.scale_diag ??
-          buildLayoutScaleDiagMeta({
-            sourceWpx: srcW,
-            sourceHpx: srcH,
-            availWPt: item.w_pt - (item.num_slot_w_pt ?? 0),
-            requestedScale,
-            finalDrawWPt: imgW,
-            finalDrawHPt: imgH,
-            growOverflowTolerance: 1,
-            manualScale: q?.manualScale ?? 1,
-            normalizationScale: q?.normalizationScale ?? 1,
-          });
-        const naturalW = metaBase.naturalWidthPt;
-        const appliedScale = naturalW > 0 ? imgW / naturalW : requestedScale;
-        const limitation =
-          naturalW * requestedScale - imgW > 0.05 ? ("WIDTH_LIMIT" as const) : ("NONE" as const);
-        const meta = {
-          ...metaBase,
-          requestedScale,
-          appliedScale,
-          limitation,
-          finalDrawWidthPt: imgW,
-          finalDrawHeightPt: imgH,
-          manualScale: q?.manualScale ?? metaBase.manualScale ?? 1,
-          normalizationScale: q?.normalizationScale ?? metaBase.normalizationScale ?? 1,
-        };
-        const ink = imgEl && imgEl.complete ? measureInkBoundsFromImage(imgEl, item.order_index) : null;
-        const columnBounds = computeColumnImageBounds({
-          columnXPt: item.x_pt + xOffsetPt,
-          columnContentWidthPt: item.w_pt,
-          rightPaddingPt: IMG_COL_RIGHT_PAD_PT,
-          imageXPt: imgX,
-          drawWidthPt: imgW,
-        });
-        scaleDiagRows.push(
-          composeQuestionScaleDiagRow({
-            questionNo: (item.display_number ?? item.order_index + 1) as number,
-            meta,
-            detectedFontPx,
-            targetFontPx: measure?.targetFontPt ?? DEFAULT_TARGET_QUESTION_LINE_PT,
-            ink,
-            columnBounds,
-          }),
-        );
-      }
-
-      const qForFrame = useEditorStore
-        .getState()
-        .questions.find((x) => x.order_index === item.order_index);
+      const qForFrame = qForEmpty;
       const frameSettings = normalizeFasikulQuestionFrame(qForFrame?.fasikulFrame);
-      if (frameSettings.enabled) {
+      const frameVisible = fasikulFrameHasVisibleBox(frameSettings);
+      const frameWidthPt = frameSettings.enabled
+        ? resolveFasikulFrameOuterWidthPt({
+            leftPt: imgX,
+            columnXPt: item.x_pt + xOffsetPt,
+            columnWidthPt: item.w_pt,
+          })
+        : imgW;
+      const frameWpx = frameWidthPt * scale;
+      const frameCanvas = {
+        ...frameSettings,
+        cornerRadiusPx: (frameSettings.cornerRadiusPx || 0) * 0.75 * scale,
+        borderWidth: (frameSettings.borderWidth || 0) * 0.75 * scale,
+      };
+      if (frameVisible) {
         drawFasikulFrameFillBehind(ctx, {
           x: cx,
           y: cy,
-          w: imgWpx,
+          w: frameWpx,
           h: imgHpx,
-          frame: frameSettings,
+          frame: frameCanvas,
           padPx: 0,
         });
       }
 
-      const pad = frameSettings.enabled
-        ? Math.max(0, Math.min(imgWpx / 3, imgHpx / 3, frameSettings.innerPaddingPx || 0))
+      const padPt = frameVisible
+        ? Math.max(0, (frameSettings.innerPaddingPx || 0) * 0.75)
+        : 0;
+      const pad = frameVisible
+        ? Math.max(0, Math.min(imgWpx / 3, imgHpx / 3, padPt * scale))
         : 0;
       const drawX = cx + pad;
       const drawY = cy + pad;
       const drawW = Math.max(1, imgWpx - pad * 2);
       const drawH = Math.max(1, imgHpx - pad * 2);
 
-      if (imgEl && imgEl.complete) {
-        ctx.drawImage(imgEl, drawX, drawY, drawW, drawH);
+      if (isEmptyFasikulBox) {
+        /* içi boş hazır tasarım — görsel çizme */
+      } else if (imgEl && imgEl.complete) {
+        const fillOn = frameVisible && (frameSettings.fillOpacityPct ?? 0) > 0;
+        if (fillOn) {
+          drawImageWithNearWhiteKnockout(ctx, imgEl, drawX, drawY, drawW, drawH, {
+            fillHex: frameSettings.fillColor,
+            threshold: 242,
+          });
+        } else {
+          // Dolgu kapalı: knockout+fillHex çift katman / bozulma yapmasın
+          ctx.drawImage(imgEl, drawX, drawY, drawW, drawH);
+        }
       } else {
         ctx.fillStyle = "#f0f0f0";
         ctx.fillRect(drawX, drawY, drawW, drawH);
       }
 
-      if (frameSettings.enabled) {
+      if (frameVisible && (frameSettings.fillOpacityPct ?? 0) > 0) {
         drawFasikulFramePaperTint(ctx, {
-          x: cx,
-          y: cy,
-          w: imgWpx,
-          h: imgHpx,
-          frame: frameSettings,
+          x: drawX,
+          y: drawY,
+          w: drawW,
+          h: drawH,
+          frame: frameCanvas,
         });
       }
 
@@ -2109,15 +2235,9 @@ export default function CanvasPdfPreview({
       }
 
       if (drawSelectionOutline && selectedQuestions.includes(item.order_index)) {
-        drawQuestionSelectionOutline(ctx, cx, cy, imgWpx, imgHpx, scale);
+        drawQuestionSelectionOutline(ctx, cx, cy, frameWpx, imgHpx, scale);
       }
     });
-
-    flushQuestionScaleDiagnostics(
-      scaleDiagRows,
-      scaleDiagRows.map((r) => `${r.questionNo}:${r.finalDrawWidth}:${r.requestedScale}`).join("|"),
-      "canvas-preview",
-    );
 
     // Fasikül: soru altı kareli alan — sorular arası / footer boşluğuna göre
     if (showQuestionScratchGrid) {
@@ -2132,6 +2252,22 @@ export default function CanvasPdfPreview({
           return dragLive.imgYTopPt;
         }
         return it.img_y_top_pt ?? 0;
+      };
+      /** Blok üstü = ÖRNEK badge üstü (img_y_top değil); kareli alan buraya kadar gelmemeli */
+      const liveBlockYTopPt = (it: (typeof pageItems)[number]) => {
+        const imgTop = liveImgYTopPt(it);
+        const reserve = Math.max(
+          0,
+          (it.y_top_pt ?? it.img_y_top_pt ?? 0) - (it.img_y_top_pt ?? 0),
+        );
+        if (
+          dragLive &&
+          dragLive.pageNum === currentPage &&
+          dragLive.orderIndex === it.order_index
+        ) {
+          return dragLive.imgYTopPt + reserve;
+        }
+        return it.y_top_pt ?? imgTop;
       };
       pageItems.forEach((item) => {
         if (item.kind === "answer_key_page") return;
@@ -2188,22 +2324,39 @@ export default function CanvasPdfPreview({
                 committedHeaderBottomGapMm: headerBottomGapMm,
                 committedOtherPageHeaderBottomGapMm: otherPageHeaderBottomGapMm,
               });
-          gapBottomPt = liveImgYTopPt(next) + nextShift;
+          gapBottomPt = liveBlockYTopPt(next) + nextShift;
         }
         const colRightPt = item.x_pt + item.w_pt;
-        const questionLeftPt = questionImageLeftPt(item, numOffsetMm, numGapMm);
+        const questionLeftPt = resolveLayoutItemImageXPt(item, numOffsetMm, numGapMm, {
+          committedLeftOffsetMm: questionNumberLeftOffsetMm,
+          committedImageGapMm: questionNumberImageGapMm,
+        });
         const gridWidthPt = Math.max(0, colRightPt - questionLeftPt);
         const padBottomPt = SCRATCH_PAD_BOTTOM_PT;
+        const qScratch = questionsByOrder.get(item.order_index);
+        if (!fasikulFrameShowsScratchGrid(qScratch?.fasikulFrame)) return;
+        const liveScratch = scratchLiveRef?.current;
+        const rowsOverride =
+          liveScratch?.orderIndex === item.order_index
+            ? liveScratch.rows
+            : qScratch?.scratchGridRows;
         const grid = resolveScratchGridRectPt({
           xPt: questionLeftPt,
           widthPt: gridWidthPt,
           questionBottomPt: currBottomPt,
           gapBottomPt,
           padBottomPt,
+          rowsOverride,
+          minRows: FASIKUL_MIN_SCRATCH_ROWS,
         });
         if (!grid) return;
         const { x: leftPx, y: topPx } = ptToCanvas(grid.x, grid.yTop);
         const cellPx = grid.cellPt * scale;
+        const strokeHex = resolveScratchGridStrokeHex({
+          colorMode: scratchGridColorMode,
+          customColor: scratchGridColor,
+          themeColor: primaryHex,
+        });
         drawScratchGridOnCanvas(
           ctx,
           {
@@ -2216,9 +2369,11 @@ export default function CanvasPdfPreview({
             rows: grid.rows,
           },
           {
+            strokeHex,
+            borderHex: strokeHex,
             lineWidthPx: SCRATCH_STROKE_WIDTH_PT * scale,
             borderWidthPx: SCRATCH_BORDER_WIDTH_PT * scale,
-            radiusPx: SCRATCH_CORNER_RADIUS_PT * scale,
+            radiusPx: scratchGridCornerRadiusPt * scale,
           },
         );
       });
@@ -2282,6 +2437,8 @@ export default function CanvasPdfPreview({
         item.img_h_pt != null;
       if (!hasImg) return;
       const colCenter = (item.x_pt ?? 0) + xOffsetPt + (item.w_pt ?? 0) / 2;
+      const imgCenter =
+        (item.img_x_pt ?? 0) + (item.img_w_pt ?? item.w_pt ?? 0) / 2;
       const currBottomPt = (item.img_y_top_pt ?? 0) - (item.img_h_pt ?? 0);
       const isLeft = (item.img_x_pt ?? 0) < midX;
       const below = pageItems.filter(
@@ -2292,16 +2449,23 @@ export default function CanvasPdfPreview({
           (l.img_y_top_pt ?? 0) < (item.img_y_top_pt ?? 0)
       );
       const next = below.sort((a, b) => (b.img_y_top_pt ?? 0) - (a.img_y_top_pt ?? 0))[0];
-      const yBottomPt = next?.img_y_top_pt ?? footerTopPt;
-      const gapPt = currBottomPt - yBottomPt;
+      // Fasikül (kareli alan): görsel alt ↔ ÖRNEK üst; çizgi bu aralıkta
+      const fasikulGap = showQuestionScratchGrid;
+      const nextGapTopPt = next
+        ? fasikulGap
+          ? (next.y_top_pt ?? next.img_y_top_pt ?? footerTopPt)
+          : (next.img_y_top_pt ?? footerTopPt)
+        : footerTopPt;
+      const gapPt = currBottomPt - nextGapTopPt;
       if (gapPt > 0) {
         const touchesSelection =
           selectedQuestions.includes(item.order_index) ||
           (next != null && selectedQuestions.includes(next.order_index));
-        if (next?.img_y_top_pt != null) {
-          drawGapLine(colCenter, currBottomPt, next.img_y_top_pt, "gap", touchesSelection);
+        const lineX = fasikulGap ? imgCenter : colCenter;
+        if (next != null) {
+          drawGapLine(lineX, currBottomPt, nextGapTopPt, "gap", touchesSelection);
         } else {
-          drawGapLine(colCenter, currBottomPt, footerTopPt, "footer", touchesSelection);
+          drawGapLine(lineX, currBottomPt, footerTopPt, "footer", touchesSelection);
         }
       }
     });
@@ -2538,6 +2702,8 @@ export default function CanvasPdfPreview({
     // separate_page: cevap anahtarı sayfasında
     // Cevap anahtarı genişliği en fazla bir sorun genişliği kadar
     if (includeAnswerKey && (answerKeyMode === "end_of_test" || isAnswerKeyOnlyPage) && answerKeyItems.length > 0) {
+      const akPairsPerRow =
+        answerKeyQuestions.length > 0 ? 4 : SEPARATE_AK.PAIRS_PER_ROW;
       if (isAnswerKeyOnlyPage) {
         const contentWPx = pageWpx - ml - mr;
         const contentTopPt = pageHpt - mtPt - SEPARATE_AK.TOP_GAP_PT;
@@ -2547,9 +2713,9 @@ export default function CanvasPdfPreview({
         );
         const { capacity } = separateAnswerKeyCapacity({
           availableHeightPt: availableHPt,
-          pairsPerRow: SEPARATE_AK.PAIRS_PER_ROW,
+          pairsPerRow: akPairsPerRow,
         });
-        const entriesPerPage = Math.max(SEPARATE_AK.PAIRS_PER_ROW, capacity);
+        const entriesPerPage = Math.max(akPairsPerRow, capacity);
         const pageIdx = currentPage - maxQuestionPage - optikSeparatePageCount - 1;
         const startIdx = pageIdx * entriesPerPage;
         const chunk = answerKeyItems.slice(startIdx, startIdx + entriesPerPage);
@@ -2563,7 +2729,7 @@ export default function CanvasPdfPreview({
             scale,
             items: chunk,
             title: "Cevap Anahtarı",
-            pairsPerRow: SEPARATE_AK.PAIRS_PER_ROW,
+            pairsPerRow: akPairsPerRow,
           });
         }
       } else if (answerKeyMode === "end_of_test" && currentPage === maxQuestionPage) {
@@ -2836,8 +3002,24 @@ export default function CanvasPdfPreview({
       visCtx.drawImage(offscreen, 0, 0);
       visCtx.setTransform(bufferScale, 0, 0, bufferScale, 0, 0);
     }
+    lastPaintedGeomSigRef.current = geomSig;
+    lastPaintedVisualEpochRef.current = visualEpochRef.current;
     } catch (err) {
       console.error("CanvasPdfPreview draw error:", err);
+      // Hata sonrası boş kalmasın — kısmi offscreen’i bas; epoch’u kilitleme ki yeniden denensin
+      try {
+        const visCtx = visibleCanvas.getContext("2d");
+        const off = offscreenRef.current;
+        if (visCtx && off && off.width > 0 && off.height > 0) {
+          visCtx.setTransform(1, 0, 0, 1, 0, 0);
+          visCtx.clearRect(0, 0, visibleCanvas.width, visibleCanvas.height);
+          visCtx.drawImage(off, 0, 0);
+        }
+      } catch {
+        /* ignore */
+      }
+      lastPaintedGeomSigRef.current = "";
+      lastPaintedVisualEpochRef.current = -1;
     }
   }, [
     layout,
@@ -2861,6 +3043,7 @@ export default function CanvasPdfPreview({
     optikFormEnabled,
     optikFormPlacement,
     optikFormQuestions,
+    answerKeyQuestions,
     optikFormOptionCount,
     optikFormBookletType,
     optikFormInstructionEnabled,
@@ -2907,6 +3090,10 @@ export default function CanvasPdfPreview({
     drawSelectionOutline,
     drawGapIndicators,
     showQuestionScratchGrid,
+    scratchGridCornerRadiusPt,
+    scratchGridColorMode,
+    scratchGridColor,
+    questionChromeSig,
     ptToCanvas,
     watermarkEnabled,
     watermarkSettings,
@@ -2938,6 +3125,44 @@ export default function CanvasPdfPreview({
   const drawRef = useRef(draw);
   drawRef.current = draw;
 
+  /** layout dışındaki görsel ayar değişince epoch artar → aynı geometride bile yeniden boya */
+  useLayoutEffect(() => {
+    visualEpochRef.current += 1;
+  }, [
+    currentPage,
+    scale,
+    pageWpt,
+    pageHpt,
+    pageWpx,
+    pageHpx,
+    sharpness,
+    themeColor,
+    testTitle,
+    schoolName,
+    columns,
+    headerStyleId,
+    /** Fasikül klasik başlık: rozet / bilgi metinleri headerConfig’te; epoch yoksa boya atlanır */
+    headerConfig,
+    showQuestionScratchGrid,
+    scratchGridCornerRadiusPt,
+    scratchGridColorMode,
+    scratchGridColor,
+    questionChromeSig,
+    writtenFieldLabelsSig,
+    questionNumberLeftOffsetMm,
+    questionNumberImageGapMm,
+    questionNumberingEnabled,
+    questionNumberColorMode,
+    questionNumberFontPt,
+    headerBottomGapMm,
+    otherPageHeaderBottomGapMm,
+    drawSelectionOutline,
+    drawGapIndicators,
+    images.size,
+    logoImage,
+    watermarkImage,
+  ]);
+
   useLayoutEffect(() => {
     drawRef.current();
   }, [draw]);
@@ -2961,6 +3186,9 @@ export default function CanvasPdfPreview({
     canvas.style.height = `${pageHpx}px`;
     const ctx = canvas.getContext("2d");
     if (ctx) ctx.setTransform(bufferScale, 0, 0, bufferScale, 0, 0);
+    // width/height ataması bitmap’i siler — zoom sonrası skip gate boş sayfa bırakmasın
+    lastPaintedGeomSigRef.current = "";
+    lastPaintedVisualEpochRef.current = -1;
     drawRef.current();
   }, [pageWpx, pageHpx, sharpness]);
 
@@ -3032,7 +3260,10 @@ export default function CanvasPdfPreview({
           ? questionDragLiveRef.current.imgYTopPt
           : item.img_y_top_pt!) + yShiftPt;
       const { x, y } = ptToCanvas(
-        questionImageLeftPt(item, numOffsetMm, numGapMm),
+        resolveLayoutItemImageXPt(item, numOffsetMm, numGapMm, {
+          committedLeftOffsetMm: questionNumberLeftOffsetMm,
+          committedImageGapMm: questionNumberImageGapMm,
+        }),
         imgY
       );
       const w = item.img_w_pt! * scale;

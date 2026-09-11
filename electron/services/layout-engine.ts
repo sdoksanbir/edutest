@@ -25,6 +25,7 @@ import {
   QUESTION_NUM_FONT_PT,
 } from './question-number-metrics.js'
 import { computeColumnGapSizesPt } from './column-gap-distribution.js'
+import { parseCapture } from './question-native-size.js'
 import {
   buildLayoutScaleDiagMeta,
   type LayoutScaleDiagMeta,
@@ -33,6 +34,18 @@ import {
   calculateQuestionDrawMetrics,
   IMG_COL_RIGHT_PAD_PT as METRICS_IMG_PAD,
 } from './question-draw-metrics.js'
+import {
+  fasikulFrameBadgeTopReservePt,
+  isOptikAnswerableLayoutQuestion,
+} from './fasikul-question-frame-draw.js'
+import {
+  fasikulMinScratchGapPt,
+  fasikulOneLineGapPt,
+  fasikulEmptyBoxBottomGapPt,
+  fasikulTrailingGapFloorPt,
+  scratchCellPt,
+  SCRATCH_CELL_MM,
+} from './question-scratch-grid.js'
 
 export type LayoutRow = {
   order_index: number
@@ -67,11 +80,14 @@ type QuestionBlock = {
   preferred_gap_pt: number
   min_gap_pt: number
   image_base64?: string
+  question_id?: string
   answer_key: string
   content_type: string
   scale_diag?: LayoutScaleDiagMeta
   span_full_width: boolean
   layout_mode: 'single-column' | 'full-width' | 'auto'
+  /** Üst dış fasikül başlığı için y_top → img_y_top ofseti */
+  badge_top_reserve_pt?: number
 }
 
 type LayoutEntry = QuestionBlock & {
@@ -101,10 +117,72 @@ export const FOOTER_BOTTOM_OFFSET_MM = 3.0
 export const FOOTER_NUMBER_PAD_MM = 0.8
 /** Sütun altı — son soru ile footer üst çizgisi arası minimum (mm) */
 export const COLUMN_LAYOUT_BOTTOM_MIN_MM = 0.6
+/** Fasikül + kareli alan: her soru altında / sütun altında en az 3 satır */
+export const FASIKUL_MIN_BOTTOM_SCRATCH_ROWS = 3
+export const FASIKUL_SCRATCH_CELL_MM = 5
 export const PT_PER_MM = 72 / 25.4
 
 export function mmToPt(mm: number) {
   return mm * PT_PER_MM
+}
+
+/** Fasikül: kareli alan veya çerçeve badge — ara boşluk sabit (görsel altı ↔ ÖRNEK üstü) */
+function useFasikulFixedInterGaps(payload: Record<string, unknown>): boolean {
+  if (payload.show_question_scratch_grid === true) return true
+  const qs = payload.questions
+  if (!Array.isArray(qs)) return false
+  return qs.some((q) => {
+    const f = (q as { fasikulFrame?: { enabled?: boolean } })?.fasikulFrame
+    return f?.enabled === true
+  })
+}
+
+function layoutColumnBottomMinPt(): number {
+  return mmToPt(COLUMN_LAYOUT_BOTTOM_MIN_MM)
+}
+
+/** Fasikülde kareli alan: altta en az 3 satır + pad sığacak rezerv */
+function columnBottomReservePt(payload: Record<string, unknown>): number {
+  const base = layoutColumnBottomMinPt()
+  if (payload.show_question_scratch_grid !== true) return base
+  const qs = payload.questions
+  let anyScratch = true
+  if (Array.isArray(qs)) {
+    anyScratch = qs.some((q) => {
+      const f = (q as { fasikulFrame?: { enabled?: boolean; showScratchGrid?: boolean } })
+        ?.fasikulFrame
+      if (f?.enabled === true) return f.showScratchGrid === true
+      return true
+    })
+  }
+  if (anyScratch) {
+    return Math.max(base, fasikulMinScratchGapPt(FASIKUL_SCRATCH_CELL_MM))
+  }
+  return Math.max(base, fasikulOneLineGapPt(FASIKUL_SCRATCH_CELL_MM))
+}
+
+function fasikulQuestionGapFloorPt(payload: Record<string, unknown>): number {
+  if (payload.show_question_scratch_grid !== true) return 0
+  return fasikulOneLineGapPt(FASIKUL_SCRATCH_CELL_MM)
+}
+
+function questionTrailingGapPt(
+  q: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): number {
+  const emptyRows = Number((q as { fasikulEmptyRows?: unknown }).fasikulEmptyRows ?? 0)
+  const frame = (q as { fasikulFrame?: { enabled?: boolean; showScratchGrid?: boolean } })
+    .fasikulFrame
+  /** Boş hazır tasarım: altta tam 2 satır (fazlası yok) */
+  if (emptyRows > 0 && frame?.enabled === true) {
+    return fasikulEmptyBoxBottomGapPt(FASIKUL_SCRATCH_CELL_MM)
+  }
+  const base = Math.max(
+    mmToPt(Number(payload.question_gap_mm ?? 25)),
+    fasikulQuestionGapFloorPt(payload),
+  )
+  if (payload.show_question_scratch_grid !== true) return base
+  return Math.max(base, fasikulTrailingGapFloorPt(frame, FASIKUL_SCRATCH_CELL_MM))
 }
 
 function questionNumberImageGapPt(payload: Record<string, unknown>): number {
@@ -288,8 +366,7 @@ function prepareQuestionBlocks(
   payload: Record<string, unknown>,
   geom: ReturnType<typeof computeGeometry>,
 ): QuestionBlock[] {
-  const preferredGapPt = mmToPt(Number(payload.question_gap_mm ?? 25))
-  const minGapPt = mmToPt(Number(payload.question_gap_min_mm ?? 25))
+  const gapFloorPt = fasikulQuestionGapFloorPt(payload)
   const sorted = [...questions].sort(
     (a, b) => Number(a.order_index ?? 0) - Number(b.order_index ?? 0),
   )
@@ -308,13 +385,99 @@ function prepareQuestionBlocks(
 
   for (let i = 0; i < sorted.length; i++) {
     const q = sorted[i]!
+    const emptyRowsRaw = Number(
+      (q as { fasikulEmptyRows?: unknown }).fasikulEmptyRows ?? 0,
+    )
+    const emptyRows =
+      Number.isFinite(emptyRowsRaw) && emptyRowsRaw > 0
+        ? Math.max(1, Math.round(emptyRowsRaw))
+        : 0
+    const frameEnabled =
+      (q as { fasikulFrame?: { enabled?: boolean } }).fasikulFrame?.enabled === true
     const b64 = q.image_base64 as string | undefined
-    if (!b64) continue
 
-    const size = getImageSizeFromBase64(b64)
+    const qPreferredGap = questionTrailingGapPt(q, payload)
+    const qMinGap = Math.max(
+      mmToPt(Number(payload.question_gap_min_mm ?? 25)),
+      gapFloorPt,
+      frameEnabled
+        ? fasikulTrailingGapFloorPt(
+            (q as { fasikulFrame?: { enabled?: boolean; showScratchGrid?: boolean } })
+              .fasikulFrame,
+            FASIKUL_SCRATCH_CELL_MM,
+          )
+        : 0,
+    )
+
+    if (emptyRows > 0 && frameEnabled) {
+      const cellPt = scratchCellPt(FASIKUL_SCRATCH_CELL_MM)
+      const drawH = emptyRows * cellPt
+      const drawW = singleAvailW
+      const badgeTopReservePt = fasikulFrameBadgeTopReservePt(q.fasikulFrame)
+      const emptyGap = fasikulEmptyBoxBottomGapPt(FASIKUL_SCRATCH_CELL_MM)
+      blocks.push({
+        order_index: Number(q.order_index ?? i),
+        block_h: Math.max(12, drawH + badgeTopReservePt),
+        draw_w: drawW,
+        draw_h: drawH,
+        preferred_gap_pt: emptyGap,
+        min_gap_pt: emptyGap,
+        /** Görsel yok — içi boş kutu; önizleme/export eski order görselini bağlayamaz */
+        image_base64: undefined,
+        question_id: String(q.id ?? ''),
+        answer_key: String(q.answer_key ?? '').trim().toUpperCase() || '?',
+        content_type: String(q.content_type ?? 'question'),
+        scale_diag: buildLayoutScaleDiagMeta({
+          sourceWpx: 1,
+          sourceHpx: 1,
+          availWPt: singleAvailW,
+          requestedScale: 1,
+          finalDrawWPt: drawW,
+          finalDrawHPt: drawH,
+          growOverflowTolerance: 1,
+          allowSlightOverflow: false,
+          maxAllowedWPt: singleAvailW,
+          nativeWidthPt: drawW,
+          nativeHeightPt: drawH,
+          pixelsPerPdfPoint: 1,
+          manualScale: 1,
+          normalizationScale: 1,
+          metadataSource: 'legacy-fallback',
+          layoutMode: 'single-column',
+          singleColumnFulfillment: 1,
+          fullWidthAvailW: fullWidthAvailW,
+          fullWidthAppliedScale: 1,
+          fullWidthFulfillment: 1,
+          layoutRecommendation: 'SINGLE_COLUMN',
+        }),
+        span_full_width: false,
+        layout_mode: 'single-column',
+        badge_top_reserve_pt: badgeTopReservePt,
+      })
+      continue
+    }
+
+    let size: { w: number; h: number } | null = b64
+      ? getImageSizeFromBase64(b64)
+      : null
+    if (!size || !(size.w > 0 && size.h > 0)) {
+      const wHint = Number(q.image_width_px)
+      const hHint = Number(q.image_height_px)
+      if (wHint > 0 && hHint > 0) size = { w: wHint, h: hHint }
+    }
+    if (!size || !(size.w > 0 && size.h > 0)) {
+      const cap = parseCapture(q)
+      if (cap && cap.cropWidthPx > 0 && cap.cropHeightPx > 0) {
+        size = { w: cap.cropWidthPx, h: cap.cropHeightPx }
+      } else if (cap && cap.cropWidthPt > 0 && cap.cropHeightPt > 0 && cap.pixelsPerPdfPoint > 0) {
+        size = {
+          w: Math.max(1, Math.round(cap.cropWidthPt * cap.pixelsPerPdfPoint)),
+          h: Math.max(1, Math.round(cap.cropHeightPt * cap.pixelsPerPdfPoint)),
+        }
+      }
+    }
     if (!size || size.w <= 0 || size.h <= 0) continue
 
-    const gapPt = preferredGapPt
     const allowSlightOverflow = payload.allow_slight_overflow === true
     const metrics = calculateQuestionDrawMetrics(
       q,
@@ -330,6 +493,7 @@ function prepareQuestionBlocks(
     const useFullWidth = metrics.layoutMode === 'full-width'
     const drawW = metrics.drawWidth
     const drawH = metrics.drawHeight
+    const badgeTopReservePt = fasikulFrameBadgeTopReservePt(q.fasikulFrame)
 
     const scale_diag = buildLayoutScaleDiagMeta({
       sourceWpx: size.w,
@@ -370,27 +534,25 @@ function prepareQuestionBlocks(
 
     blocks.push({
       order_index: Number(q.order_index ?? i),
-      block_h: Math.max(12, drawH),
+      block_h: Math.max(12, drawH + badgeTopReservePt),
       draw_w: drawW,
       draw_h: drawH,
-      preferred_gap_pt: gapPt,
-      min_gap_pt: minGapPt,
+      preferred_gap_pt: qPreferredGap,
+      min_gap_pt: qMinGap,
       image_base64: b64,
+      question_id: String(q.id ?? ''),
       answer_key: String(q.answer_key ?? '').trim().toUpperCase() || '?',
       content_type: String(q.content_type ?? 'question'),
       scale_diag,
       span_full_width: useFullWidth,
-      layout_mode: useFullWidth ? 'full-width' : 'single-column',
+      layout_mode: metrics.layoutMode,
+      badge_top_reserve_pt: badgeTopReservePt,
     })
   }
   return blocks
 }
 
-function layoutColumnBottomMinPt(): number {
-  return mmToPt(COLUMN_LAYOUT_BOTTOM_MIN_MM)
-}
-
-/** Sütunda sorular standart aralıkla sığıyor mu? (alt boşluk ≥ 0.6 mm’ye kadar esnetilebilir) */
+/** Sütunda sorular standart aralıkla sığıyor mu? (alt boşluk ≥ rezerv) */
 function columnBufferFits(
   buffer: QuestionBlock[],
   availableHeight: number,
@@ -411,13 +573,23 @@ function computeAppliedGaps(
   buffer: QuestionBlock[],
   availableHeight: number,
   columnBottomMinPt: number,
+  fixedInterGaps: boolean,
 ): number[] {
   const n = buffer.length
   if (n === 0) return []
   const totalBlock = buffer.reduce((s, q) => s + q.block_h, 0)
   const gapBudget = availableHeight - totalBlock
+  if (fixedInterGaps) {
+    if (n === 1) return [Math.max(columnBottomMinPt, gapBudget)]
+    const interGaps = buffer.slice(0, -1).map((q) => q.preferred_gap_pt)
+    const usedInter = interGaps.reduce((s, g) => s + g, 0)
+    const bottom = Math.max(columnBottomMinPt, gapBudget - usedInter)
+    return [...interGaps, bottom]
+  }
   const standardGapPt = buffer[0]?.preferred_gap_pt ?? buffer[0]?.min_gap_pt ?? 0
-  return computeColumnGapSizesPt(gapBudget, n, standardGapPt, columnBottomMinPt)
+  return computeColumnGapSizesPt(gapBudget, n, standardGapPt, columnBottomMinPt, {
+    fixedInterGaps,
+  })
 }
 
 function repositionColumnEntries(
@@ -425,8 +597,14 @@ function repositionColumnEntries(
   colTop: number,
   availableHeight: number,
   columnBottomMinPt: number,
+  fixedInterGaps: boolean,
 ): void {
-  const gaps = computeAppliedGaps(entries, availableHeight, columnBottomMinPt)
+  const gaps = computeAppliedGaps(
+    entries,
+    availableHeight,
+    columnBottomMinPt,
+    fixedInterGaps,
+  )
   let y = colTop
   for (let j = 0; j < entries.length; j++) {
     const e = entries[j]!
@@ -473,7 +651,8 @@ function backfillColumnsInReadingOrder(
   entries: LayoutEntry[],
   payload: Record<string, unknown>,
 ): LayoutEntry[] {
-  const columnBottomMinPt = layoutColumnBottomMinPt()
+  const columnBottomMinPt = columnBottomReservePt(payload)
+  const fixedInterGaps = useFasikulFixedInterGaps(payload)
   const slots = buildColumnSlots(entries, payload)
 
   for (let i = 0; i < slots.length - 1; i++) {
@@ -494,7 +673,13 @@ function backfillColumnsInReadingOrder(
 
   const result: LayoutEntry[] = []
   for (const slot of slots) {
-    repositionColumnEntries(slot.entries, slot.colTop, slot.availableHeight, columnBottomMinPt)
+    repositionColumnEntries(
+      slot.entries,
+      slot.colTop,
+      slot.availableHeight,
+      columnBottomMinPt,
+      fixedInterGaps,
+    )
     for (const e of slot.entries) {
       e.x_pt = slot.x
     }
@@ -516,7 +701,8 @@ function computeLayoutEntriesFlexible(
   const geom0 = computeGeometry(payload, 1)
   const cols = geom0.cols
   const colW = geom0.colW
-  const columnBottomMinPt = layoutColumnBottomMinPt()
+  const columnBottomMinPt = columnBottomReservePt(payload)
+  const fixedInterGaps = useFasikulFixedInterGaps(payload)
   void payload.auto_compact_spacing
 
   const result: LayoutEntry[] = []
@@ -580,7 +766,7 @@ function computeLayoutEntriesFlexible(
 
   const placeFullWidth = (q: QuestionBlock) => {
     if (colBuffer.length > 0) {
-      flushColumn(computeAppliedGaps(colBuffer, availableHeight, columnBottomMinPt))
+      flushColumn(computeAppliedGaps(colBuffer, availableHeight, columnBottomMinPt, fixedInterGaps))
     }
 
     const g = computeGeometry(payload, pageNum)
@@ -663,12 +849,12 @@ function computeLayoutEntriesFlexible(
       nextColumn()
       continue
     }
-    flushColumn(computeAppliedGaps(colBuffer, availableHeight, columnBottomMinPt))
+    flushColumn(computeAppliedGaps(colBuffer, availableHeight, columnBottomMinPt, fixedInterGaps))
     nextColumn()
   }
 
   if (colBuffer.length > 0) {
-    flushColumn(computeAppliedGaps(colBuffer, availableHeight, columnBottomMinPt))
+    flushColumn(computeAppliedGaps(colBuffer, availableHeight, columnBottomMinPt, fixedInterGaps))
   }
 
   // Full-width varken backfill yatay çakışma riski taşır — atla
@@ -686,9 +872,17 @@ function applyDisplayNumbers(entries: LayoutEntry[], payload: Record<string, unk
     for (const e of entries) e.display_number = null
     return
   }
+  const questions = (payload.questions as Array<Record<string, unknown>>) ?? []
+  const qByOrder = new Map(
+    questions.map((q) => [Number(q.order_index ?? -1), q] as const),
+  )
   let counter = start
   for (const e of entries) {
-    if (e.content_type === 'explanation') {
+    const q = qByOrder.get(e.order_index)
+    const skip = q
+      ? !isOptikAnswerableLayoutQuestion(q)
+      : e.content_type === 'explanation'
+    if (skip) {
       e.display_number = null
     } else {
       e.display_number = counter
@@ -723,10 +917,12 @@ function entriesToLayoutRows(
       num_slot_w_pt: numTextW,
       // draw_w < sütun: sola hizalı (numara sonrası); sütuna yayılmaz
       img_x_pt: entry.x_pt + numTextW + imageGapPt,
-      img_y_top_pt: entry.y_top_pt,
+      // Başlık kutunun dışında: blok tepesi y_top, görsel reserve kadar aşağıda
+      img_y_top_pt: entry.y_top_pt - (entry.badge_top_reserve_pt ?? 0),
       img_w_pt: entry.draw_w,
       img_h_pt: entry.draw_h,
       image_base64: skipImages ? undefined : entry.image_base64,
+      question_id: entry.question_id,
       answer_key: entry.answer_key,
       display_number: entry.display_number,
       content_type: entry.content_type,
@@ -783,7 +979,10 @@ function applyLayoutPlacementOverrides(layout: LayoutRow[], payload: Record<stri
 
   const overrideByOrder = new Map(list.map((o) => [o.order_index, o]))
   const cols = Math.max(1, Math.min(6, Number(payload.columns ?? 1)))
-  const minGapPt = mmToPt(Number(payload.question_gap_min_mm ?? 12))
+  const minGapPt = Math.max(
+    mmToPt(Number(payload.question_gap_min_mm ?? 12)),
+    fasikulQuestionGapFloorPt(payload),
+  )
   const numImageGapPt = questionNumberImageGapPt(payload)
   const fontPt = questionNumberFontPtFromPayload(payload)
 
@@ -907,13 +1106,21 @@ function reapplyDisplayNumbersByReadingOrder(
 
   const displayByOrder = new Map<number, number | null>()
   let counter = start
+  const questions = (payload.questions as Array<Record<string, unknown>>) ?? []
+  const qByOrder = new Map(
+    questions.map((q) => [Number(q.order_index ?? -1), q] as const),
+  )
 
   for (const pageNum of pageNums) {
     const geom = computeGeometry(payload, pageNum)
     for (let col = 0; col < cols; col++) {
       const items = getColumnItemsSortedTopFirstLayout(layout, pageNum, col, geom.columnX)
       for (const item of items) {
-        if (String(item.content_type ?? 'question') === 'explanation') {
+        const q = qByOrder.get(item.order_index)
+        const skip = q
+          ? !isOptikAnswerableLayoutQuestion(q)
+          : String(item.content_type ?? 'question') === 'explanation'
+        if (skip) {
           displayByOrder.set(item.order_index, null)
         } else {
           displayByOrder.set(item.order_index, counter)
@@ -939,8 +1146,8 @@ export function computeLayoutFromPayload(payload: Record<string, unknown>) {
   const skipImages = Boolean(payload.skip_images)
   const geom = computeGeometry(payload, 1)
 
-  const questionCount = questions.filter(
-    (q) => String(q.content_type ?? 'question') !== 'explanation',
+  const questionCount = questions.filter((q) =>
+    isOptikAnswerableLayoutQuestion(q as Record<string, unknown>),
   ).length
   const startNum = Math.max(1, Number(payload.question_number_start ?? 1))
   const fontPt = questionNumberFontPtFromPayload(payload)
@@ -978,11 +1185,8 @@ export function computeLayoutFromPayload(payload: Record<string, unknown>) {
   layout = applyLayoutPlacementOverrides(layout, payload)
   applyYTopOverrides(layout, overrides)
 
-  const hasManualLayout =
-    ((payload.layout_placement_overrides as unknown[]) ?? []).length > 0 || overrides.size > 0
-  if (hasManualLayout) {
-    reapplyDisplayNumbersByReadingOrder(layout, payload)
-  }
+  // Her zaman sütun sütun okuma sırasına göre numarala (sol kolon yukarı→aşağı, sonra sağ)
+  reapplyDisplayNumbersByReadingOrder(layout, payload)
 
   const answerKeyMode = String(payload.answer_key_mode ?? 'per_page')
   const includeAnswerKey = Boolean(payload.include_answer_key)

@@ -190,6 +190,27 @@ export function pageFrameCornerRadiusMm(payload: Record<string, unknown>): numbe
   return Math.max(0, Math.min(15, Math.round(raw * 10) / 10))
 }
 
+export function scratchGridCornerRadiusPt(payload: Record<string, unknown>): number {
+  const raw = Number(payload.scratch_grid_corner_radius_pt ?? 1.5)
+  if (!Number.isFinite(raw)) return 1.5
+  return Math.max(0, Math.min(20, Math.round(raw * 10) / 10))
+}
+
+export function scratchGridColorMode(
+  payload: Record<string, unknown>,
+): 'gray' | 'black' | 'theme' | 'custom' {
+  const raw = String(payload.scratch_grid_color_mode ?? 'gray').trim().toLowerCase()
+  if (raw === 'theme' || raw === 'custom' || raw === 'black' || raw === 'gray') return raw
+  return 'gray'
+}
+
+export function scratchGridColorHex(payload: Record<string, unknown>): string {
+  const raw = String(payload.scratch_grid_color ?? '#94A3B8').trim()
+  if (/^#[0-9A-Fa-f]{6}$/.test(raw)) return raw.toUpperCase()
+  if (/^[0-9A-Fa-f]{6}$/.test(raw)) return `#${raw.toUpperCase()}`
+  return '#94A3B8'
+}
+
 export function pageFrameLineStyle(payload: Record<string, unknown>): 'solid' | 'dashed' | 'dotted' {
   const raw = String(payload.page_frame_line_style ?? 'solid')
   if (raw === 'dashed' || raw === 'dotted') return raw

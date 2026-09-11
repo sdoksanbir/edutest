@@ -9,6 +9,8 @@ import { stripDataUrlPrefix, resolveWatermarkAngleDeg } from "./visualProperties
 import { resolveThemePrimaryHex } from "./pageStructureHelpers";
 import { resolveRequestedScale } from "./questionScale";
 import { getAllFontEqualizeDiagsForExport } from "./questionScaleDiagnostics";
+import { SCRATCH_COLOR_CUSTOM_DEFAULT, SCRATCH_COLOR_MODE_DEFAULT, SCRATCH_CORNER_RADIUS_DEFAULT_PT } from "./questionScratchGrid";
+import type { ScratchGridColorMode } from "./questionScratchGrid";
 
 export type PdfExportPayloadContext = {
   questions: QuestionItem[];
@@ -112,6 +114,12 @@ export type PdfExportPayloadContext = {
   lockPreviewLayout?: boolean;
   /** Fasikül: soru altı kareli çözüm alanı */
   showQuestionScratchGrid?: boolean;
+  /** Fasikül: cevap anahtarında ÖRNEK 1 / ÖSYM etiketleri */
+  fasikulAnswerKeyLabels?: boolean;
+  /** Fasikül: kareli alan köşe yuvarlaklığı (pt) */
+  scratchGridCornerRadiusPt?: number;
+  scratchGridColorMode?: ScratchGridColorMode;
+  scratchGridColor?: string;
   /** Deneme: sağ alt “Diğer sayfaya geçiniz / TEST BİTTİ” */
   showFooterNavHints?: boolean;
   lastQuestionPage?: number;
@@ -168,6 +176,8 @@ function mapQuestionsForExport(questions: QuestionItem[]) {
     ocr_font_matched: q.ocr_font_matched,
     font_line_px: q.font_line_px,
     fasikulFrame: q.fasikulFrame,
+    fasikulEmptyRows: q.fasikulEmptyRows,
+    scratchGridRows: q.scratchGridRows,
   }));
 }
 
@@ -247,7 +257,8 @@ export function buildPdfExportPayload(ctx: PdfExportPayloadContext): Record<stri
     target_question_line_pt: ctx.targetQuestionLinePt ?? 10,
     allow_slight_overflow: ctx.allowSlightOverflow === true,
     question_gap_mm: ctx.questionGapMm,
-    question_gap_min_mm: ctx.questionGapMm,
+    question_gap_min_mm:
+      ctx.questionGapMinMm != null ? ctx.questionGapMinMm : ctx.questionGapMm,
     auto_compact_spacing: false,
     page_preset: paper.page_preset,
     page_width_mm: paper.page_width_mm,
@@ -352,6 +363,11 @@ export function buildPdfExportPayload(ctx: PdfExportPayloadContext): Record<stri
     page_frame_corner_radius_mm: ctx.pageFrameCornerRadiusMm,
     page_frame_line_style: ctx.pageFrameLineStyle,
     show_question_scratch_grid: ctx.showQuestionScratchGrid === true,
+    fasikul_answer_key_labels: ctx.fasikulAnswerKeyLabels === true,
+    scratch_grid_corner_radius_pt:
+      ctx.scratchGridCornerRadiusPt ?? SCRATCH_CORNER_RADIUS_DEFAULT_PT,
+    scratch_grid_color_mode: ctx.scratchGridColorMode ?? SCRATCH_COLOR_MODE_DEFAULT,
+    scratch_grid_color: ctx.scratchGridColor ?? SCRATCH_COLOR_CUSTOM_DEFAULT,
     ...(ctx.optikFormOverlays && ctx.optikFormOverlays.length > 0
       ? { optik_form_overlays: ctx.optikFormOverlays }
       : {}),

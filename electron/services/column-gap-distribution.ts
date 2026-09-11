@@ -2,27 +2,46 @@
 
 const LAYOUT_EPS = 1e-4
 
+export type ColumnGapOptions = {
+  /**
+   * true: sorular arası boşluk hep standardGapPt (sıkışınca küçülür);
+   * fazla alan yalnızca sütun altına gider.
+   * Fasikül: boşluk = soru görseli altı ↔ ÖRNEK üstü.
+   */
+  fixedInterGaps?: boolean
+}
+
 export function computeColumnGapSizesPt(
   gapBudgetPt: number,
   itemCount: number,
   standardGapPt: number,
   columnBottomMinPt: number,
+  options?: ColumnGapOptions,
 ): number[] {
   const n = itemCount
   if (n <= 0) return []
   if (n === 1) return [Math.max(columnBottomMinPt, gapBudgetPt)]
 
   const interCount = n - 1
+  const fixedInter = options?.fixedInterGaps === true
   const bottomIfStandardInter = gapBudgetPt - interCount * standardGapPt
 
   if (bottomIfStandardInter >= columnBottomMinPt - LAYOUT_EPS) {
-    if (bottomIfStandardInter > standardGapPt + LAYOUT_EPS) {
+    if (!fixedInter && bottomIfStandardInter > standardGapPt + LAYOUT_EPS) {
       const equal = gapBudgetPt / n
       return Array.from({ length: n }, () => equal)
     }
     return [
       ...Array.from({ length: interCount }, () => standardGapPt),
       Math.max(columnBottomMinPt, bottomIfStandardInter),
+    ]
+  }
+
+  if (fixedInter) {
+    // Ara boşluğu standardGapPt altına indirme — fasikülde 3 satır kareli alan şartı
+    return [
+      ...Array.from({ length: interCount }, () => standardGapPt),
+      Math.max(0, gapBudgetPt - interCount * standardGapPt),
     ]
   }
 

@@ -56,6 +56,9 @@ type Props = {
 
   onRegisterRedraw?: (redraw: () => void) => (() => void) | void;
 
+  /** Fasikül: ok = üst görsel altı ↔ ÖRNEK üstü */
+  fasikulGapMode?: boolean;
+
 };
 
 
@@ -191,6 +194,8 @@ export default function QuestionGapIndicatorOverlay({
 
   onRegisterRedraw,
 
+  fasikulGapMode = false,
+
 }: Props) {
 
   const compute = useCallback((): QuestionGapIndicator[] => {
@@ -222,6 +227,7 @@ export default function QuestionGapIndicatorOverlay({
       questionNumberLeftOffsetMm: numOffsetMm,
       selectedQuestions,
       dragLive,
+      fasikulGapMode,
       yShiftPtForItem: useLiveReflowLayout
         ? undefined
         : (item) =>
@@ -250,6 +256,7 @@ export default function QuestionGapIndicatorOverlay({
     otherPageHeaderBottomGapMm,
     selectedQuestions,
     questionDragLiveRef,
+    fasikulGapMode,
   ]);
 
 

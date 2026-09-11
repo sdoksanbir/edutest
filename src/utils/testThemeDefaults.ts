@@ -106,6 +106,7 @@ export function buildFasikulThemeDefaults(
   activeStyleId: string | undefined,
 ): TestThemeDefaultsResult {
   const built = buildTestThemeDefaults(activeStyleId);
+  const isMinimal = built.headerStyleId === "style_2";
   return {
     ...built,
     themeColor: FASIKUL_THEME_PRIMARY,
@@ -113,10 +114,47 @@ export function buildFasikulThemeDefaults(
       ...built.headerConfig,
       primaryColor: FASIKUL_THEME_PRIMARY,
       accentColor: FASIKUL_THEME_ACCENT,
-      subjectPillFillColor:
-        built.headerStyleId === "style_2"
-          ? FASIKUL_THEME_PRIMARY
-          : built.headerConfig.subjectPillFillColor,
+      subjectPillFillColor: isMinimal
+        ? FASIKUL_THEME_PRIMARY
+        : built.headerConfig.subjectPillFillColor,
+      ...(isMinimal
+        ? {
+            showHeaderLeft: false,
+            showClassicInfoBar: true,
+            showClassicInfoBarScore: false,
+            bannerRightMode: "examType" as const,
+            fieldHidden: {
+              ...(built.headerConfig.fieldHidden ?? {}),
+              examType: false,
+            },
+            badgeByStyle: {
+              ...(built.headerConfig.badgeByStyle ?? {}),
+              style_2: {
+                ...(built.headerConfig.badgeByStyle?.style_2 ?? {}),
+                ...style2BadgeDefaults(),
+                bannerRightMode: "examType",
+                bannerRightSlots: ["examType"],
+                scoreBoxOffsetYPt: -1,
+                examTypeBoxBorderStyle: "none",
+                examTypeBoxFillEnabled: true,
+                examTypeBoxFillColor: FASIKUL_THEME_PRIMARY,
+              },
+            },
+            headerInfoByStyle: {
+              ...(built.headerConfig.headerInfoByStyle ?? {}),
+              style_2: {
+                ...(built.headerConfig.headerInfoByStyle?.style_2 ?? {}),
+                showHeaderLeft: false,
+                showClassicInfoBar: true,
+                showClassicInfoBarScore: false,
+                headerLeftMode: "publicationText",
+                subjectPillFillColor: FASIKUL_THEME_PRIMARY,
+                primaryColor: FASIKUL_THEME_PRIMARY,
+                accentColor: FASIKUL_THEME_ACCENT,
+              },
+            },
+          }
+        : {}),
     },
   };
 }

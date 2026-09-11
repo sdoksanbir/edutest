@@ -90,6 +90,25 @@ function find(id: string) {
   return q
 }
 
+function findOptional(id: string): QuestionItem | undefined {
+  return questions.find((x) => x.id === id)
+}
+
+export function getImageBase64(id: string): string {
+  const q = findOptional(id)
+  if (!q) {
+    // İstemci-only boş fasikül kutuları store’da yok — hata fırlatma
+    return ''
+  }
+  if (q.image_path && fs.existsSync(q.image_path)) {
+    return fs.readFileSync(q.image_path).toString('base64')
+  }
+  if (q.image_base64) {
+    return q.image_base64.includes(',') ? q.image_base64.split(',')[1]! : q.image_base64
+  }
+  return ''
+}
+
 export function updateAnswer(id: string, answer_key: string) {
   find(id).answer_key = answer_key
   return find(id)
@@ -118,7 +137,18 @@ export function updateExplanationCaption(id: string, body: Record<string, unknow
 
 export function reorder(ordered_ids: string[]) {
   const byId = Object.fromEntries(questions.map((q) => [q.id, q]))
-  const next = ordered_ids.map((id, index) => ({ ...byId[id]!, order_index: index }))
+  // İstemci-only boş fasikül kutuları store’da olmayabilir — atla
+  const next = ordered_ids
+    .map((id, index) => {
+      const q = byId[id]
+      if (!q) return null
+      return { ...q, order_index: index }
+    })
+    .filter((q): q is QuestionItem => q != null)
+  // Eksik id’ler atlandıysa order_index’i yeniden sıkıştır
+  next.forEach((q, i) => {
+    q.order_index = i
+  })
   questions.splice(0, questions.length, ...next)
   return listQuestions()
 }
@@ -135,15 +165,4 @@ export function replaceAll(items: QuestionItem[]) {
 
 export function clearAll() {
   questions.splice(0, questions.length)
-}
-
-export function getImageBase64(id: string): string {
-  const q = find(id)
-  if (q.image_path && fs.existsSync(q.image_path)) {
-    return fs.readFileSync(q.image_path).toString('base64')
-  }
-  if (q.image_base64) {
-    return q.image_base64.includes(',') ? q.image_base64.split(',')[1]! : q.image_base64
-  }
-  throw new Error('Question image not found')
 }

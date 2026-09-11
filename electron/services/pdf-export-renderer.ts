@@ -36,8 +36,12 @@ import { footerPageNumberCircleRadiusPt } from './footer-band-layout.js'
 import {
   drawScratchGridOnPdfPage,
   resolveScratchGridRectPt,
+  resolveScratchGridStrokeHex,
   SCRATCH_PAD_BOTTOM_PT,
+  FASIKUL_MIN_SCRATCH_ROWS,
 } from './question-scratch-grid.js'
+import { drawFasikulQuestionFrameOnPdfPage, buildFasikulOrnekNumberByOrderIndex, fasikulFrameShowsScratchGrid, fasikulFrameBadgeTopReservePt, isOptikAnswerableLayoutQuestion, resolveFasikulAnswerKeyLabel } from './fasikul-question-frame-draw.js'
+import { knockoutNearWhiteImageBase64 } from './fasikul-white-knockout.js'
 import {
   watermarkActive,
   watermarkAngleDeg,
@@ -51,6 +55,9 @@ import {
   themePrimaryColor,
   columnDividerColor,
   questionNumberFontPt,
+  scratchGridCornerRadiusPt,
+  scratchGridColorMode,
+  scratchGridColorHex,
 } from './visual-properties.js'
 import { drawSeparateAnswerKeyTablePdf, SEPARATE_AK, ANSWER_KEY_NAVY_HEX, ensureSeparateAnswerKeyPages, separateAnswerKeyCapacity } from './separate-answer-key-table.js'
 
@@ -69,6 +76,12 @@ function questionNumberBaselinePt(imgYTop: number, fontPt: number): number {
 
 function questionNumberLeftPt(xCol: number, offsetPt: number): number {
   return xCol + offsetPt
+}
+
+/** css-px benzeri (önizleme) → pt */
+function pxToPtSafe(px: number): number {
+  if (!Number.isFinite(px)) return 0
+  return Math.max(0, px * 0.75)
 }
 
 const QUALITY_ZOOM: Record<string, number> = {
@@ -151,10 +164,16 @@ async function loadPdfFonts(pdf: PDFDocument): Promise<{
 
 async function embedQuestionImage(pdf: PDFDocument, b64: string) {
   const bytes = Buffer.from(rawBase64(b64), 'base64')
+  // Knockout sonrası her zaman PNG (alfa / yeniden boyama)
   try {
     return await pdf.embedPng(bytes)
   } catch {
-    return await pdf.embedJpg(bytes)
+    try {
+      return await pdf.embedJpg(bytes)
+    } catch {
+      // son çare: data-url bozulmuş olabilir
+      return await pdf.embedPng(bytes)
+    }
   }
 }
 
@@ -369,33 +388,37 @@ async function drawWatermark(
 function collectAnswerKeyItems(
   layout: LayoutRow[],
   payload: Record<string, unknown>,
-): Array<{ num: number; answer: string }> {
-  const fromLayout = layout
+): Array<{ label: string; num: number; answer: string }> {
+  const questions = (payload.questions as Array<Record<string, unknown>>) ?? []
+  const useFasikulLabels = Boolean(payload.fasikul_answer_key_labels)
+  const qByOrder = new Map(
+    questions.map((q) => [Number(q.order_index ?? -1), q] as const),
+  )
+  const ornekByOrder = useFasikulLabels
+    ? buildFasikulOrnekNumberByOrderIndex(questions)
+    : new Map<number, number>()
+
+  return layout
     .filter((l) => l.kind !== 'answer_key_page' && l.display_number != null)
     .sort((a, b) => (a.display_number as number) - (b.display_number as number))
-    .map((l) => ({
-      num: l.display_number as number,
-      answer: String(l.answer_key || '?').trim().toUpperCase() || '?',
-    }))
-
-  if (fromLayout.some((i) => i.answer && i.answer !== '?')) return fromLayout
-
-  const questions = (payload.questions as Array<Record<string, unknown>>) ?? []
-  const byOrder = new Map<number, string>()
-  for (const q of questions) {
-    const ans = String(q.answer_key ?? '').trim().toUpperCase()
-    if (!ans) continue
-    byOrder.set(Number(q.order_index ?? -1), ans)
-  }
-  if (byOrder.size === 0) return fromLayout
-
-  return fromLayout.map((item, idx) => {
-    const row = layout
-      .filter((l) => l.kind !== 'answer_key_page' && l.display_number != null)
-      .sort((a, b) => (a.display_number as number) - (b.display_number as number))[idx]
-    const fromQ = row ? byOrder.get(row.order_index) : undefined
-    return { num: item.num, answer: fromQ || item.answer }
-  })
+    .flatMap((l) => {
+      const q = qByOrder.get(l.order_index)
+      if (useFasikulLabels && q && !isOptikAnswerableLayoutQuestion(q)) {
+        return []
+      }
+      const num = l.display_number as number
+      const ansFromLayout = String(l.answer_key || '').trim().toUpperCase()
+      const ansFromQ = q ? String(q.answer_key ?? '').trim().toUpperCase() : ''
+      const answer =
+        (ansFromLayout && ansFromLayout !== '?' ? ansFromLayout : '') ||
+        ansFromQ ||
+        '?'
+      const label =
+        useFasikulLabels && q
+          ? resolveFasikulAnswerKeyLabel(q, ornekByOrder, num)
+          : String(num)
+      return [{ num, label, answer }]
+    })
 }
 
 function drawAnswerKeyPage(
@@ -412,11 +435,13 @@ function drawAnswerKeyPage(
   const contentW = geom.page_w_pt - geom.ml - geom.mr
   const footerTop = mb + mmToPt(FOOTER_TOP_OFFSET_MM)
   const availableHPt = Math.max(0, yTop - (footerTop + mmToPt(2)))
+  const useFasikulLabels = Boolean(payload.fasikul_answer_key_labels)
+  const pairsPerRow = useFasikulLabels ? 4 : SEPARATE_AK.PAIRS_PER_ROW
   const { capacity } = separateAnswerKeyCapacity({
     availableHeightPt: availableHPt,
-    pairsPerRow: SEPARATE_AK.PAIRS_PER_ROW,
+    pairsPerRow,
   })
-  const entriesPerPage = Math.max(SEPARATE_AK.PAIRS_PER_ROW, capacity)
+  const entriesPerPage = Math.max(pairsPerRow, capacity)
 
   const keyed = collectAnswerKeyItems(layout, payload)
   const akPageNums = [
@@ -436,6 +461,7 @@ function drawAnswerKeyPage(
     items: chunk,
     fonts,
     title: 'Cevap Anahtarı',
+    pairsPerRow,
   })
 }
 
@@ -501,9 +527,16 @@ async function drawQuestionsOnPage(
 
   const questions = (payload.questions as Array<Record<string, unknown>>) ?? []
   const qByOrder = new Map(questions.map((q) => [Number(q.order_index ?? -1), q]))
+  const ornekNumberByOrder = buildFasikulOrnekNumberByOrderIndex(questions)
   const geom = computeGeometry(payload, 1)
   const colW = geom.colW
   const showScratch = payload.show_question_scratch_grid === true
+  const scratchCornerRadiusPt = scratchGridCornerRadiusPt(payload)
+  const scratchStrokeHex = resolveScratchGridStrokeHex({
+    colorMode: scratchGridColorMode(payload),
+    customColor: scratchGridColorHex(payload),
+    themeColor: themePrimaryColor(payload),
+  })
 
   for (const item of pageItems) {
     const qEarly = qByOrder.get(item.order_index)
@@ -526,21 +559,81 @@ async function drawQuestionsOnPage(
         color: numColor,
       })
     }
+
+    const emptyRows = Number(
+      qEarly && typeof qEarly === 'object'
+        ? (qEarly as { fasikulEmptyRows?: unknown }).fasikulEmptyRows ?? 0
+        : 0,
+    )
+    const isEmptyFasikulBox = emptyRows > 0 && frameEnabled
+
+    if (isEmptyFasikulBox) {
+      const frameRaw =
+        qEarly && typeof qEarly === 'object'
+          ? (qEarly as { fasikulFrame?: Record<string, unknown> }).fasikulFrame
+          : undefined
+      const drawW = item.img_w_pt ?? item.w_pt ?? 0
+      const drawH = item.img_h_pt ?? item.h_pt ?? 0
+      if (!(drawW > 0) || !(drawH > 0) || !frameRaw) continue
+      const numTextW =
+        item.display_number != null
+          ? fonts.bold.widthOfTextAtSize(
+              questionNumberLabel(item.display_number),
+              numFontPt,
+            )
+          : estimateQuestionNumberTextWidthPt(item.display_number, numFontPt)
+      const x = item.x_pt + numOffsetPt + numTextW + numImageGapPt
+      const layoutImgTop = item.img_y_top_pt ?? 0
+      const y = layoutImgTop - drawH
+      const colRightPt = item.x_pt + item.w_pt
+      const frameW = Math.max(drawW, Math.max(0, colRightPt - x))
+      drawFasikulQuestionFrameOnPdfPage(page, {
+        x,
+        yBottom: y,
+        width: frameW,
+        height: drawH,
+        frame: frameRaw,
+        font: fonts.bold,
+        questionNumber: ornekNumberByOrder.get(item.order_index) ?? null,
+      })
+      counters.renderedQuestionCount += 1
+      continue
+    }
+
     if (!item.image_base64) continue
 
     try {
-      const image = await embedQuestionImage(pdf, item.image_base64)
-      const hideNumSlot = frameEnabled
-      const numTextW = hideNumSlot
-        ? 0
-        : item.display_number != null
+      const q = qEarly
+      const frameRaw =
+        q && typeof q === 'object'
+          ? (q as { fasikulFrame?: Record<string, unknown> }).fasikulFrame
+          : undefined
+      const frameEnabledNow = Boolean(frameRaw && frameRaw.enabled === true)
+      const borderStyle = String(frameRaw?.borderStyle ?? 'solid')
+      const fillOpacityPct = Number(frameRaw?.fillOpacityPct ?? 100)
+      const frameVisibleBox =
+        frameEnabledNow &&
+        (borderStyle !== 'none' || (Number.isFinite(fillOpacityPct) && fillOpacityPct > 0))
+      const fillHex =
+        frameVisibleBox && typeof frameRaw?.fillColor === 'string'
+          ? String(frameRaw.fillColor)
+          : undefined
+      const sourceB64 = frameVisibleBox
+        ? knockoutNearWhiteImageBase64(item.image_base64, {
+            fillHex,
+            threshold: 242,
+          })
+        : item.image_base64
+      const image = await embedQuestionImage(pdf, sourceB64)
+      // Önizleme ile aynı: çerçeve numarayı gizler ama numara yuvasını korur.
+      const numTextW =
+        item.display_number != null
           ? fonts.bold.widthOfTextAtSize(
               questionNumberLabel(item.display_number),
               numFontPt,
             )
           : estimateQuestionNumberTextWidthPt(item.display_number, numFontPt)
 
-      const q = qEarly
       const size = getImageSizeFromBase64(item.image_base64)
       const metrics =
         q && size ? calculateQuestionDrawMetrics(q, layoutCtx, size) : null
@@ -548,7 +641,18 @@ async function drawQuestionsOnPage(
       let drawW: number
       let drawH: number
       let usedShared = false
-      if (metrics) {
+      /** Önizleme ile birebir: kilitli layout’ta çizim boyutu da img_* olsun */
+      if (
+        usedLockedLayoutPositions &&
+        item.img_w_pt != null &&
+        item.img_h_pt != null &&
+        item.img_w_pt > 0 &&
+        item.img_h_pt > 0
+      ) {
+        drawW = item.img_w_pt
+        drawH = item.img_h_pt
+        counters.usedLockedLayoutCount += 1
+      } else if (metrics) {
         drawW = metrics.drawWidth
         drawH = metrics.drawHeight
         usedShared = true
@@ -559,7 +663,7 @@ async function drawQuestionsOnPage(
         counters.usedLockedLayoutCount += 1
       }
 
-      const x = item.x_pt + (hideNumSlot ? 0 : numOffsetPt + numTextW + numImageGapPt)
+      const x = item.x_pt + numOffsetPt + numTextW + numImageGapPt
       const layoutImgTop = item.img_y_top_pt ?? 0
       const drawImgTop = layoutImgTop
       const y = drawImgTop - drawH
@@ -628,52 +732,46 @@ async function drawQuestionsOnPage(
       })
       counters.drawImageLogCount += 1
 
-      const frameRaw =
-        q && typeof q === 'object'
-          ? (q as {
-              fasikulFrame?: {
-                enabled?: boolean
-                fillColor?: string
-                fillOpacityPct?: number
-                cornerRadiusPx?: number
-                innerPaddingPx?: number
-              }
-            }).fasikulFrame
-          : undefined
-      const innerPad = Math.max(
-        0,
-        Math.min(drawW / 3, drawH / 3, Number(frameRaw?.innerPaddingPx) || 0),
-      )
-      if (frameRaw?.enabled && frameRaw.fillColor) {
-        const m = /^#?([0-9a-f]{6})$/i.exec(String(frameRaw.fillColor).trim())
-        if (m) {
-          const n = parseInt(m[1], 16)
-          const opacity = Math.max(
+      const innerPadPt = frameVisibleBox
+        ? Math.max(
             0,
-            Math.min(1, (Number(frameRaw.fillOpacityPct) || 100) / 100),
-          )
-          page.drawRectangle({
-            x,
-            y,
-            width: drawW,
-            height: drawH,
-            color: rgb(
-              ((n >> 16) & 255) / 255,
-              ((n >> 8) & 255) / 255,
-              (n & 255) / 255,
+            Math.min(
+              drawW / 3,
+              drawH / 3,
+              pxToPtSafe(Number(frameRaw?.innerPaddingPx) || 0),
             ),
-            opacity,
-            borderWidth: 0,
-          })
-        }
+          )
+        : 0
+      const colRightPt = item.x_pt + item.w_pt
+      const frameW = frameEnabledNow
+        ? Math.max(drawW, Math.max(0, colRightPt - x))
+        : drawW
+
+      const frameArgs = {
+        x,
+        yBottom: y,
+        width: frameW,
+        height: drawH,
+        frame: frameRaw as import('./fasikul-question-frame-draw.js').FasikulFramePdfSettings,
+        font: fonts.bold,
+        questionNumber: ornekNumberByOrder.get(item.order_index) ?? null,
+      }
+
+      // Önizleme ile aynı katman: dolgu → görsel → kenarlık+rozet
+      if (frameEnabledNow && frameRaw) {
+        drawFasikulQuestionFrameOnPdfPage(page, { ...frameArgs, layers: 'fill' })
       }
 
       page.drawImage(image, {
-        x: x + innerPad,
-        y: y + innerPad,
-        width: Math.max(1, drawW - innerPad * 2),
-        height: Math.max(1, drawH - innerPad * 2),
+        x: x + innerPadPt,
+        y: y + innerPadPt,
+        width: Math.max(1, drawW - innerPadPt * 2),
+        height: Math.max(1, drawH - innerPadPt * 2),
       })
+
+      if (frameEnabledNow && frameRaw) {
+        drawFasikulQuestionFrameOnPdfPage(page, { ...frameArgs, layers: 'chrome' })
+      }
     } catch (err) {
       console.debug('[PDF_EXPORT:DRAW_IMAGE] FAILED', {
         exportId,
@@ -705,18 +803,39 @@ async function drawQuestionsOnPage(
           (l.img_y_top_pt ?? 0) < (item.img_y_top_pt ?? 0),
       )
       const next = below.sort((a, b) => (b.img_y_top_pt ?? 0) - (a.img_y_top_pt ?? 0))[0]
-      const gapBottomPt = next?.img_y_top_pt ?? footerTopPt
-      const questionLeftPt = item.img_x_pt
+      // Blok üstü (y_top) = ÖRNEK badge üstü; img_y_top badge alanını keser
+      const gapBottomPt = next
+        ? (next.y_top_pt ?? next.img_y_top_pt ?? footerTopPt)
+        : footerTopPt
+      // Soru görseli / çerçeve ile aynı sol kenar (numara yuvası dahil)
+      const numTextW =
+        item.display_number != null
+          ? fonts.bold.widthOfTextAtSize(
+              questionNumberLabel(item.display_number),
+              numFontPt,
+            )
+          : estimateQuestionNumberTextWidthPt(item.display_number, numFontPt)
+      const questionLeftPt = item.x_pt + numOffsetPt + numTextW + numImageGapPt
       const colRightPt = item.x_pt + item.w_pt
       const padBottomPt = SCRATCH_PAD_BOTTOM_PT
+      const qScratch = qByOrder.get(item.order_index) as
+        | { scratchGridRows?: number; fasikulFrame?: unknown }
+        | undefined
+      if (!fasikulFrameShowsScratchGrid(qScratch?.fasikulFrame)) continue
       const grid = resolveScratchGridRectPt({
         xPt: questionLeftPt,
         widthPt: Math.max(0, colRightPt - questionLeftPt),
         questionBottomPt: currBottomPt,
         gapBottomPt,
         padBottomPt,
+        rowsOverride: qScratch?.scratchGridRows,
+        minRows: FASIKUL_MIN_SCRATCH_ROWS,
       })
-      if (grid) drawScratchGridOnPdfPage(page, grid)
+      if (grid)
+        drawScratchGridOnPdfPage(page, grid, {
+          cornerRadiusPt: scratchCornerRadiusPt,
+          strokeHex: scratchStrokeHex,
+        })
     }
   }
 }
@@ -776,14 +895,20 @@ export async function exportPdfFromPayload(
     console.debug('[PDF_EXPORT:RENDERER] locked_layout positions', {
       exportId,
       lockedRows: locked.length,
-      note: 'draw W/H still from calculateQuestionDrawMetrics',
+      note: 'draw W/H from locked img_w_pt/img_h_pt (preview parity)',
     })
     const questions = (payload.questions as Array<Record<string, unknown>>) ?? []
     const imgByOrder = new Map<number, string>()
+    const emptyOrders = new Set<number>()
     for (const q of questions) {
+      const oi = Number(q.order_index ?? -1)
+      if (Number((q as { fasikulEmptyRows?: unknown }).fasikulEmptyRows ?? 0) > 0) {
+        emptyOrders.add(oi)
+        continue
+      }
       const b64 = q.image_base64 as string | undefined
       if (!b64) continue
-      imgByOrder.set(Number(q.order_index ?? -1), b64)
+      imgByOrder.set(oi, b64)
     }
     layout = locked.map((raw) => {
       const item = raw as Record<string, unknown>
@@ -791,12 +916,23 @@ export async function exportPdfFromPayload(
       const imgW = Number(item.img_w_pt ?? item.w_pt ?? 0)
       const imgH = Number(item.img_h_pt ?? item.h_pt ?? 0)
       const yTop = Number(item.y_top_pt ?? 0)
-      const imgYTop = Number(item.img_y_top_pt ?? yTop)
+      const qForReserve = questions.find((qq) => Number(qq.order_index ?? -1) === orderIndex)
+      const badgeReserve = fasikulFrameBadgeTopReservePt(
+        qForReserve && typeof qForReserve === 'object'
+          ? (qForReserve as { fasikulFrame?: unknown }).fasikulFrame
+          : undefined,
+      )
+      const rawImgY = item.img_y_top_pt
+      const imgYTop =
+        rawImgY != null && Number.isFinite(Number(rawImgY))
+          ? Number(rawImgY)
+          : yTop - badgeReserve
       const xPt = Number(item.x_pt ?? 0)
       const fromItem =
-        (typeof item.image_base64 === 'string' && item.image_base64) ||
-        (typeof item.image_b64 === 'string' && item.image_b64) ||
-        undefined
+        !emptyOrders.has(orderIndex) &&
+        ((typeof item.image_base64 === 'string' && item.image_base64) ||
+          (typeof item.image_b64 === 'string' && item.image_b64) ||
+          undefined)
       return {
         kind: String(item.kind ?? 'question'),
         order_index: orderIndex,
@@ -810,7 +946,9 @@ export async function exportPdfFromPayload(
         img_y_top_pt: imgYTop,
         img_w_pt: imgW,
         img_h_pt: imgH,
-        image_base64: fromItem ?? imgByOrder.get(orderIndex),
+        image_base64: emptyOrders.has(orderIndex)
+          ? undefined
+          : fromItem || imgByOrder.get(orderIndex),
         answer_key: item.answer_key != null ? String(item.answer_key) : undefined,
         display_number:
           item.display_number == null || item.display_number === ''

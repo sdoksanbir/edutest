@@ -111,10 +111,12 @@ export function nextColumnSlot(
   pageNum: number,
   colIdx: number,
   columns: number,
-  maxQuestionPage: number
+  maxQuestionPage: number,
+  options?: { allowNewPage?: boolean }
 ): ColumnSlot | null {
   if (colIdx < columns - 1) return { pageNum, columnIndex: colIdx + 1 };
   if (pageNum < maxQuestionPage) return { pageNum: pageNum + 1, columnIndex: 0 };
+  if (options?.allowNewPage) return { pageNum: pageNum + 1, columnIndex: 0 };
   return null;
 }
 
@@ -150,18 +152,16 @@ export function getPageColumnShiftMeta(
     const top = items[0]!;
     const bottom = items[items.length - 1]!;
 
+    // Önceki sütun boş olsa da ok göster (normal sığmazsa zorla ok ile taşınır)
     const prevSlot = prevColumnSlot(pageNum, colIdx, cols);
     if (prevSlot) {
-      const prevItems = columnItemsAt(layout, prevSlot, bandForPage(prevSlot.pageNum));
-      if (prevItems.length > 0) {
-        const oi = top.order_index ?? 0;
-        const cur = meta.get(oi) ?? {
-          showPrevColumnArrow: false,
-          showNextColumnArrow: false,
-        };
-        cur.showPrevColumnArrow = true;
-        meta.set(oi, cur);
-      }
+      const oi = top.order_index ?? 0;
+      const cur = meta.get(oi) ?? {
+        showPrevColumnArrow: false,
+        showNextColumnArrow: false,
+      };
+      cur.showPrevColumnArrow = true;
+      meta.set(oi, cur);
     }
 
     const bottomIsTop = (top.order_index ?? 0) === (bottom.order_index ?? 0);

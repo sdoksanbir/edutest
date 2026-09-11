@@ -132,6 +132,9 @@ export function buildEtDraftPayload(name: string): DraftFilePayload & {
       pageFrameInnerGapMm: s.pageFrameInnerGapMm,
       pageFrameCornerRadiusMm: s.pageFrameCornerRadiusMm,
       pageFrameLineStyle: s.pageFrameLineStyle,
+      scratchGridCornerRadiusPt: s.scratchGridCornerRadiusPt,
+      scratchGridColorMode: s.scratchGridColorMode,
+      scratchGridColor: s.scratchGridColor,
     },
   };
 }

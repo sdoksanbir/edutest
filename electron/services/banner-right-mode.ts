@@ -331,16 +331,26 @@ export function isClassicInfoBarEnabled(
   return config?.showClassicInfoBar !== false
 }
 
+/** Alt şerit içindeki D / Y / B — varsayılan açık */
+export function isClassicInfoBarScoreEnabled(
+  config?: Pick<HeaderConfig, 'showClassicInfoBarScore'> | null,
+): boolean {
+  return config?.showClassicInfoBarScore !== false
+}
+
 export function resolveClassicInfoBarHeightPt(
   config: HeaderConfig,
   styleId = 'style_2',
   contentWPt?: number,
 ): number {
   if (!isClassicInfoBarEnabled(config)) return 0
+  const showStripScore = isClassicInfoBarScoreEnabled(config)
   let h = Math.max(
     CLASSIC_INFO_BAR_MIN_H_PT,
     classicBadgeInnerHeightPt(config) + CLASSIC_INFO_BAR_BADGE_INSET_PT * 2,
-    style1ClassicDyBSizePt(config).hPt + CLASSIC_INFO_BAR_BADGE_INSET_PT * 2,
+    showStripScore
+      ? style1ClassicDyBSizePt(config).hPt + CLASSIC_INFO_BAR_BADGE_INSET_PT * 2
+      : 0,
   )
   if (!(contentWPt != null && contentWPt > 40)) return h
 
@@ -351,10 +361,14 @@ export function resolveClassicInfoBarHeightPt(
   const topicSize = getHeaderFieldFontPt('topic', styleId, config)
   const subSize = getHeaderFieldFontPt('subTopic', styleId, config)
   const gapPt = config.topicSubTopicGapPt ?? 3
-  const dybGroupW = style1ClassicDyBSizePt(config).wPt
+  const dybGroupW = showStripScore ? style1ClassicDyBSizePt(config).wPt : 0
   const textMaxW = Math.max(
     40,
-    contentWPt - CLASSIC_INFO_PAD_X_PT * 2 - dybGroupW - CLASSIC_DYB_INSET_X_PT - 8,
+    contentWPt -
+      CLASSIC_INFO_PAD_X_PT * 2 -
+      dybGroupW -
+      (showStripScore ? CLASSIC_DYB_INSET_X_PT : 0) -
+      8,
   )
   const topicMarkerOff = classicInfoMarkerLayout(topicSize, 'square').textOffsetX
   const subMarkerOff = classicInfoMarkerLayout(topicTxt ? topicSize : subSize, 'square').textOffsetX
@@ -409,6 +423,27 @@ export function resolveClassicTopBannerHeightPt(
       ? institutionH
       : badgeH
   h = Math.max(h, leftBadgeH + 4, badgeH + 4)
+
+  const topSlots = (Array.isArray(config.bannerRightSlots) ? config.bannerRightSlots : []).filter(
+    (s): s is 'testNo' | 'score' => s === 'testNo' || s === 'score',
+  )
+  const modeSlots =
+    topSlots.length > 0
+      ? topSlots
+      : (() => {
+          const m = parseBannerRightMode(config.bannerRightMode)
+          return m === 'testNo' || m === 'score' ? [m] : []
+        })()
+  if (modeSlots.length > 0) {
+    let stack = 0
+    for (let i = 0; i < modeSlots.length; i++) {
+      const slot = modeSlots[i]!
+      stack +=
+        slot === 'score' ? resolveScoreBoxHeightPt(config) : resolveTestNoHeightPt(config)
+      if (i > 0) stack += 4
+    }
+    h = Math.max(h, stack + 4)
+  }
 
   return Math.min(CLASSIC_TOP_BANNER_H_MAX_PT, h)
 }

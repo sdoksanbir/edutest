@@ -1,4 +1,5 @@
 import type { QuestionItem } from "../types";
+import { isOptikAnswerableQuestion } from "./optikFormOrder";
 
 export type OptikChoice = "A" | "B" | "C" | "D" | "E";
 
@@ -25,9 +26,10 @@ function normalizeAnswer(raw?: string): OptikChoice | null {
   return null;
 }
 
-/** Soru listesinden optik form satırları ve cevap dağılımı istatistikleri. */
+/** Soru listesinden optik form satırları ve cevap dağılımı (yalnızca cevaplanabilir sorular). */
 export function computeOptikFormStats(questions: QuestionItem[]): OptikFormStats {
-  const rows: OptikFormRow[] = questions.map((q, i) => ({
+  const answerable = questions.filter(isOptikAnswerableQuestion);
+  const rows: OptikFormRow[] = answerable.map((q, i) => ({
     number: i + 1,
     answer: normalizeAnswer(q.answer_key),
   }));

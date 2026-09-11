@@ -22,6 +22,9 @@ function finitePositive(n: unknown): number | null {
   return v
 }
 
+/** Aynı soru için CAPTURE_SCALE logunu bir kez yaz (layout spam’i). */
+const loggedMissingCaptureKeys = new Set<string>()
+
 export function resolveRequestedScale(q: Record<string, unknown>): number {
   const manual = finitePositive(q.manualScale) ?? finitePositive(q.manual_scale)
   const norm =
@@ -93,9 +96,14 @@ export function nativeSizePtFromQuestion(
     }
   }
 
-  console.log(
-    `[CAPTURE_SCALE_METADATA_MISSING] q=${q.order_index ?? '?'} → legacy 600DPI (pt=px/${LEGACY_LAYOUT_ZOOM})`,
-  )
+  // Layout her yenilendiğinde spam olmasın — soru başına bir kez
+  const missKey = String(q.id ?? q.order_index ?? '')
+  if (missKey && !loggedMissingCaptureKeys.has(missKey)) {
+    loggedMissingCaptureKeys.add(missKey)
+    console.log(
+      `[CAPTURE_SCALE_METADATA_MISSING] q=${q.order_index ?? '?'} → legacy 600DPI (pt=px/${LEGACY_LAYOUT_ZOOM})`,
+    )
+  }
   return {
     nativeWidthPt: imageWidthPx / LEGACY_LAYOUT_ZOOM,
     nativeHeightPt: imageHeightPx / LEGACY_LAYOUT_ZOOM,

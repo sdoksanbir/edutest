@@ -54,6 +54,7 @@ export function countSeparateAnswerKeyPages(params: {
   pageHpt: number
   marginTopMm: number
   marginBottomMm: number
+  pairsPerRow?: number
 }): number {
   const { itemCount, pageHpt, marginTopMm, marginBottomMm } = params
   if (itemCount <= 0) return 0
@@ -65,7 +66,7 @@ export function countSeparateAnswerKeyPages(params: {
   let y0 = top - 8
   let pages = 1
   let remaining = itemCount
-  const pairs = SEPARATE_AK.PAIRS_PER_ROW
+  const pairs = Math.max(1, params.pairsPerRow ?? SEPARATE_AK.PAIRS_PER_ROW)
   while (remaining > 0) {
     const maxH = Math.max(0, y0 - effectiveBottom)
     const { maxRows, capacity } = separateAnswerKeyCapacity({
@@ -118,6 +119,7 @@ export function ensureSeparateAnswerKeyPages(
     pageHpt,
     marginTopMm: Number(payload.margin_top_mm ?? 10),
     marginBottomMm: Number(payload.margin_bottom_mm ?? 10),
+    pairsPerRow: Boolean(payload.fasikul_answer_key_labels) ? 4 : SEPARATE_AK.PAIRS_PER_ROW,
   })
   const maxQ = Math.max(1, ...questions.map((l) => l.page_num || 1))
   /** Optik ayrı sayfa(lar) cevap anahtarından önce — overlay page_num > maxQ */
@@ -209,7 +211,7 @@ export function drawSeparateAnswerKeyTablePdf(params: {
   /** PDF: tablonun üst kenarı (y yukarı) */
   yTop: number
   width: number
-  items: Array<{ num: number; answer: string }>
+  items: Array<{ num?: number | string; label?: string; answer: string }>
   fonts: { regular: PDFFont; bold: PDFFont }
   /** @deprecated Tema rengi yok sayılır — sabit lacivert/kırmızı */
   primaryHex?: string
@@ -299,12 +301,18 @@ export function drawSeparateAnswerKeyTablePdf(params: {
       const cellX = x + c * pw
       const midY = rowBottom + rh / 2
 
-      const numText = String(item.num)
-      const numW = fonts.bold.widthOfTextAtSize(numText, SEPARATE_AK.NUM_FONT_PT)
+      const numText = String(item.label ?? item.num ?? '')
+      const labelSize =
+        numText.length > 4 ? SEPARATE_AK.NUM_FONT_PT * 0.88 : SEPARATE_AK.NUM_FONT_PT
+      const numW = fonts.bold.widthOfTextAtSize(numText, labelSize)
+      const maxLabelW = pw * 0.5
+      const drawSize =
+        numW > maxLabelW ? Math.max(6, (labelSize * maxLabelW) / numW) : labelSize
+      const drawW = fonts.bold.widthOfTextAtSize(numText, drawSize)
       page.drawText(numText, {
-        x: cellX + pw * 0.28 - numW / 2,
-        y: midY - SEPARATE_AK.NUM_FONT_PT * 0.35,
-        size: SEPARATE_AK.NUM_FONT_PT,
+        x: cellX + pw * 0.32 - drawW / 2,
+        y: midY - drawSize * 0.35,
+        size: drawSize,
         font: fonts.bold,
         color: withAlpha(primary, 0.72),
       })
@@ -312,7 +320,7 @@ export function drawSeparateAnswerKeyTablePdf(params: {
       const ansW = fonts.bold.widthOfTextAtSize(ans, SEPARATE_AK.ANS_FONT_PT)
       const pillH = SEPARATE_AK.PILL_H_PT
       const pillW = Math.max(pillH, ansW + SEPARATE_AK.PILL_PAD_X_PT * 2)
-      const pillX = cellX + pw * 0.58 - pillW / 2
+      const pillX = cellX + pw * 0.72 - pillW / 2
       const pillY = midY - pillH / 2
       const pillR = pillH / 2
       page.drawSvgPath(roundRectPath(pillW, pillH, pillR), {

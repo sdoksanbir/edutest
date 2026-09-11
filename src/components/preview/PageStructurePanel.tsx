@@ -19,11 +19,14 @@ import { usePdfPreviewUi } from "./PdfPreviewUiThemeContext";
 import CollapsibleCard from "./CollapsibleCard";
 import CustomMarginsModal, { cmToMm } from "../modals/CustomMarginsModal";
 import { PAPER_PRESETS_MM } from "../../constants/paperSizes";
+import { fasikulMinScratchGapPt } from "../../utils/questionScratchGrid";
 
 type Props = {
   questionGapMm: number;
   questionGapInitialMm?: number | null;
   questionGapLayoutDirty?: boolean;
+  /** Fasikül: boşluk = görsel altı ↔ ÖRNEK üstü */
+  fasikulGapMode?: boolean;
   onQuestionGapPreview: (value: number) => void;
   onQuestionGapCommit: (value: number) => void;
   onQuestionGapReset: () => void;
@@ -59,6 +62,8 @@ type Props = {
 
 const QUESTION_GAP_MIN_MM = 6;
 const QUESTION_GAP_MAX_MM = 100;
+const FASIKUL_QUESTION_GAP_MIN_MM =
+  Math.ceil(((fasikulMinScratchGapPt() * 25.4) / 72) * 2) / 2;
 
 function formatQuestionGapMm(value: number): string {
   const fixed = value.toFixed(1);
@@ -234,6 +239,7 @@ export default function PageStructurePanel({
   questionGapMm,
   questionGapInitialMm = null,
   questionGapLayoutDirty = false,
+  fasikulGapMode = false,
   onQuestionGapPreview,
   onQuestionGapCommit,
   onQuestionGapReset,
@@ -339,20 +345,22 @@ export default function PageStructurePanel({
     }
   }, [questionGapMm]);
 
+  const gapMinMm = fasikulGapMode ? FASIKUL_QUESTION_GAP_MIN_MM : QUESTION_GAP_MIN_MM;
+
   const commitQuestionGapInput = () => {
     const parsed = Number(questionGapInput.replace(",", ".").trim());
     if (!Number.isFinite(parsed)) {
       setQuestionGapInput(formatQuestionGapMm(questionGapSliderMm));
       return;
     }
-    onQuestionGapCommit(parsed);
+    onQuestionGapCommit(Math.max(gapMinMm, Math.min(QUESTION_GAP_MAX_MM, parsed)));
   };
 
   const stepQuestionGap = (delta: number) => {
     const parsed = Number(questionGapInput.replace(",", ".").trim());
     const base = Number.isFinite(parsed) ? parsed : questionGapSliderMm;
     const next = Math.max(
-      QUESTION_GAP_MIN_MM,
+      gapMinMm,
       Math.min(QUESTION_GAP_MAX_MM, Math.round((base + delta) * 2) / 2),
     );
     setQuestionGapSliderMm(next);
@@ -406,11 +414,15 @@ export default function PageStructurePanel({
         </div>
 
         <div className="pdf-preview-collapsible-section space-y-2.5">
-          <SectionHeading>Sorular Arası Minimum Boşluk</SectionHeading>
+          <SectionHeading>
+            {fasikulGapMode
+              ? "Soru Görseli – ÖRNEK Boşluğu (min. 3 kare)"
+              : "Sorular Arası Minimum Boşluk"}
+          </SectionHeading>
           <div className="space-y-2">
             <input
               type="range"
-              min={QUESTION_GAP_MIN_MM}
+              min={gapMinMm}
               max={QUESTION_GAP_MAX_MM}
               step={0.5}
               value={questionGapSliderMm}
@@ -419,7 +431,7 @@ export default function PageStructurePanel({
                 onQuestionGapDragStart();
               }}
               onChange={(e) => {
-                const value = Number(e.target.value);
+                const value = Math.max(gapMinMm, Number(e.target.value));
                 setQuestionGapSliderMm(value);
                 onQuestionGapPreview(value);
                 if (!questionGapInputFocusedRef.current) {
@@ -428,7 +440,9 @@ export default function PageStructurePanel({
               }}
               onPointerUp={(e) => {
                 questionGapDragRef.current = false;
-                onQuestionGapCommit(Number(e.currentTarget.value));
+                onQuestionGapCommit(
+                  Math.max(gapMinMm, Number(e.currentTarget.value)),
+                );
               }}
               onPointerCancel={() => {
                 questionGapDragRef.current = false;
@@ -437,12 +451,16 @@ export default function PageStructurePanel({
               }}
               className="pdf-preview-range block w-full"
               style={{ height: 4 }}
-              aria-label="Sorular arası minimum boşluk"
+              aria-label={
+                fasikulGapMode
+                  ? "Soru görseli altı ile ÖRNEK üstü arasındaki boşluk (en az 3 kare)"
+                  : "Sorular arası minimum boşluk"
+              }
             />
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <button
                 type="button"
-                disabled={questionGapSliderMm <= QUESTION_GAP_MIN_MM}
+                disabled={questionGapSliderMm <= gapMinMm}
                 onClick={() => stepQuestionGap(-0.5)}
                 aria-label="Sorular arası minimum boşluğu azalt"
                 className={`flex h-7 w-7 items-center justify-center rounded-md ${t.smallBtn} disabled:cursor-not-allowed disabled:opacity-40`}

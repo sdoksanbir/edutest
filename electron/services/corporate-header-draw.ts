@@ -21,7 +21,7 @@ import {
 } from './modern-corporate-header-shared.js'
 import { corporateOtherPageHeaderLayoutPt } from './header-styles.js'
 import { style1BodyHeightPt, style1BannerBlockHeightPt } from './style1-header-metrics.js'
-import { fieldFontPt, runningHeaderSideFontPt, type HeaderFontFieldKey } from './header-field-fonts.js'
+import { fieldFontPt, headerFieldBold, headerFieldColor, headerFieldItalic, runningHeaderSideFontPt, type HeaderFontFieldKey } from './header-field-fonts.js'
 import {
   headerFieldDisplayText,
   otherPageHeaderLeftText,
@@ -119,7 +119,7 @@ export async function drawCorporateHeader(
   payload: Record<string, unknown>,
   geom: { page_w_pt: number; page_h_pt: number; ml: number; mr: number },
   mt: number,
-  fonts: { regular: PDFFont; bold: PDFFont },
+  fonts: { regular: PDFFont; bold: PDFFont; italic?: PDFFont; boldItalic?: PDFFont },
 ) {
   const config = parseHeaderConfig(payload.header_config)
   const sid = String(payload.header_style_id ?? 'style_1')
@@ -200,7 +200,7 @@ export async function drawCorporateHeader(
   }
 
   // Bannerın tam ortası — sağ kutu büyüyüp küçülse / kapansa da sabit
-  drawCenterTextBlock(page, config, geom.ml + contentW / 2, bodyTop, bodyHPt, primary, fonts, sid)
+  drawCenterTextBlock(page, config, geom.ml + contentW / 2, bodyTop, bodyHPt, primary, accent, fonts, sid)
   drawSlantedBarPdf(page, geom.ml, contentW, bottomStripeBottom, CORPORATE_STRIPE_H_PT, primary, accent)
 }
 
@@ -212,10 +212,17 @@ function drawCenterTextBlock(
   bodyTop: number,
   bodyHeightPt: number,
   primary: RGB,
-  fonts: { regular: PDFFont; bold: PDFFont },
+  accent: RGB,
+  fonts: { regular: PDFFont; bold: PDFFont; italic?: PDFFont; boldItalic?: PDFFont },
   styleId = 'style_1',
 ) {
   const ff = (field: HeaderFontFieldKey) => fieldFontPt(field, styleId, config)
+  const pickFont = (bold: boolean, italic: boolean) => {
+    if (bold && italic) return fonts.boldItalic ?? fonts.bold
+    if (italic) return fonts.italic ?? fonts.regular
+    if (bold) return fonts.bold
+    return fonts.regular
+  }
   const line2 = headerFieldDisplayText(config, 'subject')
   const topic = visibleTopicText(config)
   const subTopic = visibleSubTopicText(config)
@@ -271,7 +278,10 @@ function drawCenterTextBlock(
     if (topic) {
       const topicSize = ff('topic')
       const topicStr = topic.slice(0, 40)
-      const topicW = fonts.bold.widthOfTextAtSize(topicStr, topicSize)
+      const topicBold = headerFieldBold(config, 'topic', true)
+      const topicItalic = headerFieldItalic(config, 'topic', false)
+      const topicFont = pickFont(topicBold, topicItalic)
+      const topicW = topicFont.widthOfTextAtSize(topicStr, topicSize)
       const rowH = topicSize + 2
       const rowCy = bodyTop - topicAreaTop - rowH / 2
 
@@ -279,15 +289,20 @@ function drawCenterTextBlock(
         x: centerX - topicW / 2,
         y: rowCy - topicSize * 0.35,
         size: topicSize,
-        font: fonts.bold,
-        color: primary,
+        font: topicFont,
+        color: hexToRgb(
+          headerFieldColor(config, 'topic', config.primaryColor || '#0A1931'),
+        ),
       })
       topicAreaTop += rowH + topicSubTopicGap
     }
     if (subTopic) {
       const subSize = ff('subTopic')
       const subStr = subTopic.slice(0, 40)
-      const subW = fonts.regular.widthOfTextAtSize(subStr, subSize)
+      const subBold = headerFieldBold(config, 'subTopic', false)
+      const subItalic = headerFieldItalic(config, 'subTopic', true)
+      const subFont = pickFont(subBold, subItalic)
+      const subW = subFont.widthOfTextAtSize(subStr, subSize)
       const subY = topic
         ? bodyTop - topicAreaTop - subSize * FONT_ASC
         : bodyTop - fromTop - topicBlockH / 2 - subSize * 0.35
@@ -295,8 +310,10 @@ function drawCenterTextBlock(
         x: centerX - subW / 2,
         y: subY,
         size: subSize,
-        font: fonts.regular,
-        color: rgb(0.42, 0.45, 0.5),
+        font: subFont,
+        color: hexToRgb(
+          headerFieldColor(config, 'subTopic', config.accentColor || '#F34A2F'),
+        ),
       })
     }
   }

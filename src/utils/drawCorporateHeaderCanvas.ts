@@ -2,10 +2,11 @@
  * Modern Kurumsal (Tema 1) — Canvas banner çizimi.
  */
 
-import { CORPORATE_GRAY, type HeaderConfig, isLgsOfficialBannerConfig } from './corporateHeaderLayout'
 import {
   CORPORATE_LEFT_COL_W_PT,
   CORPORATE_STRIPE_H_PT,
+  type HeaderConfig,
+  isLgsOfficialBannerConfig,
 } from './corporateHeaderLayout'
 import {
   MODERN_FONT_SANS,
@@ -24,7 +25,15 @@ import {
 import { style1BannerBlockHeightPt, style1BodyHeightPt } from './style1HeaderMetrics'
 import { drawHeaderLeftColumnCanvas, headerLeftColumnActive } from './headerLeftColumn'
 import { HEADER_LOGO_COL_PAD_PT } from './headerLogo'
-import { fieldFontPt, runningHeaderSideFontPt, type HeaderFontFieldKey } from './headerFieldFonts'
+import {
+  canvasFontStyleCss,
+  fieldFontPt,
+  headerFieldBold,
+  headerFieldColor,
+  headerFieldItalic,
+  runningHeaderSideFontPt,
+  type HeaderFontFieldKey,
+} from './headerFieldFonts'
 import { headerFieldDisplayText, otherPageHeaderLeftText, otherPageHeaderRightText, trialLgsOtherPageLeftText, trialLgsOtherPageRightText, visibleSubTopicText, visibleTopicText } from './headerFieldVisibility'
 import {
   drawExamTypeBoxFillCanvas,
@@ -264,19 +273,23 @@ export function drawCorporateHeaderCanvas(p: CorporateHeaderDrawParams): number 
     if (topic) {
       const topicFontPx = ff('topic')
       const rowH = topicFontPx + 2 * s
-      p.ctx.font = `700 ${topicFontPx}px ${MODERN_FONT_SANS}`
+      const topicBold = headerFieldBold(p.config, 'topic', true)
+      const topicItalic = headerFieldItalic(p.config, 'topic', false)
+      p.ctx.font = canvasFontStyleCss(topicBold, topicItalic, topicFontPx, MODERN_FONT_SANS)
       const topicStr = topic.slice(0, 40)
       const rowCy = topicAreaY + rowH / 2
 
-      p.ctx.fillStyle = primary
+      p.ctx.fillStyle = headerFieldColor(p.config, 'topic', primary)
       p.ctx.textAlign = 'center'
       p.ctx.textBaseline = 'middle'
       p.ctx.fillText(topicStr, centerX, rowCy)
       topicAreaY += rowH + topicSubTopicGap
     }
     if (subTopic) {
-      p.ctx.fillStyle = CORPORATE_GRAY
-      p.ctx.font = `${ff('subTopic')}px ${MODERN_FONT_SANS}`
+      const subBold = headerFieldBold(p.config, 'subTopic', false)
+      const subItalic = headerFieldItalic(p.config, 'subTopic', true)
+      p.ctx.fillStyle = headerFieldColor(p.config, 'subTopic', accent)
+      p.ctx.font = canvasFontStyleCss(subBold, subItalic, ff('subTopic'), MODERN_FONT_SANS)
       p.ctx.textAlign = 'center'
       p.ctx.textBaseline = topic ? 'top' : 'middle'
       const subY = topic ? topicAreaY : ty + topicBlockH / 2

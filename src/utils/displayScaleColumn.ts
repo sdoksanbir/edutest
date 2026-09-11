@@ -17,6 +17,7 @@ import {
 import {
   applyColumnPlacementToLayout,
   COLUMN_PLACEMENT_MIN_BOTTOM_GAP_MM,
+  computePrevColumnCascadeMoves,
   type LayoutPlacementOverride,
 } from "./columnShiftPlacement";
 import { resolveShiftTargetForBottom } from "./columnShift";
@@ -238,5 +239,156 @@ export function tryReflowAfterQuestionScale(input: {
   return {
     ok: false,
     error: `Soru bu boyutta hiçbir sütuna sığmıyor (alt boşluk en az ${minMm} mm).`,
+  };
+}
+
+/**
+ * Küçültme sonrası: sonraki sütun/sayfadaki sorular önceki sütuna sığıyorsa geri taşı.
+ */
+export function tryCompactColumnsAfterScale(input: {
+  rawLayout: LayoutItem[];
+  questions: QuestionItem[];
+  geometry: LayoutGeometryInput;
+  columns: number;
+  questionGapMinMm: number;
+  placementOverrides: Record<string, LayoutPlacementOverride>;
+  questionNumberingEnabled?: boolean;
+  questionNumberStart?: number;
+  questionNumberFontPt?: number;
+}): ReflowAfterScaleOk | ReflowAfterScaleErr {
+  const cols = Math.max(1, input.columns);
+  let overrides = { ...input.placementOverrides };
+  const standardGapPt = mmToPdfPt(Math.max(0, input.questionGapMinMm));
+  const minBottomGapPt = mmToPdfPt(COLUMN_PLACEMENT_MIN_BOTTOM_GAP_MM);
+
+  let lastOk: ReflowAfterScaleOk | null = null;
+
+  for (let guard = 0; guard < MAX_REFLOW_ATTEMPTS; guard += 1) {
+    const applied = applyColumnPlacementToLayout({
+      baseLayout: input.rawLayout,
+      questions: input.questions,
+      placementOverrides: overrides,
+      geometry: input.geometry,
+      columns: cols,
+      questionGapMinMm: input.questionGapMinMm,
+      questionNumberingEnabled: input.questionNumberingEnabled,
+      questionNumberStart: input.questionNumberStart,
+      questionNumberFontPt: input.questionNumberFontPt,
+    });
+    if (!applied.ok) {
+      if (lastOk) return lastOk;
+      return applied;
+    }
+    lastOk = {
+      ok: true,
+      layout: applied.layout,
+      placementOverrides: overrides,
+      yTopUpdatesByQuestionId: applied.yTopUpdatesByQuestionId,
+    };
+
+    const bandForPage = (p: number) =>
+      computePageColumnBand({ ...input.geometry, pageNum: p, columns: cols });
+    const slotKeys = new Set<string>();
+    const slots: { page: number; col: number }[] = [];
+    for (const item of applied.layout) {
+      if (item.kind === "answer_key_page") continue;
+      const page = item.page_num ?? 1;
+      const col = columnIndexFromQuestionXPt(item.x_pt, bandForPage(page));
+      const key = `${page}:${col}`;
+      if (slotKeys.has(key)) continue;
+      slotKeys.add(key);
+      slots.push({ page, col });
+    }
+    slots.sort((a, b) => a.page - b.page || a.col - b.col);
+
+    let moved = false;
+    for (let i = 1; i < slots.length; i += 1) {
+      const slot = slots[i]!;
+      const items = getColumnItemsSortedTopFirst(
+        applied.layout,
+        slot.page,
+        slot.col,
+        bandForPage(slot.page),
+      );
+      if (items.length === 0) continue;
+      const top = items[0]!;
+      const cascade = computePrevColumnCascadeMoves({
+        effectiveLayout: applied.layout,
+        questions: input.questions,
+        pageNum: slot.page,
+        colIdx: slot.col,
+        orderIndex: top.order_index,
+        columns: cols,
+        geometry: input.geometry,
+        standardGapPt,
+        minBottomGapPt,
+      });
+      if (!cascade.ok) continue;
+
+      for (const oi of cascade.movedOrderIndices) {
+        const qid = input.questions.find((q) => q.order_index === oi)?.id;
+        if (!qid) continue;
+        overrides[qid] = {
+          page_num: cascade.targetSlot.pageNum,
+          column_index: cascade.targetSlot.columnIndex,
+          insert_at: "bottom",
+        };
+      }
+      moved = true;
+      break;
+    }
+
+    if (!moved) return lastOk;
+  }
+
+  return lastOk ?? { ok: false, error: "Sütun sıkıştırma tamamlanamadı." };
+}
+
+/**
+ * Büyüt: sığmazsa ileri taşı. Küçült: önceki sütuna geri paketle.
+ */
+export function tryReflowAfterQuestionScaleChange(input: {
+  rawLayout: LayoutItem[];
+  questions: QuestionItem[];
+  orderIndex: number;
+  geometry: LayoutGeometryInput;
+  columns: number;
+  maxQuestionPage: number;
+  questionGapMinMm: number;
+  placementOverrides: Record<string, LayoutPlacementOverride>;
+  previousScale: number;
+  newScale: number;
+  questionNumberingEnabled?: boolean;
+  questionNumberStart?: number;
+  questionNumberFontPt?: number;
+}): ReflowAfterScaleOk | ReflowAfterScaleErr {
+  const growing = input.newScale > input.previousScale + 1e-6;
+  const shrinking = input.newScale < input.previousScale - 1e-6;
+
+  if (growing) {
+    return tryReflowAfterQuestionScale(input);
+  }
+
+  if (shrinking) {
+    return tryCompactColumnsAfterScale(input);
+  }
+
+  const applied = applyColumnPlacementToLayout({
+    baseLayout: input.rawLayout,
+    questions: input.questions,
+    placementOverrides: input.placementOverrides,
+    geometry: input.geometry,
+    columns: input.columns,
+    questionGapMinMm: input.questionGapMinMm,
+    questionNumberingEnabled: input.questionNumberingEnabled,
+    questionNumberStart: input.questionNumberStart,
+    questionNumberFontPt: input.questionNumberFontPt,
+  });
+  if (!applied.ok) return applied;
+  return {
+    ok: true,
+    layout: applied.layout,
+    placementOverrides: input.placementOverrides,
+    yTopUpdatesByQuestionId: applied.yTopUpdatesByQuestionId,
   };
 }

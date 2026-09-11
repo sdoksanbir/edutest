@@ -39,6 +39,7 @@ export type HeaderInfoSettings = Partial<
     | 'subjectTopicGapPt'
     | 'topicSubTopicGapPt'
     | 'showClassicInfoBar'
+    | 'showClassicInfoBarScore'
     | 'institutionLine1'
     | 'institutionLine2'
     | 'institutionLine1FontPt'
@@ -87,6 +88,7 @@ export const HEADER_INFO_KEYS: (keyof HeaderInfoSettings)[] = [
   'subjectTopicGapPt',
   'topicSubTopicGapPt',
   'showClassicInfoBar',
+  'showClassicInfoBarScore',
   'institutionLine1',
   'institutionLine2',
   'institutionLine1FontPt',

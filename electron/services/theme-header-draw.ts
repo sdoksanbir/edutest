@@ -455,7 +455,7 @@ export async function drawThemeFirstPageHeaderPdf(
   payload: Record<string, unknown>,
   geom: { page_w_pt: number; page_h_pt: number; ml: number; mr: number },
   mt: number,
-  fonts: { regular: PDFFont; bold: PDFFont },
+  fonts: { regular: PDFFont; bold: PDFFont; italic?: PDFFont; boldItalic?: PDFFont },
 ) {
   const styleId = normalizeHeaderStyleId(String(payload.header_style_id ?? ''))
   const config = parseHeaderConfig(payload.header_config)

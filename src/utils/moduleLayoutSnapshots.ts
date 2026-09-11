@@ -13,6 +13,7 @@ import {
   parseLgsPageDecor,
   type LgsPageDecor,
 } from "./lgsPageDecor";
+import { style2BadgeDefaults } from "./headerBadgeByStyle";
 import {
   FASIKUL_THEME_ACCENT,
   FASIKUL_THEME_PRIMARY,
@@ -171,6 +172,52 @@ export function defaultFasikulModuleLayout(): ModuleLayoutSnapshot {
       useExamBanner: false,
       primaryColor: FASIKUL_THEME_PRIMARY,
       accentColor: FASIKUL_THEME_ACCENT,
+      fieldHidden: {
+        ...(base.fieldHidden ?? {}),
+        examType: false,
+      },
+      /** Standart: D/Y/B yok — yalnızca Sınıf */
+      badgeByStyle: {
+        ...(base.badgeByStyle ?? {}),
+        style_1: {
+          ...(base.badgeByStyle?.style_1 ?? {}),
+          bannerRightMode: "examType",
+          bannerRightSlots: ["examType"],
+        },
+        /** Minimal: Sınıf açık; Test No + D/Y/B kapalı; sol kurum adı yok */
+        style_2: {
+          ...(base.badgeByStyle?.style_2 ?? {}),
+          ...style2BadgeDefaults(),
+          bannerRightMode: "examType",
+          bannerRightSlots: ["examType"],
+          scoreBoxOffsetYPt: -1,
+          examTypeBoxBorderStyle: "none",
+          examTypeBoxFillEnabled: true,
+          examTypeBoxFillColor: FASIKUL_THEME_PRIMARY,
+        },
+      },
+      headerInfoByStyle: {
+        ...(base.headerInfoByStyle ?? {}),
+        style_2: {
+          ...(base.headerInfoByStyle?.style_2 ?? {}),
+          showHeaderLeft: false,
+          showClassicInfoBar: true,
+          showClassicInfoBarScore: false,
+          headerLeftMode: "publicationText",
+          institutionLine1Color: "#FFFFFF",
+          institutionLine1FontPt: 11.5,
+          institutionBadgeWidthPt: 160,
+          institutionBadgeHeightPt: 18,
+          institutionBadgePadXPt: 6,
+          institutionBadgeRadiusPt: 2.5,
+          subjectPillPadXPt: CLASSIC_SUBJECT_PILL_PAD_X_DEFAULT_PT,
+          subjectPillPadYPt: CLASSIC_SUBJECT_PILL_PAD_Y_DEFAULT_PT,
+          subjectPillTextOffsetYPt: CLASSIC_SUBJECT_PILL_TEXT_OFFSET_Y_DEFAULT_PT,
+          subjectPillFillColor: FASIKUL_THEME_PRIMARY,
+          primaryColor: FASIKUL_THEME_PRIMARY,
+          accentColor: FASIKUL_THEME_ACCENT,
+        },
+      },
     },
     themeColor: FASIKUL_THEME_PRIMARY,
     includeDescription: false,

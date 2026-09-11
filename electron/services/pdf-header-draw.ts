@@ -15,6 +15,7 @@ import {
   BANNER_H_PT,
   CLASSIC_BANNER_LINE_PT,
   CLASSIC_BANNER_RADIUS_PT,
+  CLASSIC_INFO_BAR_BADGE_INSET_PT,
   DESC_BOX_GAP_BELOW_PT,
   drawDescriptionBox,
   headerHeightPt,
@@ -40,11 +41,26 @@ import {
 import {
   drawStyle1ScoreBoxPdf,
   drawStyle1TestNoPdf,
-  resolveBannerRightMode,
+  isClassicInfoBarScoreEnabled,
   resolveClassicInfoBarHeightPt,
   resolveClassicTopBannerHeightPt,
+  resolveScoreBoxOffsetYPt,
   style1ClassicDyBSizePt,
 } from './banner-right-mode.js'
+import {
+  classicBannerTopRightSlots,
+  layoutBannerRightSlotTops,
+  resolveBannerRightSlots,
+  style1RightSlotWidthPt,
+} from './banner-right-slots.js'
+import {
+  drawExamTypeBoxBorderPdf,
+  drawExamTypeBoxFillPdf,
+  drawExamTypeTextInBoxPdf,
+  examTypeLineSpecs,
+  resolveExamTypeBoxHeightPt,
+  resolveExamTypeBoxWidthPt,
+} from './exam-type-box.js'
 import { getHeaderFieldFontPt, headerFieldBold, headerFieldColor, headerFieldItalic } from './header-field-fonts.js'
 import {
   CLASSIC_DYB_INSET_X_PT,
@@ -276,7 +292,14 @@ async function drawPage1Style3Banner(
   const contentW = geom.page_w_pt - geom.ml - geom.mr
   const config = normalizeClassicBannerConfig(parseHeaderConfig(payload.header_config))
   const styleId = String(payload.header_style_id ?? '')
-  const bannerH = resolveClassicTopBannerHeightPt(config, styleId)
+  const badgeConfigEarly = {
+    ...mergeHeaderBadgeConfig(config, 'style_2'),
+    primaryColor: themeHex,
+  }
+  const bannerH = resolveClassicTopBannerHeightPt(
+    { ...config, ...badgeConfigEarly },
+    styleId,
+  )
   const boxY = geom.page_h_pt - mt - bannerH
   const r = 6
   const trial = parseTrialBanner(payload)
@@ -449,19 +472,53 @@ async function drawPage1Style3Banner(
     ...mergeHeaderBadgeConfig(config, styleId),
     primaryColor: themeHex,
   }
-  const rightModeRaw = resolveBannerRightMode(badgeConfig)
-  /** Minimal: Sınav Türü yok — score/examType → Test No */
-  const rightMode =
-    rightModeRaw === 'score' || rightModeRaw === 'examType' ? 'testNo' : rightModeRaw
-  if (!trial && rightMode === 'testNo') {
-    const testRightEdge = xRight + rightW - CLASSIC_TEST_NO_INSET_X_PT
-    drawStyle1TestNoPdf(page, fonts.bold, testRightEdge, boxY, bannerH, badgeConfig)
+  const topRightSlots = classicBannerTopRightSlots(badgeConfig)
+  const rightSlots = resolveBannerRightSlots(badgeConfig)
+  const showInfoExamType =
+    !trial && rightSlots.includes('examType') && examTypeLineSpecs(badgeConfig).length > 0
+  if (!trial && topRightSlots.length > 0) {
+    const placed = layoutBannerRightSlotTops({
+      slots: topRightSlots,
+      bodyTop: 0,
+      bodyH: bannerH,
+      config: badgeConfig,
+    })
+    const rightEdge = geom.page_w_pt - geom.mr
+    const bodyTop = boxY + bannerH
+    for (const { slot, top: topFromBody, h: slotH } of placed) {
+      const slotTop = bodyTop - topFromBody
+      const slotBottom = slotTop - slotH
+      if (slot === 'score') {
+        const boxW = style1RightSlotWidthPt(slot, badgeConfig)
+        drawStyle1ScoreBoxPdf(
+          page,
+          fonts.bold,
+          rightEdge - boxW,
+          slotBottom,
+          boxW,
+          slotH,
+          badgeConfig,
+        )
+      } else if (slot === 'testNo') {
+        drawStyle1TestNoPdf(page, fonts.bold, rightEdge, slotBottom, slotH, badgeConfig)
+      }
+    }
   }
 
   let infoH = 0
   let infoBottom = boxY
+  const showStripScore = isClassicInfoBarScoreEnabled(config)
   if (showClassicInfoBar) {
+  const examTypeWPt = showInfoExamType
+    ? resolveExamTypeBoxWidthPt(badgeConfig, contentW * 0.45)
+    : 0
   infoH = resolveClassicInfoBarHeightPt(badgeConfig, styleId, contentW)
+  if (showInfoExamType) {
+    infoH = Math.max(
+      infoH,
+      resolveExamTypeBoxHeightPt(badgeConfig) + CLASSIC_INFO_BAR_BADGE_INSET_PT * 2,
+    )
+  }
   const topicTxt = visibleTopicText(config)
   const subTopicTxt = visibleSubTopicText(config)
   const topicSize = getHeaderFieldFontPt('topic', styleId, config)
@@ -470,8 +527,18 @@ async function drawPage1Style3Banner(
   const padX = CLASSIC_INFO_PAD_X_PT
   const accentHex = themeAccentColor(payload as Record<string, unknown>)
   const dybSize = style1ClassicDyBSizePt(badgeConfig)
-  const dybGroupW = dybSize.wPt
-  const textMaxW = Math.max(40, contentW - padX * 2 - dybGroupW - CLASSIC_DYB_INSET_X_PT - 8)
+  const dybGroupW = showStripScore ? dybSize.wPt : 0
+  /** Şerit D/Y/B ortada — konu metni sol yarıda */
+  const textMaxW = Math.max(
+    40,
+    showStripScore
+      ? contentW / 2 - dybGroupW / 2 - padX - 8
+      : contentW -
+          padX * 2 -
+          examTypeWPt -
+          (showInfoExamType ? CLASSIC_DYB_INSET_X_PT + 8 : 0) -
+          8,
+  )
   const topicMarkerOff = classicInfoMarkerLayout(topicSize, 'square').textOffsetX
   const subMarkerOff = classicInfoMarkerLayout(topicTxt ? topicSize : subSize, 'square').textOffsetX
   const topicBold = headerFieldBold(config, 'topic', true)
@@ -586,19 +653,34 @@ async function drawPage1Style3Banner(
   if (lines.sub && subTopicTxt) {
     drawInfoTopicLine(headerFieldColor(config, 'subTopic', accentHex), lines.sub)
   }
-  const dybRightEdge = geom.page_w_pt - geom.mr - CLASSIC_DYB_INSET_X_PT
+  const badgeInset = CLASSIC_INFO_BAR_BADGE_INSET_PT
+  const infoRightEdge = geom.page_w_pt - geom.mr - badgeInset
+  if (showInfoExamType) {
+    const boxHExam = resolveExamTypeBoxHeightPt(badgeConfig)
+    const boxW = resolveExamTypeBoxWidthPt(badgeConfig, contentW * 0.45)
+    const boxX = infoRightEdge - boxW
+    const boxYExam = infoBottom + (infoH - boxHExam) / 2
+    drawExamTypeBoxFillPdf(page, boxX, boxYExam, boxW, boxHExam, badgeConfig)
+    drawExamTypeBoxBorderPdf(page, boxX, boxYExam, boxW, boxHExam, badgeConfig)
+    drawExamTypeTextInBoxPdf(page, fonts.bold, boxX, boxYExam, boxW, boxHExam, badgeConfig)
+  }
   const dybH = dybSize.hPt
   const dybW = dybSize.wPt
-  const dybY = infoBottom + (infoH - dybH) / 2
-  drawStyle1ScoreBoxPdf(
-    page,
-    fonts.bold,
-    dybRightEdge - dybW,
-    dybY,
-    dybW,
-    dybH,
-    badgeConfig,
-  )
+  /** Şerit D/Y/B — alt bilgi şeridinin yatay ortası */
+  const dybX = geom.ml + (contentW - dybW) / 2
+  const dybY =
+    infoBottom + (infoH - dybH) / 2 - resolveScoreBoxOffsetYPt(badgeConfig)
+  if (showStripScore) {
+    drawStyle1ScoreBoxPdf(
+      page,
+      fonts.bold,
+      dybX,
+      dybY,
+      dybW,
+      dybH,
+      badgeConfig,
+    )
+  }
   }
 
   if (payload.include_description && !isCorporateHeader(String(payload.header_style_id ?? ''))) {

@@ -126,6 +126,16 @@ export interface QuestionItem {
   explanation_caption_box_width?: ExplanationCaptionBoxWidth
   /** Fasikül: soru çerçevesi / etiket (önizleme + taslak). */
   fasikulFrame?: FasikulQuestionFrameSettings
+  /**
+   * Fasikül: soru altı kareli alan satır sayısı.
+   * Yoksa boşluğa göre otomatik; set edilirse 1…maxRows aralığında.
+   */
+  scratchGridRows?: number
+  /**
+   * Fasikül: görselsiz boş hazır tasarım kutusu (satır yüksekliği).
+   * Layout bu yüksekliği kullanır; image_base64 şeffaf yer tutucu olabilir.
+   */
+  fasikulEmptyRows?: number
 }
 
 export interface SectionRange {

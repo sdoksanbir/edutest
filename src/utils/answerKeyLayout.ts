@@ -23,7 +23,7 @@ export const ANSWER_KEY_LAYOUT = {
 } as const;
 
 export type AnswerKeyLayoutInput = {
-  items: [number, string][];
+  items: [number | string, string][];
   /** Kullanılabilir alan genişliği (px) */
   totalWidthPx: number;
   columnCount: number;
