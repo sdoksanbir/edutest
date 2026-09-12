@@ -504,7 +504,10 @@ type EditorState = {
    * tüm soruları hedef puntoya (normalizationScale) çeker; manualScale=1.
    */
   applyQuestionLineHeightMatch: (opts?: {
+    /** Dar sorular için tek sütun net görsel genişliği */
     availWPt?: number;
+    /** Geniş sorular için tüm sütunlar net görsel genişliği */
+    fullWidthAvailWPt?: number;
     targetLinePt?: number;
   }) => Promise<{ matched: number; total: number }>;
   fontEqualizeInProgress: boolean;
@@ -2166,8 +2169,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         if (!(detectedFontPt > 0)) continue;
 
         let normalizationScale = clampFontEqualizeScale(target / detectedFontPt);
-        if (opts?.availWPt != null && opts.availWPt > 0 && native.nativeWidthPt > 0) {
-          const maxByWidth = opts.availWPt / native.nativeWidthPt;
+        // Geniş soruyu tek sütun genişliğiyle sıkıştırma — doğru üst sınır kullan
+        const isFullWidth = q.layoutMode === "full-width";
+        const availForQ = isFullWidth
+          ? opts?.fullWidthAvailWPt ?? opts?.availWPt
+          : opts?.availWPt;
+        if (availForQ != null && availForQ > 0 && native.nativeWidthPt > 0) {
+          const maxByWidth = availForQ / native.nativeWidthPt;
           if (Number.isFinite(maxByWidth) && maxByWidth > 0) {
             normalizationScale = Math.min(normalizationScale, maxByWidth);
             normalizationScale = clampFontEqualizeScale(normalizationScale);

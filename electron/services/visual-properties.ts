@@ -65,6 +65,10 @@ export function themeAccentColor(payload: Record<string, unknown>): string {
 }
 
 export function columnDividerColor(payload: Record<string, unknown>): string {
+  const custom = String(payload.column_divider_color ?? '').trim()
+  if (/^#?[0-9A-Fa-f]{6}$/i.test(custom)) {
+    return custom.startsWith('#') ? custom : `#${custom}`
+  }
   return themePrimaryColor(payload)
 }
 

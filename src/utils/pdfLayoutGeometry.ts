@@ -114,6 +114,46 @@ export type PdfColumnBand = {
   colGapPt: number;
 };
 
+/** Tüm sütunların kapladığı içerik genişliği (full-width soru kutusu). */
+export function pageContentWidthFromBand(band: PdfColumnBand): number {
+  const n = Math.max(1, band.columnXPt.length);
+  return n * band.colWidthPt + Math.max(0, n - 1) * band.colGapPt;
+}
+
+/** Geniş (tüm sütunlara yayılan) layout öğesi mi? */
+export function isLayoutItemFullWidth(
+  item: {
+    span_full_width?: boolean;
+    layout_mode?: string | null;
+    w_pt?: number;
+    img_w_pt?: number | null;
+  },
+  opts?: {
+    /** Soru kaydındaki layoutMode (layout bayrağı düşmüş olabilir) */
+    questionLayoutMode?: string | null;
+    /** Tek sütun genişliği — w_pt / img_w_pt buna göre geometrik kontrol */
+    colWidthPt?: number;
+  },
+): boolean {
+  if (item.span_full_width === true || item.layout_mode === "full-width") return true;
+  if (opts?.questionLayoutMode === "full-width") return true;
+  const colW = opts?.colWidthPt;
+  if (colW != null && colW > 0) {
+    const threshold = colW * 1.35;
+    if (item.w_pt != null && Number.isFinite(item.w_pt) && item.w_pt > threshold) {
+      return true;
+    }
+    if (
+      item.img_w_pt != null &&
+      Number.isFinite(item.img_w_pt) &&
+      item.img_w_pt > threshold
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function headerBottomGapPt(input: LayoutGeometryInput): number {
   const mm = input.headerBottomGapMm ?? DEFAULT_HEADER_BOTTOM_GAP_MM;
   return mmToPdfPt(Math.max(0, Math.min(50, mm)));

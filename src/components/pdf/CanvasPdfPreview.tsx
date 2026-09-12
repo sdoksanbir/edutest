@@ -71,6 +71,8 @@ import {
   drawScratchGridOnCanvas,
   resolveScratchGridRectPt,
   resolveScratchGridStrokeHex,
+  scratchCellPt,
+  scratchOccupiedHeightPt,
   SCRATCH_BORDER_WIDTH_PT,
   SCRATCH_CORNER_RADIUS_DEFAULT_PT,
   SCRATCH_PAD_BOTTOM_PT,
@@ -105,9 +107,11 @@ import {
   computePageColumnBand,
   columnIndexFromQuestionXPt,
   corporateOtherPageHeaderLayoutPt,
+  isLayoutItemFullWidth,
   liveAlignmentYShiftPtForItem,
   otherPageColumnDividerStartFromTopPt,
 } from "../../utils/pdfLayoutGeometry";
+import { layoutItemOccupiedBottomPt } from "../../utils/questionVerticalDrag";
 import {
   defaultHeaderConfig,
   isCorporateHeader,
@@ -211,8 +215,9 @@ const PT_PER_INCH = 72;
 /** Ekranda sayfa boyutu (CSS) — overlay / tıklama ile aynı kalır. */
 const DISPLAY_DPI = 96;
 const DISPLAY_PT_TO_PX = DISPLAY_DPI / PT_PER_INCH;
-/** Ana önizleme varsayılan keskinlik (buffer = CSS × sharpness × dpr). */
-export const DEFAULT_PREVIEW_SHARPNESS = 2;
+/** Ana önizleme varsayılan keskinlik (buffer = CSS × sharpness × dpr).
+ * 2× çok pahalıydı (özellikle 2x DPR ekranda ~4× piksel); 1.25 yeterli. */
+export const DEFAULT_PREVIEW_SHARPNESS = 1.25;
 
 const PT_TO_MM = 25.4 / PT_PER_INCH;
 
@@ -623,7 +628,13 @@ export default function CanvasPdfPreview({
     const neededIds = new Set<string>();
     const sources = new Map<string, string>();
 
-    for (const item of layout) {
+    // Canlı taşıma: layoutLiveRef güncel, React layout prop gecikmeli olabilir
+    const layoutSource =
+      layoutLiveRef?.current && layoutLiveRef.current.length > 0
+        ? layoutLiveRef.current
+        : layout;
+
+    for (const item of layoutSource) {
       if (item.page_num !== currentPage || item.kind === "answer_key_page") continue;
       const q =
         (item.question_id
@@ -713,16 +724,43 @@ export default function CanvasPdfPreview({
     const geomSig = layoutData
       .map(
         (i) =>
-          `${i.order_index}:${i.page_num}:${i.img_x_pt}:${i.img_y_top_pt}:${i.img_w_pt}:${i.img_h_pt}:${i.x_pt}:${i.y_top_pt}:${i.w_pt}:${i.h_pt}`,
+          `${i.order_index}:${i.page_num}:${i.img_x_pt}:${i.img_y_top_pt}:${i.img_w_pt}:${i.img_h_pt}:${i.x_pt}:${i.y_top_pt}:${i.w_pt}:${i.h_pt}:${i.span_full_width ? 1 : 0}:${i.layout_mode ?? ""}`,
       )
       .join("|");
+    const liveScratch = scratchLiveRef?.current;
+    const scratchSig = useEditorStore
+      .getState()
+      .questions.map(
+        (q) =>
+          `${q.order_index}:${q.scratchGridRows ?? ""}:${q.layoutMode ?? ""}`,
+      )
+      .join("|");
+    const scratchLiveSig =
+      liveScratch != null ? `${liveScratch.orderIndex}:${liveScratch.rows}` : "";
+    // Görsel hazır mı? (state veya cache) — yoksa gri kutuda kalıp scroll’a kadar atlanırdı
+    const imgReadySig = layoutData
+      .filter((i) => i.page_num === currentPage && i.kind !== "answer_key_page")
+      .map((i) => {
+        const q = useEditorStore
+          .getState()
+          .questions.find(
+            (x) =>
+              x.id === i.question_id || x.order_index === i.order_index,
+          );
+        const id = q?.id ?? i.question_id;
+        if (!id) return "0";
+        const im = images.get(id) ?? getCachedQuestionImage(id);
+        return im?.complete ? "1" : "0";
+      })
+      .join("");
+    const paintSig = `${geomSig}#${scratchSig}#${scratchLiveSig}#${imgReadySig}`;
     const dragLive = questionDragLiveRef?.current;
     const dragActiveOnPage =
       dragLive != null && dragLive.pageNum === currentPage;
     // Sürüklerken layout geomSig değişmez; canlı Y ile arkaplan/görsel yeniden boyanmalı
     if (
       !dragActiveOnPage &&
-      geomSig === lastPaintedGeomSigRef.current &&
+      paintSig === lastPaintedGeomSigRef.current &&
       visualEpochRef.current === lastPaintedVisualEpochRef.current
     ) {
       return;
@@ -745,7 +783,7 @@ export default function CanvasPdfPreview({
     if (!ctx) return;
     ctx.setTransform(bufferScale, 0, 0, bufferScale, 0, 0);
     ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
+    ctx.imageSmoothingQuality = sharpness <= 1.25 ? "medium" : "high";
 
     try {
 
@@ -1909,15 +1947,107 @@ export default function CanvasPdfPreview({
 
     const dividerActive = showColumnDivider && columns > 1 && !isExtraSheetPage;
     const dividerText = (columnDividerText || centerLineText || "").trim();
+    const customDividerHex = (columnDividerColor || "").trim();
+    const dividerColorHex =
+      /^#[0-9A-Fa-f]{6}$/i.test(customDividerHex)
+        ? customDividerHex
+        : primaryHex;
+    const dividerColorRgb = hexToRgb(dividerColorHex);
     const dividerRgb = writtenPaperHeader
       ? writtenStrokeRgb
-      : primaryRgb;
+      : `rgb(${Math.round(dividerColorRgb[0] * 255)},${Math.round(dividerColorRgb[1] * 255)},${Math.round(dividerColorRgb[2] * 255)})`;
 
-    // Sütun çizgileri - üst banner alt çizgisinden footer üst çizgisine; full-width bantlarında kesilir
+    // Sütun çizgileri - üst banner alt çizgisinden footer üst çizgisine; full-width (+kareli) bantlarında kesilir
+    const questionsByOrderEarly = new Map(
+      useEditorStore.getState().questions.map((q) => [q.order_index, q]),
+    );
+    const dividerBand = computePageColumnBand({
+      pageWpt,
+      pageHpt,
+      marginTopMm,
+      marginBottomMm,
+      marginLeftMm,
+      marginRightMm,
+      columns,
+      columnGapMm,
+      pageNum: currentPage,
+      headerStyleId,
+      headerConfig,
+      writtenPaperHeader,
+      writtenPaperTitle,
+      writtenPaperFieldLines,
+      writtenPaperFieldHidden,
+      includeDescription,
+      descriptionColumnCount,
+      descriptionTexts,
+      descriptionBoxPadYPt,
+      descriptionBoxPadXPt,
+      trialDescriptionMetaBar: false,
+      headerBottomGapMm,
+      otherPageHeaderBottomGapMm,
+    });
+    const pageItemsForDivider = layoutData
+      .filter((l) => l.page_num === currentPage && l.kind !== "answer_key_page")
+      .sort((a, b) => b.y_top_pt - a.y_top_pt);
+    const isFwItem = (l: (typeof layoutData)[number]) =>
+      isLayoutItemFullWidth(l, {
+        questionLayoutMode: questionsByOrderEarly.get(l.order_index)?.layoutMode,
+        colWidthPt: dividerBand.colWidthPt,
+      });
+    // Canvas: y artar aşağıya; geniş blok + alttaki kareli (sonraki soruya / footer'a kadar)
+    const skipCanvas: Array<{ lo: number; hi: number }> = [];
+    let dividerSegs: Array<{ lo: number; hi: number }> = [];
+    let dividerLinePositionsPx: number[] = [];
     if (dividerActive) {
+      for (let i = 0; i < pageItemsForDivider.length; i += 1) {
+        const l = pageItemsForDivider[i]!;
+        if (!isFwItem(l) || l.y_top_pt == null) continue;
+        const q = questionsByOrderEarly.get(l.order_index);
+        const liveScratch = scratchLiveRef?.current;
+        const rows =
+          liveScratch?.orderIndex === l.order_index
+            ? liveScratch.rows
+            : q?.scratchGridRows;
+        const scratchBelow =
+          showQuestionScratchGrid && fasikulFrameShowsScratchGrid(q?.fasikulFrame)
+            ? scratchOccupiedHeightPt(
+                Math.max(
+                  FASIKUL_MIN_SCRATCH_ROWS,
+                  rows != null && Number.isFinite(rows)
+                    ? Math.round(rows)
+                    : FASIKUL_MIN_SCRATCH_ROWS,
+                ),
+                scratchCellPt(),
+              )
+            : 0;
+        const occupiedBottom = layoutItemOccupiedBottomPt(l, scratchBelow);
+        const next = pageItemsForDivider[i + 1];
+        // Kareli alan sonraki soruya kadar uzar — orta çizgiyi tüm o aralıkta kes
+        let yBottom = occupiedBottom;
+        if (next?.y_top_pt != null) {
+          yBottom = Math.min(yBottom, next.y_top_pt);
+        } else {
+          yBottom = Math.min(yBottom, footerTopPt);
+        }
+        const top = ptToCanvas(0, l.y_top_pt).y;
+        const bot = ptToCanvas(0, yBottom).y;
+        skipCanvas.push({ lo: Math.min(top, bot), hi: Math.max(top, bot) });
+      }
+      skipCanvas.sort((a, b) => a.lo - b.lo);
+      for (let i = 1; i < skipCanvas.length; ) {
+        const prev = skipCanvas[i - 1]!;
+        const curB = skipCanvas[i]!;
+        if (curB.lo <= prev.hi + 0.5) {
+          prev.hi = Math.max(prev.hi, curB.hi);
+          skipCanvas.splice(i, 1);
+        } else {
+          i += 1;
+        }
+      }
+
       const colGapPt = mmToPt(columnGapMm);
       const colWPt = (contentW - (columns - 1) * colGapPt) / columns;
-      const linePositionsPx = Array.from({ length: columns - 1 }, (_, i) =>
+      dividerLinePositionsPx = Array.from({ length: columns - 1 }, (_, i) =>
         (mlPt + (i + 1) * colWPt + (i + 0.5) * colGapPt) * scale
       );
       let headerH: number;
@@ -1930,31 +2060,20 @@ export default function CanvasPdfPreview({
       const yStart = (mtPt + headerH) * scale;
       const yEnd = (pageHpt - footerTopPt) * scale;
 
-      const pageFw = layoutData.filter(
-        (l) => l.page_num === currentPage && l.span_full_width && l.img_y_top_pt != null && l.img_h_pt != null,
-      );
-      // Canvas: y artar aşağıya; PDF y_top → canvas y, alt = y_top - h → daha büyük canvas y
-      const skipCanvas = pageFw
-        .map((l) => {
-          const top = ptToCanvas(0, l.img_y_top_pt!).y;
-          const bot = ptToCanvas(0, l.img_y_top_pt! - l.img_h_pt!).y;
-          return { lo: Math.min(top, bot), hi: Math.max(top, bot) };
-        })
-        .sort((a, b) => a.lo - b.lo);
-
-      const segs: Array<{ lo: number; hi: number }> = [];
       let cur = yStart;
       for (const b of skipCanvas) {
-        if (b.lo > cur + 0.5) segs.push({ lo: cur, hi: Math.min(b.lo, yEnd) });
+        if (b.lo > cur + 0.5) dividerSegs.push({ lo: cur, hi: Math.min(b.lo, yEnd) });
         cur = Math.max(cur, b.hi);
       }
-      if (yEnd > cur + 0.5) segs.push({ lo: cur, hi: yEnd });
-      if (segs.length === 0 && skipCanvas.length === 0) segs.push({ lo: yStart, hi: yEnd });
+      if (yEnd > cur + 0.5) dividerSegs.push({ lo: cur, hi: yEnd });
+      if (dividerSegs.length === 0 && skipCanvas.length === 0) {
+        dividerSegs.push({ lo: yStart, hi: yEnd });
+      }
 
       ctx.strokeStyle = writtenPaperHeader ? writtenStrokeRgb : dividerRgb;
       ctx.lineWidth = columnDividerWidthPt * scale;
-      linePositionsPx.forEach((lineX) => {
-        for (const seg of segs) {
+      dividerLinePositionsPx.forEach((lineX) => {
+        for (const seg of dividerSegs) {
           if (seg.hi - seg.lo < 0.5) continue;
           ctx.beginPath();
           ctx.moveTo(lineX, seg.lo);
@@ -2147,11 +2266,11 @@ export default function CanvasPdfPreview({
       const imgHpx = imgH * scale;
 
       const qForEmpty = questionsByOrder.get(item.order_index);
-      const imgEl = qForEmpty?.id
-        ? images.get(qForEmpty.id)
-        : item.question_id
-          ? images.get(item.question_id)
-          : undefined;
+      const qidForImg = qForEmpty?.id ?? item.question_id ?? undefined;
+      // layoutLiveRef ile boyarken React images state gecikebilir — cache'den senkron al
+      const imgEl = qidForImg
+        ? images.get(qidForImg) ?? getCachedQuestionImage(qidForImg)
+        : undefined;
       const isEmptyFasikulBox = (qForEmpty?.fasikulEmptyRows ?? 0) > 0;
 
       const qForFrame = qForEmpty;
@@ -2293,10 +2412,15 @@ export default function CanvasPdfPreview({
         const imgH = item.img_h_pt;
         // Görsel alt kenarı (Örnek rozeti yok)
         const currBottomPt = imgYTop - imgH;
+        const fullWidth = isLayoutItemFullWidth(item, {
+          questionLayoutMode: questionsByOrder.get(item.order_index)?.layoutMode,
+          colWidthPt: alignmentBand.colWidthPt,
+        });
         const isLeft = (item.img_x_pt ?? 0) < midX;
         const below = pageItems.filter((l) => {
           if (l.img_x_pt == null || l.img_y_top_pt == null || l.img_h_pt == null) return false;
-          if ((l.img_x_pt ?? 0) < midX !== isLeft) return false;
+          // Geniş: sayfadaki herhangi bir alttaki; dar: aynı sütun
+          if (!fullWidth && (l.img_x_pt ?? 0) < midX !== isLeft) return false;
           const lShift = useLiveReflowLayout
             ? 0
             : liveAlignmentYShiftPtForItem(l, {
@@ -2430,6 +2554,14 @@ export default function CanvasPdfPreview({
 
     pageItems.forEach((item) => {
       if (item.kind === "answer_key_page") return;
+      if (
+        isLayoutItemFullWidth(item, {
+          questionLayoutMode: questionsByOrder.get(item.order_index)?.layoutMode,
+          colWidthPt: alignmentBand.colWidthPt,
+        })
+      ) {
+        return;
+      }
       const hasImg =
         item.img_x_pt != null &&
         item.img_y_top_pt != null &&
@@ -2570,55 +2702,50 @@ export default function CanvasPdfPreview({
       dividerText &&
       !writtenPaperHeader
     ) {
-      const colGapPt = mmToPt(columnGapMm);
-      const colWPt = (contentW - (columns - 1) * colGapPt) / columns;
-      const linePositionsPx = Array.from({ length: columns - 1 }, (_, i) =>
-        (mlPt + (i + 1) * colWPt + (i + 0.5) * colGapPt) * scale
-      );
-      let headerHPt: number;
-      const otherDividerStart = otherPageColumnDividerStartFromTopPt({
-        pageNum: currentPage,
-        headerStyleId,
-        writtenPaperHeader,
-      });
-      headerHPt = otherDividerStart ?? pageHeaderHeightPt();
-      const yStart = (mtPt + headerHPt) * scale;
-      const yEnd = (pageHpt - footerTopPt) * scale;
-      const cy = (yStart + yEnd) / 2;
-      const txt = dividerText;
-      const fs = 9 * scale;
-      const fontPrefix = [
-        centerLineItalic ? "italic" : "",
-        centerLineBold ? "bold" : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-      const fontCss = fontPrefix ? `${fontPrefix} ${fs}px Arial, Helvetica` : `${fs}px Arial, Helvetica`;
-      const rot =
-        centerLineTextDirection === "down" ? Math.PI / 2 : -Math.PI / 2;
-      linePositionsPx.forEach((lineX) => {
-        ctx.save();
-        ctx.font = fontCss;
-        const m = ctx.measureText(txt);
-        const pad = 2 * scale;
-        const boxW =
-          m.actualBoundingBoxLeft != null && m.actualBoundingBoxRight != null
-            ? m.actualBoundingBoxRight - m.actualBoundingBoxLeft
-            : m.width;
-        const boxH =
-          m.actualBoundingBoxAscent != null && m.actualBoundingBoxDescent != null
-            ? m.actualBoundingBoxAscent + m.actualBoundingBoxDescent
-            : fs * 1.1;
-        ctx.translate(lineX, cy);
-        ctx.rotate(rot);
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(-boxW / 2 - pad, -boxH / 2 - pad, boxW + 2 * pad, boxH + 2 * pad);
-        ctx.fillStyle = dividerRgb;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(txt, 0, 0);
-        ctx.restore();
-      });
+      const longest = dividerSegs.reduce<{ lo: number; hi: number } | null>((best, seg) => {
+        if (seg.hi - seg.lo < 24) return best;
+        if (!best || seg.hi - seg.lo > best.hi - best.lo) return seg;
+        return best;
+      }, null);
+      if (longest && dividerLinePositionsPx.length > 0) {
+        const cy = (longest.lo + longest.hi) / 2;
+        const txt = dividerText;
+        const fs = 9 * scale;
+        const fontPrefix = [
+          centerLineItalic ? "italic" : "",
+          centerLineBold ? "bold" : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        const fontCss = fontPrefix
+          ? `${fontPrefix} ${fs}px Arial, Helvetica`
+          : `${fs}px Arial, Helvetica`;
+        const rot =
+          centerLineTextDirection === "down" ? Math.PI / 2 : -Math.PI / 2;
+        dividerLinePositionsPx.forEach((lineX) => {
+          ctx.save();
+          ctx.font = fontCss;
+          const m = ctx.measureText(txt);
+          const pad = 2 * scale;
+          const boxW =
+            m.actualBoundingBoxLeft != null && m.actualBoundingBoxRight != null
+              ? m.actualBoundingBoxRight - m.actualBoundingBoxLeft
+              : m.width;
+          const boxH =
+            m.actualBoundingBoxAscent != null && m.actualBoundingBoxDescent != null
+              ? m.actualBoundingBoxAscent + m.actualBoundingBoxDescent
+              : fs * 1.1;
+          ctx.translate(lineX, cy);
+          ctx.rotate(rot);
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(-boxW / 2 - pad, -boxH / 2 - pad, boxW + 2 * pad, boxH + 2 * pad);
+          ctx.fillStyle = dividerRgb;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(txt, 0, 0);
+          ctx.restore();
+        });
+      }
     }
 
     // Optik form — satırları hazırla (cevap anahtarından sonra çizilir, üstüne binmesin)
@@ -3002,7 +3129,7 @@ export default function CanvasPdfPreview({
       visCtx.drawImage(offscreen, 0, 0);
       visCtx.setTransform(bufferScale, 0, 0, bufferScale, 0, 0);
     }
-    lastPaintedGeomSigRef.current = geomSig;
+    lastPaintedGeomSigRef.current = paintSig;
     lastPaintedVisualEpochRef.current = visualEpochRef.current;
     } catch (err) {
       console.error("CanvasPdfPreview draw error:", err);
@@ -3174,8 +3301,8 @@ export default function CanvasPdfPreview({
     });
   }, [onRegisterRedraw]);
 
-  // Canvas boyutları — draw değişiminde width/height sıfırlanmasın (slider yanıp sönmesini önler)
-  useEffect(() => {
+  // Canvas boyutları — ilk paint öncesi (useLayoutEffect); 300×150 flash / scroll jump önlenir
+  useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const dpr = window.devicePixelRatio || 1;
@@ -3284,7 +3411,11 @@ export default function CanvasPdfPreview({
       <canvas
         ref={canvasRef}
         className={`block bg-white shadow-lg ${canvasFrameClassName ?? "rounded-lg border border-slate-200"} ${interactive ? "cursor-pointer" : ""}`}
-        style={interactive ? {} : { pointerEvents: "none" }}
+        style={{
+          width: pageWpx,
+          height: pageHpx,
+          ...(interactive ? {} : { pointerEvents: "none" as const }),
+        }}
         onClick={interactive ? handleClick : undefined}
       />
     </div>

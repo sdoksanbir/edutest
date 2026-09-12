@@ -16,6 +16,7 @@ import {
   DEFAULT_QUESTION_NUMBER_IMAGE_GAP_MM,
   DEFAULT_QUESTION_NUMBER_LEFT_OFFSET_MM,
   FOOTER_TOP_OFFSET_MM,
+  isLayoutItemFullWidth,
   liveAlignmentYShiftPtForItem,
   mmToPdfPt,
   type LayoutGeometryInput,
@@ -90,13 +91,18 @@ type Props = {
     sizePct: number,
     phase: "start" | "move" | "commit" | "cancel" | "persist" | "persistSoft"
   ) => void;
-  /** Tutamaç: satır değişince alt soruları kaydır */
+  /** Dar / Geniş (full-width) */
+  onLayoutModeChange?: (
+    orderIndex: number,
+    mode: "single-column" | "full-width",
+  ) => void;
+  /** Tutamaç: satır değişince alt soruları kaydır; sığan satır sayısını döndür */
   onScratchHandleRowsChange?: (
     orderIndex: number,
     rows: number,
     cellPt: number,
     phase: "move" | "commit",
-  ) => void;
+  ) => number | void;
   getDisplayScaleMaxPct?: (orderIndex: number) => number;
   questionNumberLeftOffsetMm?: number;
   questionNumberImageGapMm?: number;
@@ -204,6 +210,7 @@ export default function QuestionVerticalDragOverlay({
   onYTopChange,
   onColumnShift,
   onDisplayScaleChange,
+  onLayoutModeChange,
   onScratchHandleRowsChange,
   getDisplayScaleMaxPct,
   questionNumberLeftOffsetMm = DEFAULT_QUESTION_NUMBER_LEFT_OFFSET_MM,
@@ -468,12 +475,21 @@ export default function QuestionVerticalDragOverlay({
       if (!q) continue;
       if (!fasikulFrameShowsScratchGrid(q.fasikulFrame)) continue;
       const currBottomPt = item.img_y_top_pt - item.img_h_pt;
+      const fullWidth = isLayoutItemFullWidth(item, {
+        questionLayoutMode: q.layoutMode,
+        colWidthPt: undefined,
+      });
+      // Geometrik genişlik: tek sütundan belirgin genişse sayfa geneli komşu kullan
+      const looksFullWidth =
+        fullWidth ||
+        (item.w_pt != null &&
+          item.w_pt > (geometry.pageWpt - mmToPdfPt(geometry.marginLeftMm) - mmToPdfPt(geometry.marginRightMm)) * 0.55);
       const isLeft = item.img_x_pt < midX;
       const below = pageItems.filter(
         (l) =>
           l.img_x_pt != null &&
           l.img_y_top_pt != null &&
-          (l.img_x_pt < midX) === isLeft &&
+          (looksFullWidth || (l.img_x_pt < midX) === isLeft) &&
           (l.img_y_top_pt ?? 0) < (item.img_y_top_pt ?? 0),
       );
       const next = below.sort((a, b) => (b.img_y_top_pt ?? 0) - (a.img_y_top_pt ?? 0))[0];
@@ -821,7 +837,15 @@ export default function QuestionVerticalDragOverlay({
       return;
     }
     if (onScratchHandleRowsChange) {
-      onScratchHandleRowsChange(d.orderIndex, d.liveRows, d.cellPt, "commit");
+      const applied = onScratchHandleRowsChange(
+        d.orderIndex,
+        d.liveRows,
+        d.cellPt,
+        "commit",
+      );
+      if (typeof applied === "number" && applied >= 1) {
+        d.liveRows = applied;
+      }
     } else {
       setQuestionScratchGridRows(d.questionId, d.liveRows);
     }
@@ -841,14 +865,23 @@ export default function QuestionVerticalDragOverlay({
       if (next === d.liveRows) return;
       d.liveRows = next;
       if (onScratchHandleRowsChange) {
-        onScratchHandleRowsChange(d.orderIndex, next, d.cellPt, "move");
+        const applied = onScratchHandleRowsChange(
+          d.orderIndex,
+          next,
+          d.cellPt,
+          "move",
+        );
+        // Sayfaya sığmayan satır istenirse reflow kısar — tutamacı ona kilitle
+        if (typeof applied === "number" && applied >= 1) {
+          d.liveRows = applied;
+        }
       } else {
         setQuestionScratchGridRows(d.questionId, next);
       }
       const badge = document.querySelector(
         `[data-scratch-resize-badge="${d.orderIndex}"]`,
       );
-      if (badge) badge.textContent = `${next}`;
+      if (badge) badge.textContent = `${d.liveRows}`;
     },
     [onScratchHandleRowsChange, setQuestionScratchGridRows],
   );
@@ -1295,6 +1328,49 @@ export default function QuestionVerticalDragOverlay({
             )}
             {showControls && (
               <>
+                {onLayoutModeChange && columns > 1 && (
+                  <div
+                    className="absolute left-0 top-0 z-20 flex -translate-y-full gap-0 overflow-hidden rounded border border-slate-400 bg-white/95 text-[0.6rem] font-bold shadow-sm"
+                    data-question-layout-mode
+                  >
+                    <button
+                      type="button"
+                      title="Dar — tek sütun"
+                      aria-pressed={qItem?.layoutMode !== "full-width"}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onLayoutModeChange(item.order_index, "single-column");
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      className={`px-1.5 py-0.5 transition ${
+                        qItem?.layoutMode !== "full-width"
+                          ? "bg-slate-800 text-white"
+                          : "text-slate-600 hover:bg-slate-100"
+                      }`}
+                    >
+                      Dar
+                    </button>
+                    <button
+                      type="button"
+                      title="Geniş — tüm sütunlara yay"
+                      aria-pressed={qItem?.layoutMode === "full-width"}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onLayoutModeChange(item.order_index, "full-width");
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      className={`px-1.5 py-0.5 transition ${
+                        qItem?.layoutMode === "full-width"
+                          ? "bg-slate-800 text-white"
+                          : "text-slate-600 hover:bg-slate-100"
+                      }`}
+                    >
+                      Geniş
+                    </button>
+                  </div>
+                )}
                 {onDisplayScaleChange && !sizeSliderOpen && (
                   <div
                     className="absolute right-0 top-0 z-20 flex -translate-y-full flex-col items-end gap-1"

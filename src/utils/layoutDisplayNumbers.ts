@@ -1,6 +1,6 @@
 import type { LayoutItem } from "../api/client";
 import type { QuestionItem } from "../types";
-import { getColumnItemsSortedTopFirst } from "./columnRedistribute";
+import { getLayoutItemsInReadingOrder } from "./columnRedistribute";
 import { estimateQuestionNumberTextWidthPt } from "./questionNumberMetrics";
 import {
   computePageColumnBand,
@@ -38,6 +38,9 @@ export function reapplyDisplayNumbersByReadingOrder(
   const fontPt = input.questionNumberFontPt ?? 10;
   const cols = Math.max(1, input.columns);
   const imageGapPt = questionNumberImageGapPt(input.geometry);
+  const modeByOrder = new Map(
+    (input.questions ?? []).map((q) => [q.order_index, q.layoutMode] as const),
+  );
 
   if (!enabled) {
     return layout.map((item) =>
@@ -59,15 +62,15 @@ export function reapplyDisplayNumbersByReadingOrder(
 
   for (const pageNum of pageNums) {
     const band = computePageColumnBand({ ...input.geometry, pageNum });
-    for (let col = 0; col < cols; col++) {
-      const items = getColumnItemsSortedTopFirst(layout, pageNum, col, band);
-      for (const item of items) {
-        if (shouldSkipDisplayNumber(item, input.questions)) {
-          displayByOrder.set(item.order_index, null);
-        } else {
-          displayByOrder.set(item.order_index, counter);
-          counter += 1;
-        }
+    const items = getLayoutItemsInReadingOrder(layout, pageNum, cols, band, {
+      questionLayoutModeByOrder: modeByOrder,
+    });
+    for (const item of items) {
+      if (shouldSkipDisplayNumber(item, input.questions)) {
+        displayByOrder.set(item.order_index, null);
+      } else {
+        displayByOrder.set(item.order_index, counter);
+        counter += 1;
       }
     }
   }

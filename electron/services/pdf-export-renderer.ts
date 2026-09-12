@@ -37,6 +37,8 @@ import {
   drawScratchGridOnPdfPage,
   resolveScratchGridRectPt,
   resolveScratchGridStrokeHex,
+  scratchCellPt,
+  scratchOccupiedHeightPt,
   SCRATCH_PAD_BOTTOM_PT,
   FASIKUL_MIN_SCRATCH_ROWS,
 } from './question-scratch-grid.js'
@@ -794,12 +796,13 @@ async function drawQuestionsOnPage(
         continue
       }
       const currBottomPt = item.img_y_top_pt - item.img_h_pt
+      const fullWidth = item.span_full_width === true || item.layout_mode === 'full-width'
       const isLeft = item.img_x_pt < midX
       const below = pageItems.filter(
         (l) =>
           l.img_x_pt != null &&
           l.img_y_top_pt != null &&
-          l.img_x_pt < midX === isLeft &&
+          (fullWidth || l.img_x_pt < midX === isLeft) &&
           (l.img_y_top_pt ?? 0) < (item.img_y_top_pt ?? 0),
       )
       const next = below.sort((a, b) => (b.img_y_top_pt ?? 0) - (a.img_y_top_pt ?? 0))[0]
@@ -1010,13 +1013,56 @@ export async function exportPdfFromPayload(
     if (!isOptikOnlyPage) {
       await drawPageHeader(pdf, page, payload, geom, pageNum, fonts, false)
       const pageItems = layout.filter((l) => l.page_num === pageNum && l.kind === 'question')
-      const skipBands = pageItems
-        .filter((l) => l.span_full_width)
-        .map((l) => {
-          const yTop = Number(l.img_y_top_pt ?? l.y_top_pt ?? 0)
-          const h = Number(l.img_h_pt ?? l.h_pt ?? 0)
-          return { yBottom: yTop - h, yTop }
-        })
+      const qByOrderForSkip = new Map(
+        ((payload.questions as Array<Record<string, unknown>>) ?? []).map((q) => [
+          Number(q.order_index ?? -1),
+          q,
+        ]),
+      )
+      const cellPtApprox = scratchCellPt()
+      const sorted = [...pageItems].sort(
+        (a, b) => Number(b.y_top_pt ?? 0) - Number(a.y_top_pt ?? 0),
+      )
+      const skipBands: Array<{ yBottom: number; yTop: number }> = []
+      const colWForSkip = Number(geom.colW ?? 0)
+      for (let i = 0; i < sorted.length; i += 1) {
+        const l = sorted[i]!
+        const q = qByOrderForSkip.get(l.order_index)
+        const qMode = String(q?.layoutMode ?? q?.layout_mode ?? '')
+        const wPt = Number(l.w_pt ?? 0)
+        const imgWPt = Number(l.img_w_pt ?? 0)
+        const isFw =
+          l.span_full_width === true ||
+          l.layout_mode === 'full-width' ||
+          qMode === 'full-width' ||
+          (colWForSkip > 0 && (wPt > colWForSkip * 1.35 || imgWPt > colWForSkip * 1.35))
+        if (!isFw) continue
+        const yTop = Number(l.y_top_pt ?? l.img_y_top_pt ?? 0)
+        const h = Number(l.h_pt ?? l.img_h_pt ?? 0)
+        const imgY = Number(l.img_y_top_pt ?? yTop)
+        const imgH = Number(l.img_h_pt ?? h)
+        const visualBottom = imgY - imgH
+        let yBottom = yTop - h
+        if (fasikulFrameShowsScratchGrid(q?.fasikulFrame)) {
+          const rowsRaw = Number(q?.scratchGridRows)
+          const rows = Math.max(
+            FASIKUL_MIN_SCRATCH_ROWS,
+            Number.isFinite(rowsRaw) ? Math.round(rowsRaw) : FASIKUL_MIN_SCRATCH_ROWS,
+          )
+          yBottom = Math.min(
+            yBottom,
+            visualBottom - scratchOccupiedHeightPt(rows, cellPtApprox),
+          )
+        }
+        // Kareli alan sonraki soruya kadar uzar — çizgiyi tüm aralıkta kes
+        const next = sorted[i + 1]
+        if (next?.y_top_pt != null) {
+          yBottom = Math.min(yBottom, Number(next.y_top_pt))
+        } else {
+          yBottom = Math.min(yBottom, Number(geom.contentBottom ?? yBottom))
+        }
+        skipBands.push({ yBottom, yTop })
+      }
       drawColumnDividers(page, payload, geom, pageNum, false, skipBands)
 
       await drawQuestionsOnPage(
@@ -1032,7 +1078,7 @@ export async function exportPdfFromPayload(
         usedLockedLayoutPositions,
       )
 
-      drawCenterLineText(page, payload, geom, pageNum, fonts, false)
+      drawCenterLineText(page, payload, geom, pageNum, fonts, false, skipBands)
       drawFooter(page, payload, geom, pageNum, pageItems, fonts, maxPage)
     } else {
       drawFooter(page, payload, geom, pageNum, [], fonts, maxPage)

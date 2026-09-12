@@ -819,25 +819,43 @@ export default function PageStructurePanel({
             onDragStart={onSelectedQuestionScaleDragStart}
             onCancel={onSelectedQuestionScaleCancel}
           />
-          <label
-            className={`mt-1 flex items-start gap-2 text-xs ${
+          <div
+            className={`mt-1 space-y-1.5 text-xs ${
               selectedFullWidthEnabled ? t.label : t.labelMuted
             }`}
           >
-            <input
-              type="checkbox"
-              className="mt-0.5"
-              disabled={!selectedFullWidthEnabled || !onSelectedFullWidthChange || scaleActionBusy}
-              checked={selectedFullWidthChecked}
-              onChange={(e) => onSelectedFullWidthChange?.(e.target.checked)}
-            />
-            <span>
-              <span className="font-semibold">2 Sütuna Yay (Geniş Soru)</span>
-              <span className={`mt-0.5 block text-[11px] leading-snug ${t.labelMuted}`}>
-                Açıkken soru sayfa içeriğinin tamamına yayılır; kapatınca tek sütuna döner.
-              </span>
-            </span>
-          </label>
+            <div className="font-semibold">Yerleşim (Dar / Geniş)</div>
+            <div className="flex overflow-hidden rounded-lg border border-slate-300 dark:border-slate-600">
+              <button
+                type="button"
+                disabled={!selectedFullWidthEnabled || !onSelectedFullWidthChange || scaleActionBusy}
+                className={`flex-1 px-2.5 py-1.5 text-[11px] font-semibold transition disabled:opacity-40 ${
+                  !selectedFullWidthChecked
+                    ? "bg-slate-800 text-white"
+                    : "bg-transparent hover:bg-slate-100 dark:hover:bg-slate-700"
+                }`}
+                onClick={() => onSelectedFullWidthChange?.(false)}
+              >
+                Dar
+              </button>
+              <button
+                type="button"
+                disabled={!selectedFullWidthEnabled || !onSelectedFullWidthChange || scaleActionBusy}
+                className={`flex-1 px-2.5 py-1.5 text-[11px] font-semibold transition disabled:opacity-40 ${
+                  selectedFullWidthChecked
+                    ? "bg-slate-800 text-white"
+                    : "bg-transparent hover:bg-slate-100 dark:hover:bg-slate-700"
+                }`}
+                onClick={() => onSelectedFullWidthChange?.(true)}
+              >
+                Geniş
+              </button>
+            </div>
+            <p className={`text-[11px] leading-snug ${t.labelMuted}`}>
+              Geniş: soru mevcut sütun sayısının tamamına yayılır; dar: tek sütunda kalır.
+              Önceki/sonraki dar sorularda sütun çizgisi devam eder.
+            </p>
+          </div>
           {layoutRecommendationHint ? (
             <p className="rounded-md border border-amber-300/60 bg-amber-50 px-2.5 py-2 text-[11px] leading-snug text-amber-950">
               {layoutRecommendationHint}

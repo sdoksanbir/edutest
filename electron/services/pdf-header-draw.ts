@@ -859,6 +859,35 @@ export function drawColumnDividers(
     ? rgb(0, 0, 0)
     : hexToRgbColor(columnDividerColor(payload))
   const lineThickness = payload.written_paper_header ? 0.9 : columnDividerWidthPt(payload)
+  const { segments } = columnDividerVerticalPlan(payload, geom, pageNum, skipBandsPt)
+
+  for (let i = 1; i < geom.cols; i++) {
+    const x = geom.columnX[i]! - geom.colGap / 2
+    for (const seg of segments) {
+      if (seg.hi - seg.lo < 0.5) continue
+      page.drawLine({
+        start: { x, y: seg.lo },
+        end: { x, y: seg.hi },
+        thickness: lineThickness,
+        color: stroke,
+      })
+    }
+  }
+}
+
+/** Ayırıcı dikey plan: yStart/yEnd + skip bantlarından kalan segmentler (PDF pt, y yukarı). */
+function columnDividerVerticalPlan(
+  payload: Record<string, unknown>,
+  geom: {
+    page_w_pt: number
+    ml: number
+    mr: number
+    page_h_pt: number
+    contentBottom: number
+  },
+  pageNum: number,
+  skipBandsPt?: Array<{ yBottom: number; yTop: number }>,
+): { yStart: number; yEnd: number; segments: Array<{ lo: number; hi: number }> } {
   const mt = mmToPt(Number(payload.margin_top_mm ?? 10))
   const contentW = geom.page_w_pt - geom.ml - geom.mr
   const dividerStartFromTop =
@@ -887,19 +916,7 @@ export function drawColumnDividers(
   if (segments.length === 0 && bands.length === 0) {
     segments.push({ lo: yEnd, hi: yStart })
   }
-
-  for (let i = 1; i < geom.cols; i++) {
-    const x = geom.columnX[i]! - geom.colGap / 2
-    for (const seg of segments) {
-      if (seg.hi - seg.lo < 0.5) continue
-      page.drawLine({
-        start: { x, y: seg.lo },
-        end: { x, y: seg.hi },
-        thickness: lineThickness,
-        color: stroke,
-      })
-    }
-  }
+  return { yStart, yEnd, segments }
 }
 
 export function drawPageFrame(
@@ -979,8 +996,10 @@ export function drawCenterLineText(
     contentBottom: number
   },
   pageNum: number,
-  fonts: { regular: PDFFont; bold: PDFFont },
+  fonts: { regular: PDFFont; bold: PDFFont; italic?: PDFFont; boldItalic?: PDFFont },
   isAnswerKeyPage: boolean,
+  /** Önizleme ile aynı: yazıyı en uzun ayırıcı segmentinin ortasına koy */
+  skipBandsPt?: Array<{ yBottom: number; yTop: number }>,
 ) {
   if (isAnswerKeyPage || geom.cols < 2 || payload.written_paper_header) return
   if (!columnDividerTextEnabled(payload)) return
@@ -988,17 +1007,25 @@ export function drawCenterLineText(
   if (!txt) return
 
   const theme = hexToRgbColor(columnDividerColor(payload))
-  const mt = mmToPt(Number(payload.margin_top_mm ?? 10))
-  const contentW = geom.page_w_pt - geom.ml - geom.mr
-  const dividerStartFromTop =
-    otherPageColumnDividerStartFromTopPt(payload, pageNum) ??
-    (pageNum === 1 && isCorporateHeader(String(payload.header_style_id ?? ''))
-      ? corporateFirstPageHeaderTotalPt(payload, contentW)
-      : headerHeightPt(payload, pageNum, contentW))
-  const yStart = geom.page_h_pt - mt - dividerStartFromTop
-  const cy = (yStart + geom.contentBottom) / 2
+  const { segments } = columnDividerVerticalPlan(payload, geom, pageNum, skipBandsPt)
+  const longest = segments.reduce<{ lo: number; hi: number } | null>((best, seg) => {
+    if (seg.hi - seg.lo < 18) return best
+    if (!best || seg.hi - seg.lo > best.hi - best.lo) return seg
+    return best
+  }, null)
+  if (!longest) return
+  const cy = (longest.lo + longest.hi) / 2
   const fontSize = 9
-  const font = payload.center_line_bold ? fonts.bold : fonts.regular
+  const bold = Boolean(payload.center_line_bold)
+  const italic = Boolean(payload.center_line_italic)
+  const font =
+    bold && italic && fonts.boldItalic
+      ? fonts.boldItalic
+      : italic && fonts.italic
+        ? fonts.italic
+        : bold
+          ? fonts.bold
+          : fonts.regular
   const directionUp = String(payload.center_line_text_direction ?? 'up') !== 'down'
 
   for (let i = 1; i < geom.cols; i++) {

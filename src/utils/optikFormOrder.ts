@@ -10,7 +10,7 @@ import {
   buildFasikulOrnekNumberByOrderIndex,
   type FasikulQuestionFrameSettings,
 } from "./fasikulQuestionFrame";
-import { getColumnItemsSortedTopFirst } from "./columnRedistribute";
+import { getLayoutItemsInReadingOrder } from "./columnRedistribute";
 import {
   computePageColumnBand,
   type LayoutGeometryInput,
@@ -97,8 +97,8 @@ export type OptikReadingOrderOptions = {
 };
 
 /**
- * PDF okuma sırası: sayfa → sol sütun yukarıdan aşağı → sağ sütun …
- * (satır satır sol-sağ değil)
+ * PDF okuma sırası: sayfa → (geniş kesmelerle) sol sütun↑↓ → sağ sütun↑↓ …
+ * Geniş sorular dikey konumlarına göre araya girer (sütun listesinden düşmez).
  */
 export function questionsInLayoutReadingOrder(
   questions: QuestionItem[],
@@ -110,6 +110,9 @@ export function questionsInLayoutReadingOrder(
 
   const cols = Math.max(1, opts?.columns ?? 1);
   const geometry = opts?.geometry;
+  const modeByOrder = new Map(
+    questions.map((q) => [q.order_index, q.layoutMode] as const),
+  );
 
   if (geometry && layout.length > 0) {
     const pageNums = [
@@ -123,13 +126,13 @@ export function questionsInLayoutReadingOrder(
 
     for (const pageNum of pageNums) {
       const band = computePageColumnBand({ ...geometry, pageNum });
-      for (let col = 0; col < cols; col++) {
-        const items = getColumnItemsSortedTopFirst(layout, pageNum, col, band);
-        for (const item of items) {
-          const q = questions.find((x) => x.order_index === item.order_index);
-          if (!q || rankById.has(q.id)) continue;
-          rankById.set(q.id, rank++);
-        }
+      const items = getLayoutItemsInReadingOrder(layout, pageNum, cols, band, {
+        questionLayoutModeByOrder: modeByOrder,
+      });
+      for (const item of items) {
+        const q = questions.find((x) => x.order_index === item.order_index);
+        if (!q || rankById.has(q.id)) continue;
+        rankById.set(q.id, rank++);
       }
     }
   } else {

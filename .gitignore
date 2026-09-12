@@ -37,3 +37,4 @@ public/pdfjs/
 
 # electron-builder output
 release/
+release-new/

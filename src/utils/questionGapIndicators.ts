@@ -1,5 +1,11 @@
 import type { LayoutItem } from "../api/client";
-import { FOOTER_TOP_OFFSET_MM, mmToPdfPt } from "./pdfLayoutGeometry";
+import {
+  FOOTER_TOP_OFFSET_MM,
+  isLayoutItemFullWidth,
+  mmToPdfPt,
+  computePageColumnBand,
+  type LayoutGeometryInput,
+} from "./pdfLayoutGeometry";
 import { questionSelectionGapEndpointsPt } from "./questionSelectionOutline";
 import type { QuestionDragLive } from "./questionVerticalDrag";
 
@@ -61,6 +67,9 @@ export function computeQuestionGapIndicators(input: {
    * çizgi bu aralıkta, soru görseli yatay ortasında.
    */
   fasikulGapMode?: boolean;
+  /** Soru order_index → layoutMode (geniş soruda ortadaki mm çizgisini gizle) */
+  layoutModeByOrder?: Map<number, string | null | undefined>;
+  geometry?: LayoutGeometryInput;
 }): QuestionGapIndicator[] {
   const {
     layout,
@@ -74,6 +83,8 @@ export function computeQuestionGapIndicators(input: {
     dragLive,
     yShiftPtForItem,
     fasikulGapMode = false,
+    layoutModeByOrder,
+    geometry,
   } = input;
 
   const pageItems = layout.filter((l) => l.page_num === pageNum && l.kind !== "answer_key_page");
@@ -83,8 +94,22 @@ export function computeQuestionGapIndicators(input: {
   const xOffsetPt = mmToPdfPt(questionNumberLeftOffsetMm);
   const footerTopPt = mmToPdfPt(marginBottomMm) + mmToPdfPt(FOOTER_TOP_OFFSET_MM);
   const indicators: QuestionGapIndicator[] = [];
+  const colWidthPt = geometry
+    ? computePageColumnBand({ ...geometry, pageNum }).colWidthPt
+    : undefined;
 
   pageItems.forEach((item) => {
+    // Geniş + fasikül: kareli alanın ortasından mm/çizgi geçmesin
+    if (
+      fasikulGapMode &&
+      isLayoutItemFullWidth(item, {
+        questionLayoutMode: layoutModeByOrder?.get(item.order_index),
+        colWidthPt,
+      })
+    ) {
+      return;
+    }
+
     const yShiftPt = yShiftPtForItem?.(item) ?? 0;
     const imgYTop = itemImgYTopPt(item, dragLive, yShiftPt);
     const hasImg =
@@ -96,12 +121,16 @@ export function computeQuestionGapIndicators(input: {
 
     const currBottomPt = imgYTop - (item.img_h_pt ?? 0);
     const isLeft = (item.img_x_pt ?? 0) < midX;
+    const fullWidth = isLayoutItemFullWidth(item, {
+      questionLayoutMode: layoutModeByOrder?.get(item.order_index),
+      colWidthPt,
+    });
     const below = pageItems.filter((l) => {
       const belowY = itemImgYTopPt(l, dragLive, yShiftPtForItem?.(l) ?? 0);
       return (
         l.img_x_pt != null &&
         belowY != null &&
-        ((l.img_x_pt ?? 0) < midX) === isLeft &&
+        (fullWidth || ((l.img_x_pt ?? 0) < midX) === isLeft) &&
         belowY < imgYTop
       );
     });

@@ -4,6 +4,7 @@ import ReactCrop, { type Crop } from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 import ModalShell from "./ModalShell";
 import InlineAnswerBar from "../crop/InlineAnswerBar";
+import type { CropLayoutMode } from "../crop/AnswerMarkPanel";
 import { getChoiceCount } from "../../store/cropLocalStore";
 import {
   addImageAsQuestion,
@@ -31,6 +32,7 @@ export default function AddImageModal({ onClose }: { onClose: () => void }) {
   const [crop, setCrop] = useState<Crop>(FULL_CROP);
   const [imgLoaded, setImgLoaded] = useState(false);
   const [selectedAnswer, setSelectedAnswer] = useState<AnswerOption | null>(null);
+  const [cropLayout, setCropLayout] = useState<CropLayoutMode>("dar");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -47,6 +49,7 @@ export default function AddImageModal({ onClose }: { onClose: () => void }) {
     setCrop(FULL_CROP);
     setImgLoaded(false);
     setSelectedAnswer(null);
+    setCropLayout("dar");
     setError(null);
     pendingCropRef.current = FULL_CROP;
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -115,6 +118,7 @@ export default function AddImageModal({ onClose }: { onClose: () => void }) {
         filename,
         crop: normCrop,
         answerKey: selectedAnswer ?? "",
+        layoutMode: cropLayout === "genis" ? "full-width" : "single-column",
       });
       onClose();
     } catch (err) {
@@ -122,7 +126,7 @@ export default function AddImageModal({ onClose }: { onClose: () => void }) {
     } finally {
       setBusy(false);
     }
-  }, [busy, crop, dataUrl, filename, onClose, selectedAnswer]);
+  }, [busy, crop, cropLayout, dataUrl, filename, onClose, selectedAnswer]);
 
   const choiceCount = getChoiceCount() ?? 5;
 
@@ -203,7 +207,7 @@ export default function AddImageModal({ onClose }: { onClose: () => void }) {
             </ReactCrop>
           </div>
 
-          <div className="mb-4 flex flex-wrap items-center gap-2">
+          <div className="mb-4 flex flex-wrap items-center gap-3">
             <span className="text-xs font-medium text-slate-500">Cevap (isteğe bağlı):</span>
             <InlineAnswerBar
               selectedAnswer={selectedAnswer}
@@ -212,6 +216,22 @@ export default function AddImageModal({ onClose }: { onClose: () => void }) {
               choiceCount={choiceCount}
               compact
             />
+            <div className="flex overflow-hidden rounded-lg border border-slate-300 text-xs font-semibold">
+              <button
+                type="button"
+                className={`px-2.5 py-1.5 ${cropLayout === "dar" ? "bg-slate-800 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}
+                onClick={() => setCropLayout("dar")}
+              >
+                Dar
+              </button>
+              <button
+                type="button"
+                className={`px-2.5 py-1.5 ${cropLayout === "genis" ? "bg-slate-800 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}
+                onClick={() => setCropLayout("genis")}
+              >
+                Geniş
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-2">

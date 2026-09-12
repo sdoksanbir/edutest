@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type RefObject } from "react";
 
 import type { LayoutItem } from "../../api/client";
+import { useEditorStore } from "../../store/editorStore";
 
 import {
   computeQuestionGapIndicators,
@@ -228,6 +229,10 @@ export default function QuestionGapIndicatorOverlay({
       selectedQuestions,
       dragLive,
       fasikulGapMode,
+      geometry,
+      layoutModeByOrder: new Map(
+        useEditorStore.getState().questions.map((q) => [q.order_index, q.layoutMode]),
+      ),
       yShiftPtForItem: useLiveReflowLayout
         ? undefined
         : (item) =>

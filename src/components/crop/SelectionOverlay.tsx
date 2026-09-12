@@ -1,5 +1,3 @@
-import { useState } from "react";
-
 import type { CropBox } from "../../types";
 
 import type { AnswerOption } from "../../types";
@@ -15,35 +13,21 @@ import AnswerMarkPanel, { type CropLayoutMode } from "./AnswerMarkPanel";
 
 
 type SelectionWithNumber = {
-
   id: string;
-
   pdf_id: string;
-
   page_number: number;
-
   crop: CropBox;
-
   answer_key?: string;
-
   number: number;
-
   listBadge?: string;
-
   content_type?: string;
-
   explanation_caption_enabled?: boolean;
-
   explanation_caption_text?: string;
-
   remove_background?: boolean;
-
   display_scale?: number;
-
+  layoutMode?: "single-column" | "full-width";
   isLocal?: boolean;
-
   localPdfId?: string;
-
 };
 
 
@@ -110,11 +94,7 @@ export default function SelectionOverlay({
 
 }: SelectionOverlayProps) {
 
-  const [layout, setLayout] = useState<CropLayoutMode>("dar");
-
-
-
-  const currentSelections = selections.filter(
+const currentSelections = selections.filter(
 
     (s) =>
 
@@ -170,11 +150,7 @@ export default function SelectionOverlay({
 
         const isEditing = editingSelectionId === sel.id;
         const isExplanation = normalizeContentType(sel.content_type) === "explanation";
-
-        /** Eski dar=0.88 kırpmalar; yeni seçimler her zaman scale=1 → genis. */
-        const activeLayout: CropLayoutMode =
-          sel.display_scale != null && sel.display_scale < 0.95 ? "dar" : "genis";
-        return (
+return (
 
           <div
 
@@ -215,8 +191,6 @@ export default function SelectionOverlay({
                   onClick={(e) => {
 
                     e.stopPropagation();
-
-                    setLayout(activeLayout);
 
                     onStartEdit(sel);
 
@@ -266,14 +240,10 @@ export default function SelectionOverlay({
 
                   onSelectAnswer={(a) => onAnswerChange(sel, a)}
 
-                  layout={layout}
+                  layout={sel.layoutMode === "full-width" ? "genis" : "dar"}
 
                   onLayoutChange={(next) => {
-
-                    setLayout(next);
-
                     onLayoutChange?.(sel, next);
-
                   }}
 
                   choiceCount={choiceCount}

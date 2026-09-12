@@ -80,6 +80,8 @@ type PendingSelection = {
   explanation_caption_text?: string;
   remove_background?: boolean;
   display_scale?: number;
+  /** Dar = tek sütun, Geniş = tüm sütunlara yay */
+  layoutMode?: "single-column" | "full-width";
   /** Backend'de zaten kayıtlı mı (yüklemeden gelen) */
   backendId?: string;
   /** Local PDF modunda: sunucuya yüklenmemiş */
@@ -100,6 +102,7 @@ export default function CropWorkspace() {
   const removeQuestion = useEditorStore((s) => s.removeQuestion);
   const clearAllQuestions = useEditorStore((s) => s.clearAllQuestions);
   const setQuestionDisplayScale = useEditorStore((s) => s.setQuestionDisplayScale);
+  const setQuestionLayoutMode = useEditorStore((s) => s.setQuestionLayoutMode);
   const reorderQuestions = useEditorStore((s) => s.reorderQuestions);
   const updateQuestionCrop = useEditorStore((s) => s.updateQuestionCrop);
   const updateQuestionCropAndImage = useEditorStore((s) => s.updateQuestionCropAndImage);
@@ -292,6 +295,8 @@ export default function CropWorkspace() {
         explanation_caption_enabled: q.explanation_caption_enabled,
         explanation_caption_text: q.explanation_caption_text,
         remove_background: q.remove_background ?? false,
+        display_scale: q.display_scale ?? 1,
+        layoutMode: q.layoutMode === "full-width" ? "full-width" : "single-column",
         backendId: q.image_base64 ? undefined : q.id,
         isLocal,
         localPdfId: localPdfId ?? (q as { localPdfId?: string }).localPdfId,
@@ -573,7 +578,7 @@ export default function CropWorkspace() {
           manualScale: 1,
           normalizationScale: 1,
           fontMeasurementRevision: 0,
-          layoutMode: "single-column",
+          layoutMode: sel.layoutMode ?? "single-column",
           capture,
           image_base64: rawB64,
           localPdfId: sel.localPdfId,
@@ -649,6 +654,7 @@ export default function CropWorkspace() {
       number: 0,
       remove_background: false,
       display_scale: displayScale,
+      layoutMode: layout === "genis" ? "full-width" : "single-column",
       content_type: "question",
       isLocal,
       localPdfId: localSrc?.id,
@@ -684,11 +690,11 @@ export default function CropWorkspace() {
   };
 
   const handleLayoutChange = (sel: PendingSelection, layout: CropLayoutMode) => {
-    const scale = layoutToScale(layout);
+    const mode = layout === "genis" ? "full-width" : "single-column";
     setPendingSelections((prev) =>
-      prev.map((s) => (s.id === sel.id ? { ...s, display_scale: scale } : s))
+      prev.map((s) => (s.id === sel.id ? { ...s, layoutMode: mode } : s)),
     );
-    setQuestionDisplayScale(sel.id, scale);
+    setQuestionLayoutMode(sel.id, mode);
   };
 
   /** Seçimi hem crop listesinden hem editörden kaldırır */

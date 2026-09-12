@@ -43,6 +43,7 @@ export async function addImageAsQuestion(opts: {
   filename: string;
   crop: NormRect;
   answerKey?: string;
+  layoutMode?: "single-column" | "full-width";
 }): Promise<void> {
   const { addQuestionsToWorkingDraft } = useEditorStore.getState();
   const orderIndex = useEditorStore.getState().questions.length;
@@ -73,6 +74,7 @@ export async function addImageAsQuestion(opts: {
       remove_background: false,
       image_base64: imageBase64,
       localPdfId: localId,
+      layoutMode: opts.layoutMode ?? "single-column",
     },
   ]);
 

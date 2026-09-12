@@ -3,8 +3,10 @@
  */
 
 import type { LayoutItem } from "../api/client";
+import type { QuestionItem } from "../types";
 import {
   DEFAULT_QUESTION_NUMBER_IMAGE_GAP_MM,
+  isLayoutItemFullWidth,
   mmToPdfPt,
   columnIndexFromQuestionXPt,
   computePageColumnBand,
@@ -15,14 +17,18 @@ import {
 import { estimateQuestionNumberTextWidthPt } from "./questionNumberMetrics";
 import {
   getColumnItemsSortedTopFirst,
+  getPageItemsSortedTopFirst,
   layoutItemVisualBottomPt,
   shiftLayoutItemYTop,
 } from "./columnRedistribute";
 import {
+  FASIKUL_MIN_SCRATCH_ROWS,
   SCRATCH_PAD_BOTTOM_PT,
+  scratchCellPt,
   scratchOccupiedHeightPt,
   scratchPadTopPt,
 } from "./questionScratchGrid";
+import { fasikulFrameShowsScratchGrid } from "./fasikulQuestionFrame";
 
 export const MIN_VERTICAL_GAP_MM = 5;
 export const MIN_VERTICAL_GAP_PT = (MIN_VERTICAL_GAP_MM * 72) / 25.4;
@@ -353,18 +359,58 @@ export function reflowColumnForScratchRows(args: {
   /** Sütun içerik tavanı — küçültünce sorular önceki sayfaya taşmasın */
   contentTopPt?: number;
   padBottomPt?: number;
+  /** Genişlik tespiti için (bayrak düşmüş olabilir) */
+  questions?: QuestionItem[];
 }): { layout: LayoutItem[]; rows: number; yUpdatesByOrderIndex: Map<number, number> } {
   const padBottom = args.padBottomPt ?? SCRATCH_PAD_BOTTOM_PT;
   const cellPt = args.cellPt;
-  const col = columnIndexFromQuestionXPt(
-    args.layout.find((l) => l.order_index === args.orderIndex)?.x_pt ?? 0,
-    args.band,
-  );
-  const items = getColumnItemsSortedTopFirst(args.layout, args.pageNum, col, args.band);
-  const idx = items.findIndex((i) => i.order_index === args.orderIndex);
   const emptyUpdates = new Map<number, number>();
-  if (idx < 0 || cellPt <= 0) {
-    return { layout: args.layout, rows: Math.max(1, Math.round(args.rows)), yUpdatesByOrderIndex: emptyUpdates };
+  const self = args.layout.find((l) => l.order_index === args.orderIndex);
+  if (!self || cellPt <= 0) {
+    return {
+      layout: args.layout,
+      rows: Math.max(1, Math.round(args.rows)),
+      yUpdatesByOrderIndex: emptyUpdates,
+    };
+  }
+
+  const qSelf = args.questions?.find((x) => x.order_index === args.orderIndex);
+  const fullWidth = isLayoutItemFullWidth(self, {
+    questionLayoutMode: qSelf?.layoutMode,
+    colWidthPt: args.band.colWidthPt,
+  });
+
+  const scratchBelowFor = (item: LayoutItem, rowsOverride?: number | null) => {
+    const q = args.questions?.find((x) => x.order_index === item.order_index);
+    if (!fasikulFrameShowsScratchGrid(q?.fasikulFrame)) return 0;
+    const rows =
+      rowsOverride != null && Number.isFinite(rowsOverride)
+        ? Math.max(FASIKUL_MIN_SCRATCH_ROWS, Math.round(rowsOverride))
+        : Math.max(
+            FASIKUL_MIN_SCRATCH_ROWS,
+            q?.scratchGridRows != null && Number.isFinite(q.scratchGridRows)
+              ? Math.round(q.scratchGridRows)
+              : FASIKUL_MIN_SCRATCH_ROWS,
+          );
+    return scratchOccupiedHeightPt(rows, scratchCellPt(), padBottom);
+  };
+
+  // Geniş: sayfadaki tüm sorular; dar: yalnız kendi sütunu
+  const items = fullWidth
+    ? getPageItemsSortedTopFirst(args.layout, args.pageNum)
+    : getColumnItemsSortedTopFirst(
+        args.layout,
+        args.pageNum,
+        columnIndexFromQuestionXPt(self.x_pt, args.band),
+        args.band,
+      );
+  const idx = items.findIndex((i) => i.order_index === args.orderIndex);
+  if (idx < 0) {
+    return {
+      layout: args.layout,
+      rows: Math.max(1, Math.round(args.rows)),
+      yUpdatesByOrderIndex: emptyUpdates,
+    };
   }
   const item = items[idx]!;
   const questionBottom =
@@ -374,30 +420,52 @@ export function reflowColumnForScratchRows(args: {
   const absoluteMaxRows = Math.max(1, Math.floor(spaceToFooter / cellPt));
   let rows = Math.max(1, Math.min(absoluteMaxRows, Math.round(args.rows)));
 
-  const next = items[idx + 1];
+  // Geniş soruda "sonraki" = herhangi bir sütundaki en yakın alttaki
+  const below = items.slice(idx + 1);
+  const next = below[0];
   if (!next) {
     return { layout: args.layout, rows, yUpdatesByOrderIndex: emptyUpdates };
   }
 
   const spaceNeeded = scratchOccupiedHeightPt(rows, cellPt, padBottom);
   const desiredNextTop = questionBottom - spaceNeeded;
-  // Sonraki bloğun üstü (badge dahil) — kareli alan ÖRNEK'e binmesin
   const nextTop = next.y_top_pt ?? next.img_y_top_pt ?? 0;
   let delta = nextTop - desiredNextTop; // + → alta it (y azalt)
 
-  const last = items[items.length - 1]!;
-  const lastTop = last.y_top_pt ?? last.img_y_top_pt ?? 0;
-  const lastH = last.h_pt ?? last.img_h_pt ?? 0;
-  const lastBottomAfter = lastTop - delta - lastH;
-  if (lastBottomAfter < args.footerTopPt - 0.01) {
-    delta -= args.footerTopPt - lastBottomAfter;
+  // Alttaki TÜM soruların (kareli dahil) footer altına taşmasını engelle
+  const occupiedBottomAfterDelta = (it: LayoutItem, d: number) => {
+    const shiftedTop = (it.y_top_pt ?? 0) - d;
+    const fake = { ...it, y_top_pt: shiftedTop, img_y_top_pt: (it.img_y_top_pt ?? it.y_top_pt) - d };
+    return layoutItemOccupiedBottomPt(fake, scratchBelowFor(it));
+  };
+
+  if (below.length > 0 && delta > 0.01) {
+    let minOcc = Infinity;
+    for (const it of below) {
+      minOcc = Math.min(minOcc, occupiedBottomAfterDelta(it, delta));
+    }
+    if (minOcc < args.footerTopPt - 0.01) {
+      // Ne kadar az itelim ki en alçak işgal footer'da kalsın
+      let lo = 0;
+      let hi = delta;
+      for (let i = 0; i < 16; i += 1) {
+        const mid = (lo + hi) / 2;
+        let ok = true;
+        for (const it of below) {
+          if (occupiedBottomAfterDelta(it, mid) < args.footerTopPt - 0.01) {
+            ok = false;
+            break;
+          }
+        }
+        if (ok) lo = mid;
+        else hi = mid;
+      }
+      delta = lo;
+    }
   }
 
-  // Küçültünce yukarı çekme: hiçbir alttaki soru sütun tavanını aşmasın
   const ceiling = args.contentTopPt ?? args.band.contentTopPt;
   if (delta < -0.01 && Number.isFinite(ceiling)) {
-    const below = items.slice(idx + 1);
-    // delta ≥ blockTop - ceiling  (her öğe için); en sıkı alt sınır = max(...)
     let minDelta = delta;
     for (const it of below) {
       const blockTop = layoutItemBlockTopPt(it);
@@ -407,13 +475,32 @@ export function reflowColumnForScratchRows(args: {
   }
 
   if (Math.abs(delta) < 0.05) {
+    // Kaydırma yok — mevcut boşluğa sığan satır (sonraki rozetin üstüne binme)
+    const avail = questionBottom - nextTop;
+    const fit = Math.max(
+      1,
+      Math.floor((avail - padTop - padBottom) / cellPt),
+    );
+    rows = Math.min(rows, fit);
     return { layout: args.layout, rows, yUpdatesByOrderIndex: emptyUpdates };
   }
 
-  const shiftOrders = new Set(items.slice(idx + 1).map((i) => i.order_index));
+  // Delta kısıtlandıysa satır sayısını gerçek boşluğa göre düşür
+  {
+    const nextTopAfter = nextTop - delta;
+    const avail = questionBottom - nextTopAfter;
+    const fit = Math.max(
+      1,
+      Math.floor((avail - padTop - padBottom) / cellPt),
+    );
+    rows = Math.min(rows, fit);
+  }
+
+  const shiftOrders = new Set(below.map((i) => i.order_index));
   const yUpdatesByOrderIndex = new Map<number, number>();
   const layout = args.layout.map((l) => {
     if (!shiftOrders.has(l.order_index)) return l;
+    // Genişlik bayraklarını koru
     const cur = l.img_y_top_pt ?? l.y_top_pt;
     const moved = shiftLayoutItemToImgYTop(l, cur - delta);
     yUpdatesByOrderIndex.set(l.order_index, moved.y_top_pt);
@@ -489,13 +576,45 @@ export function getPageColumnDraggableMeta(
       ceilingTopPt: number | null;
     }
   >();
+  const pageCeiling = geometry
+    ? contentTopPtForColumn({ ...geometry, pageNum }, 0)
+    : band.contentTopPt;
+
+  // Geniş sorular: sayfa geneli komşular (tek sütun listesine düşmesin)
+  const pageItems = getPageItemsSortedTopFirst(layout, pageNum);
+  pageItems.forEach((item, idx) => {
+    if (
+      !isLayoutItemFullWidth(item, {
+        colWidthPt: band.colWidthPt,
+      })
+    ) {
+      return;
+    }
+    const isBottom = idx === pageItems.length - 1;
+    out.set(item.order_index, {
+      draggable: idx > 0 || pageItems.length === 1,
+      prev: idx > 0 ? pageItems[idx - 1]! : null,
+      next: idx < pageItems.length - 1 ? pageItems[idx + 1]! : null,
+      floorTopPt: isBottom ? band.contentBottomPt : null,
+      ceilingTopPt: pageCeiling,
+    });
+  });
+
   const cols = Math.max(1, band.columnXPt.length);
   for (let col = 0; col < cols; col += 1) {
-    const items = getColumnItemsSortedTopFirst(layout, pageNum, col, band);
+    // Dar sorular: kendi sütunu + geniş bantlar (üst/alt çakışma sınırı doğru olsun)
+    const items = layout
+      .filter((l) => {
+        if (l.page_num !== pageNum || l.kind === "answer_key_page") return false;
+        if (isLayoutItemFullWidth(l)) return true;
+        return columnIndexFromQuestionXPt(l.x_pt, band) === col;
+      })
+      .sort((a, b) => b.y_top_pt - a.y_top_pt);
     const ceiling = geometry
       ? contentTopPtForColumn({ ...geometry, pageNum }, col)
       : band.contentTopPt;
     items.forEach((item, idx) => {
+      if (isLayoutItemFullWidth(item)) return;
       const isBottom = idx === items.length - 1;
       out.set(item.order_index, {
         draggable: idx > 0 || items.length === 1,

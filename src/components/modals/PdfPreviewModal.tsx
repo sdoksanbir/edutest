@@ -8,12 +8,15 @@ import {
   computePageColumnBand,
   contentTopPtForColumn,
   FOOTER_TOP_OFFSET_MM,
+  isLayoutItemFullWidth,
   mmToPdfPt,
   questionNumberImageGapPt,
   type LayoutGeometryInput,
 } from "../../utils/pdfLayoutGeometry";
+import { availableImageWidthPt } from "../../utils/displayScaleColumn";
 import {
   getColumnItemsSortedTopFirst,
+  getPageItemsSortedTopFirst,
   redistributeColumnQuestions,
   reflowLayoutWithFixedGapMm,
   restoreLayoutItemsByOrderIndices,
@@ -77,7 +80,7 @@ import {
 } from "../preview/PdfPreviewUiThemeContext";
 import PdfCanvasViewer from "../pdf/PdfCanvasViewer";
 import PdfPreviewZoomControl from "../pdf/PdfPreviewZoomControl";
-import { maxQuestionNumberTextWidthPt } from "../../utils/questionNumberMetrics";
+import { estimateQuestionNumberTextWidthPt } from "../../utils/questionNumberMetrics";
 import { loadPdfFromBytes } from "../../utils/pdfClient";
 
 type VerifiedPdfDoc = Awaited<ReturnType<typeof loadPdfFromBytes>>["doc"];
@@ -154,7 +157,9 @@ import { resolveWatermarkAngleDeg } from "../../utils/visualProperties";
 /** Canvas / layout — 96 DPI CSS px ↔ PDF pt */
 const PREVIEW_PT_TO_PX = 96 / 72;
 /** 100+ soru: yalnızca mevcut sayfa ±N canvas mount (tüm sayfa ×2 katastrofik). */
-const PREVIEW_PAGE_MOUNT_RADIUS = 2;
+const PREVIEW_PAGE_MOUNT_RADIUS = 5;
+/** Kaydırırken sayfa sökülmesin — idle olunca daralt (kısa süre = blink/zıplama) */
+const PREVIEW_PAGE_UNMOUNT_IDLE_MS = 2500;
 
 /** Değişen sayfa numaraları — scheduleAllPreviewRedraw yerine. */
 function collectDirtyLayoutPages(
@@ -197,9 +202,10 @@ function collectDirtyLayoutPages(
 }
 
 function previewSharpnessForQuality(q: "normal" | "high" | "best"): number {
-  if (q === "best") return 2.5;
-  if (q === "normal") return 1.5;
-  return 2;
+  // DPR×sharpness buffer maliyeti yüksek; normal’de düşük tut
+  if (q === "best") return 2;
+  if (q === "normal") return 1.15;
+  return 1.5;
 }
 
 type PdfPreviewModalProps = {
@@ -579,6 +585,12 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
   const [sectionModalOpen, setSectionModalOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
+  /** Sticky mount: kaydırırken sayfa sökülüp takılmasın */
+  const [mountedPages, setMountedPages] = useState<Set<number>>(() => new Set([1, 2, 3, 4, 5]));
+  const mountedPagesIdleTimerRef = useRef<number | null>(null);
+  const currentPageDebounceRef = useRef<number | null>(null);
+  /** IntersectionObserver: tüm sayfa oranları (yalnızca bu callback'teki entries değil) */
+  const pageIntersectRatioRef = useRef<Map<number, number>>(new Map());
   const [layout, setLayout] = useState<LayoutItem[]>([]);
   const [pageWpt, setPageWpt] = useState(595.28);
   const [pageHpt, setPageHpt] = useState(841.89);
@@ -1077,7 +1089,8 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         questions,
       });
       layoutRef.current = next;
-      layoutLiveRef.current = null;
+      // Seçim/overlay kaymasın: layout state gelene kadar live tut
+      layoutLiveRef.current = next;
       setLayout(next);
 
       // setLayout updater içinde store setState yasak (React render uyarısı)
@@ -1090,6 +1103,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         window.requestAnimationFrame(() => {
           canvasRedrawersRef.current.get(redrawPage)?.();
           gapOverlayRedrawersRef.current.get(redrawPage)?.();
+          verticalOverlayRedrawersRef.current.get(redrawPage)?.();
         });
       }
     },
@@ -1112,10 +1126,10 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       rows: number,
       cellPt: number,
       phase: "move" | "commit",
-    ) => {
+    ): number => {
       const qs = useEditorStore.getState().questions;
       const q = qs.find((x) => x.order_index === orderIndex);
-      if (!q || !(cellPt > 0)) return;
+      if (!q || !(cellPt > 0)) return Math.max(1, Math.round(rows));
 
       let layout = layoutRef.current;
       let overrides = {
@@ -1138,16 +1152,18 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
           pageNum,
           columns,
         });
+        const fullWidth = isLayoutItemFullWidth(item, {
+          questionLayoutMode: q.layoutMode,
+          colWidthPt: band.colWidthPt,
+        });
         const colIdx = columnIndexFromQuestionXPt(item.x_pt, band);
-        const colItems = getColumnItemsSortedTopFirst(
-          layout,
-          pageNum,
-          colIdx,
-          band,
-        );
-        const idx = colItems.findIndex((l) => l.order_index === orderIndex);
+        // Geniş: sayfa geneli altındaki sorular; dar: yalnız sütun
+        const stackItems = fullWidth
+          ? getPageItemsSortedTopFirst(layout, pageNum)
+          : getColumnItemsSortedTopFirst(layout, pageNum, colIdx, band);
+        const idx = stackItems.findIndex((l) => l.order_index === orderIndex);
         if (idx < 0) break;
-        const below = colItems.slice(idx + 1);
+        const below = stackItems.slice(idx + 1);
 
         const yResult = reflowColumnForScratchRows({
           layout,
@@ -1159,8 +1175,9 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
           footerTopPt,
           contentTopPt: contentTopPtForColumn(
             { ...layoutGeometryInput, pageNum, columns },
-            colIdx,
+            fullWidth ? 0 : colIdx,
           ),
+          questions: qs,
         });
         appliedRows = yResult.rows;
         yUpdates = yResult.yUpdatesByOrderIndex;
@@ -1170,14 +1187,29 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
           break;
         }
 
-        // Boşluk yetmiyor → sütundaki en alttaki (bu sorunun altındaki) soruyu zorla sonraki sütun/sayfaya at
+        // Geniş: asla alttakileri zorla sütun/sayfa değiştirme — satırı sayfaya sığdır
+        if (fullWidth) {
+          break;
+        }
+
+        // Dar: boşluk yetmiyor → yalnız dar kurbanı sonraki sütuna; geniş kurbanı atlama
         const victim = below[below.length - 1]!;
+        if (
+          isLayoutItemFullWidth(victim, {
+            questionLayoutMode: qs.find((x) => x.order_index === victim.order_index)
+              ?.layoutMode,
+            colWidthPt: band.colWidthPt,
+          })
+        ) {
+          break;
+        }
         const victimPage = victim.page_num ?? pageNum;
         const layoutMaxPage = Math.max(
           1,
           ...layout.map((l) => l.page_num ?? 1),
           maxQuestionPage,
         );
+        const layoutBeforeShift = layout;
         const shift = tryColumnShiftPlacement({
           baseLayout: layout,
           effectiveLayout: layout,
@@ -1199,7 +1231,22 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
           break;
         }
         overrides = shift.placementOverrides;
-        layout = shift.layout;
+        // Placement yeniden paketlerken genişlik bayrağını düşürmesin
+        layout = shift.layout.map((l) => {
+          const prior = layoutBeforeShift.find((p) => p.order_index === l.order_index);
+          if (prior && isLayoutItemFullWidth(prior) && !isLayoutItemFullWidth(l)) {
+            return {
+              ...l,
+              span_full_width: true,
+              layout_mode: "full-width" as const,
+              w_pt: prior.w_pt,
+              img_w_pt: prior.img_w_pt,
+              img_x_pt: prior.img_x_pt,
+              x_pt: prior.x_pt,
+            };
+          }
+          return l;
+        });
         yUpdates = new Map(
           Object.entries(shift.yTopUpdatesByQuestionId).map(([id, y]) => {
             const oi = qs.find((x) => x.id === id)?.order_index;
@@ -1259,22 +1306,23 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         layoutWithImages.find((l) => l.order_index === orderIndex)?.page_num,
       );
 
-      const liveMaxPage = Math.max(1, ...layoutWithImages.map((l) => l.page_num ?? 1));
       layoutRef.current = layoutWithImages;
 
       if (phase === "move") {
         layoutLiveRef.current = layoutWithImages;
-        if (liveMaxPage > maxQuestionPage) {
-          setLayout(layoutWithImages);
-        }
+        // Canlı taşıma: layout prop da güncellensin — görseller/canvas atlanmasın
+        setLayout(layoutWithImages);
         scheduleDirtyPreviewRedraw(dirtyPages);
-        return;
+        return appliedRows;
       }
 
-      layoutLiveRef.current = null;
+      // Commit: live'ı hemen null yapma — React layout prop güncellenene kadar
+      // overlay/canvas eski konuma düşmesin (seçim kutusu kayması).
+      layoutLiveRef.current = layoutWithImages;
       setLayout(layoutWithImages);
       layoutRef.current = layoutWithImages;
       scheduleDirtyPreviewRedraw(dirtyPages);
+      return appliedRows;
     },
     [
       layoutGeometryInput,
@@ -2039,6 +2087,8 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       mergeLayoutPlacementOverridesByQuestionId(result.placementOverrides);
       mergeLayoutYTopOverridesByQuestionId(result.yTopUpdatesByQuestionId);
       const withImages = stripLayoutImages(result.layout);
+      // React setLayout gelene kadar canvas/overlay eski layout’ta kalmasın
+      layoutLiveRef.current = withImages;
       setLayout(withImages);
       layoutRef.current = withImages;
 
@@ -2154,7 +2204,6 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         applyColumnPlacementResult(auto, base, qs);
       }
 
-      layoutLiveRef.current = null;
       const session = scalePreviewSessionRef.current;
       if (session?.orderIndex === orderIndex) {
         const movedItem = applied.layout.find((l) => l.order_index === orderIndex);
@@ -2164,7 +2213,10 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
           session.placementOverrides = { ...applied.placementOverrides };
         }
       }
-      scheduleAllPreviewRedraw();
+      // setLayout sonrası bir frame bekleyip boya — aksi halde eski prop ile atlanabiliyor
+      window.requestAnimationFrame(() => {
+        scheduleAllPreviewRedraw();
+      });
     },
     [
       layoutGeometryInput,
@@ -3104,6 +3156,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         layoutGeometryInput,
         columns,
         questionNumberFontPt,
+        { questionLayoutMode: q.layoutMode },
       );
       const newScale = clamped / 100;
 
@@ -3218,6 +3271,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         layoutGeometryInput,
         columns,
         questionNumberFontPt,
+        { questionLayoutMode: q?.layoutMode },
       );
     },
     [layoutGeometryInput, columns, questionNumberFontPt, pendingRequestedScale],
@@ -3337,6 +3391,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         layoutGeometryInput,
         columns,
         questionNumberFontPt,
+        { questionLayoutMode: q.layoutMode },
       );
       const newScale = clamped / 100;
       const pending = pendingFromRequestedProduct(newScale, resolveNormalizationScale(q));
@@ -3833,12 +3888,26 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         (q) => (q.order_index ?? 0) + Math.max(1, questionNumberStart),
       ),
     );
-    const availW =
-      band.colWidthPt -
-      maxQuestionNumberTextWidthPt(maxNum, questionNumberFontPt) -
-      questionNumberImageGapPt(layoutGeometryInput) -
-      2 -
-      Math.max(0, mmToPdfPt(questionNumberLeftOffsetMm));
+    const imageGapPt = questionNumberImageGapPt(layoutGeometryInput);
+    // Dar: tek sütun; Geniş: tüm içerik genişliği — aynı clamp ile yanlış %40 kesilmesin
+    const singleAvailW = availableImageWidthPt(
+      band,
+      maxNum,
+      imageGapPt,
+      questionNumberFontPt,
+      { fullWidth: false },
+    );
+    const fullWidthAvailW = availableImageWidthPt(
+      band,
+      maxNum,
+      imageGapPt,
+      questionNumberFontPt,
+      { fullWidth: true },
+    );
+    // Sol numara ofseti layout-engine ile aynı pay
+    const numOffsetPt = Math.max(0, mmToPdfPt(questionNumberLeftOffsetMm));
+    const availW = Math.max(0, singleAvailW - numOffsetPt);
+    const fullAvailW = Math.max(0, fullWidthAvailW - numOffsetPt);
 
     bulkScaleSessionRef.current = null;
     pendingDisplayScaleRef.current = {};
@@ -3847,7 +3916,8 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     setSelectedQuestionScaleSliderPct(DISPLAY_SCALE_NEUTRAL_PCT);
 
     const result = await applyQuestionLineHeightMatch({
-      availWPt: Math.max(0, availW),
+      availWPt: availW,
+      fullWidthAvailWPt: fullAvailW,
       targetLinePt: useEditorStore.getState().targetQuestionLinePt,
     });
 
@@ -3921,8 +3991,28 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     if (fulfill == null || fulfill >= 0.75) return null;
     if (questions.find((q) => q.order_index === order)?.layoutMode === 'full-width') return null;
     const pct = Math.round(fulfill * 100);
-    return `Bu soru hedef yazı boyutunda tek sütuna sığmıyor (%${pct}). İki sütuna yayılması önerilir.`;
+    return `Bu soru hedef yazı boyutunda tek sütuna sığmıyor (%${pct}). Tüm sütunlara yayılması (Geniş) önerilir.`;
   }, [selectedQuestionOrders, layout, questions]);
+
+  const handleQuestionLayoutModeChange = useCallback(
+    (orderIndex: number, mode: "single-column" | "full-width") => {
+      const q = useEditorStore.getState().questions.find((x) => x.order_index === orderIndex);
+      if (!q) return;
+      setQuestionLayoutMode(q.id, mode);
+      clearLayoutYTopOverrides();
+      void fetchLayout(undefined, useEditorStore.getState().questions, { silent: true }).then(() => {
+        clearLayoutLivePreview();
+        scheduleAllPreviewRedraw();
+      });
+    },
+    [
+      setQuestionLayoutMode,
+      fetchLayout,
+      clearLayoutYTopOverrides,
+      clearLayoutLivePreview,
+      scheduleAllPreviewRedraw,
+    ],
+  );
 
   const handleSelectedFullWidthChange = useCallback(
     (fullWidth: boolean) => {
@@ -4059,29 +4149,102 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     const observer = new IntersectionObserver(
       (entries) => {
         if (scrollFromNavRef.current || suppressPageObserverRef.current) return;
-        let bestPage: number | null = null;
-        let bestRatio = 0;
+        const ratios = pageIntersectRatioRef.current;
         for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
           const raw = (entry.target as HTMLElement).dataset.pageNum;
           const page = raw ? Number(raw) : NaN;
           if (!Number.isFinite(page)) continue;
-          if (entry.intersectionRatio >= bestRatio) {
-            bestRatio = entry.intersectionRatio;
+          ratios.set(page, entry.isIntersecting ? entry.intersectionRatio : 0);
+        }
+        let bestPage: number | null = null;
+        let bestRatio = 0;
+        for (const [page, ratio] of ratios) {
+          if (ratio > bestRatio) {
+            bestRatio = ratio;
             bestPage = page;
           }
         }
-        if (bestPage != null) setCurrentPage(bestPage);
+        if (bestPage == null || bestRatio < 0.2) return;
+        // Debounce: her kesişimde setState → unmount → titreme döngüsü
+        if (currentPageDebounceRef.current != null) {
+          window.clearTimeout(currentPageDebounceRef.current);
+        }
+        currentPageDebounceRef.current = window.setTimeout(() => {
+          currentPageDebounceRef.current = null;
+          setCurrentPage((prev) => (prev === bestPage ? prev : bestPage!));
+        }, 120);
       },
-      { root, threshold: [0.35, 0.55, 0.75] }
+      { root, threshold: [0.15, 0.35, 0.55, 0.75] }
     );
 
     for (const el of pageBlockRefs.current.values()) observer.observe(el);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      pageIntersectRatioRef.current.clear();
+      if (currentPageDebounceRef.current != null) {
+        window.clearTimeout(currentPageDebounceRef.current);
+        currentPageDebounceRef.current = null;
+      }
+    };
   }, [layoutReady, totalPages, previewSurface]);
 
+  // Yakındaki sayfaları hemen mount et; uzaktakileri kaydırma bitince sök
+  useEffect(() => {
+    if (!layoutReady || totalPages < 1) return;
+    setMountedPages((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (
+        let p = currentPage - PREVIEW_PAGE_MOUNT_RADIUS;
+        p <= currentPage + PREVIEW_PAGE_MOUNT_RADIUS;
+        p += 1
+      ) {
+        if (p >= 1 && p <= totalPages && !next.has(p)) {
+          next.add(p);
+          changed = true;
+        }
+      }
+      // İlk açılış / az sayfa: hepsini tut
+      if (totalPages <= PREVIEW_PAGE_MOUNT_RADIUS * 2 + 1) {
+        for (let p = 1; p <= totalPages; p += 1) {
+          if (!next.has(p)) {
+            next.add(p);
+            changed = true;
+          }
+        }
+      }
+      return changed ? next : prev;
+    });
+
+    if (mountedPagesIdleTimerRef.current != null) {
+      window.clearTimeout(mountedPagesIdleTimerRef.current);
+    }
+    mountedPagesIdleTimerRef.current = window.setTimeout(() => {
+      mountedPagesIdleTimerRef.current = null;
+      setMountedPages(() => {
+        const keep = new Set<number>();
+        for (
+          let p = currentPage - PREVIEW_PAGE_MOUNT_RADIUS;
+          p <= currentPage + PREVIEW_PAGE_MOUNT_RADIUS;
+          p += 1
+        ) {
+          if (p >= 1 && p <= totalPages) keep.add(p);
+        }
+        return keep;
+      });
+    }, PREVIEW_PAGE_UNMOUNT_IDLE_MS);
+
+    return () => {
+      if (mountedPagesIdleTimerRef.current != null) {
+        window.clearTimeout(mountedPagesIdleTimerRef.current);
+        mountedPagesIdleTimerRef.current = null;
+      }
+    };
+  }, [currentPage, totalPages, layoutReady]);
+
   useLayoutEffect(() => {
-    if (previewScrollAnchorRef.current) {
+    // Yalnızca kaydırma kilidi aktifken geri yükle — her render'da scrollTop yazmak titreme yapar
+    if (previewScrollAnchorRef.current && suppressPageObserverRef.current) {
       restorePreviewScroll();
     }
   });
@@ -4767,7 +4930,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
             questionCount={questions.length}
             onApplyQuestionLineHeightMatch={handleApplyQuestionLineHeightMatch}
             onRestoreOriginalQuestionScales={handleRestoreOriginalQuestionScales}
-            selectedFullWidthEnabled={selectedQuestionScaleEnabled}
+            selectedFullWidthEnabled={selectedQuestionScaleEnabled && columns > 1}
             selectedFullWidthChecked={selectedFullWidthChecked}
             onSelectedFullWidthChange={handleSelectedFullWidthChange}
             layoutRecommendationHint={layoutRecommendationHint}
@@ -4954,8 +5117,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                 <div className="flex flex-col items-center gap-10 py-4">
                   {Array.from({ length: totalPages }, (_, i) => {
                     const pageNum = i + 1;
-                    const mountHeavy =
-                      Math.abs(pageNum - currentPage) <= PREVIEW_PAGE_MOUNT_RADIUS;
+                    const mountHeavy = mountedPages.has(pageNum);
                     const pageGeometry: LayoutGeometryInput = {
                       ...layoutGeometryInput,
                       pageNum,
@@ -5143,6 +5305,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                                 }
                                 onColumnShift={handleColumnShift}
                                 onDisplayScaleChange={handleQuestionDisplayScaleChange}
+                                onLayoutModeChange={handleQuestionLayoutModeChange}
                                 onScratchHandleRowsChange={handleScratchHandleRowsChange}
                                 getDisplayScaleMaxPct={getDisplayScaleMaxPctForOrder}
                                 questionNumberLeftOffsetMm={questionNumberLeftOffsetMm}
@@ -5232,10 +5395,11 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                             </>
                             ) : (
                               <div
-                                className="bg-white shadow-sm"
+                                className="bg-white shadow-lg rounded-lg border border-[var(--border-page)]"
                                 style={{
                                   width: previewPageWpx,
                                   height: previewPageHpx,
+                                  boxSizing: "border-box",
                                 }}
                                 aria-hidden
                               />
@@ -5255,10 +5419,11 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                             />
                           ) : (
                             <div
-                              className="bg-white shadow-sm"
+                              className="bg-white shadow-lg rounded-lg border border-[var(--border-page)]"
                               style={{
                                 width: previewPageWpx,
                                 height: previewPageHpx,
+                                boxSizing: "border-box",
                               }}
                               aria-hidden
                             />

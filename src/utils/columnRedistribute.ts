@@ -7,6 +7,7 @@ import {
   columnIndexFromQuestionXPt,
   computePageColumnBand,
   contentTopPtForColumn,
+  isLayoutItemFullWidth,
   mmToPdfPt,
   type LayoutGeometryInput,
   type PdfColumnBand,
@@ -135,14 +136,103 @@ export function getColumnItemsSortedTopFirst(
   layout: LayoutItem[],
   pageNum: number,
   columnIndex: number,
-  band: PdfColumnBand
+  band: PdfColumnBand,
+  opts?: {
+    questionLayoutModeByOrder?: Map<number, string | null | undefined>;
+  },
 ): LayoutItem[] {
   const inCol = layout.filter((l) => {
     if (l.page_num !== pageNum) return false;
     if (l.kind === "answer_key_page") return false;
+    // Geniş sorular tüm sütunları kaplar — tek sütun listesine karıştırma
+    if (
+      isLayoutItemFullWidth(l, {
+        questionLayoutMode: opts?.questionLayoutModeByOrder?.get(l.order_index),
+        colWidthPt: band.colWidthPt,
+      })
+    ) {
+      return false;
+    }
     return columnIndexFromQuestionXPt(l.x_pt, band) === columnIndex;
   });
   return inCol.sort((a, b) => b.y_top_pt - a.y_top_pt);
+}
+
+/** Sayfadaki öğeler (üstten alta); geniş + dar birlikte. */
+export function getPageItemsSortedTopFirst(
+  layout: LayoutItem[],
+  pageNum: number,
+): LayoutItem[] {
+  return layout
+    .filter((l) => l.page_num === pageNum && l.kind !== "answer_key_page")
+    .sort((a, b) => {
+      const dy = b.y_top_pt - a.y_top_pt;
+      if (Math.abs(dy) > ORDER_EPS) return dy;
+      return a.x_pt - b.x_pt;
+    });
+}
+
+/**
+ * PDF / optik okuma sırası (sayfa içi):
+ * geniş sorular dikey konumlarına göre kesme noktası;
+ * aradaki dar sorular sütun sütun (sol↑↓ → sağ↑↓).
+ */
+export function getLayoutItemsInReadingOrder(
+  layout: LayoutItem[],
+  pageNum: number,
+  columns: number,
+  band: PdfColumnBand,
+  opts?: {
+    questionLayoutModeByOrder?: Map<number, string | null | undefined>;
+  },
+): LayoutItem[] {
+  const pageItems = layout.filter(
+    (l) => l.page_num === pageNum && l.kind !== "answer_key_page",
+  );
+  const isFw = (l: LayoutItem) =>
+    isLayoutItemFullWidth(l, {
+      questionLayoutMode: opts?.questionLayoutModeByOrder?.get(l.order_index),
+      colWidthPt: band.colWidthPt,
+    });
+
+  const fwTopFirst = pageItems
+    .filter(isFw)
+    .sort((a, b) => b.y_top_pt - a.y_top_pt);
+  const narrow = pageItems.filter((l) => !isFw(l));
+  const cols = Math.max(1, columns);
+  const taken = new Set<number>();
+  const result: LayoutItem[] = [];
+
+  const pushColumnMajor = (items: LayoutItem[]) => {
+    for (let col = 0; col < cols; col += 1) {
+      const inCol = items
+        .filter((l) => columnIndexFromQuestionXPt(l.x_pt, band) === col)
+        .sort((a, b) => b.y_top_pt - a.y_top_pt);
+      for (const item of inCol) {
+        if (taken.has(item.order_index)) continue;
+        taken.add(item.order_index);
+        result.push(item);
+      }
+    }
+    for (const item of items) {
+      if (taken.has(item.order_index)) continue;
+      taken.add(item.order_index);
+      result.push(item);
+    }
+  };
+
+  for (const fw of fwTopFirst) {
+    const above = narrow.filter(
+      (l) => !taken.has(l.order_index) && l.y_top_pt > fw.y_top_pt + ORDER_EPS,
+    );
+    pushColumnMajor(above);
+    if (!taken.has(fw.order_index)) {
+      taken.add(fw.order_index);
+      result.push(fw);
+    }
+  }
+  pushColumnMajor(narrow.filter((l) => !taken.has(l.order_index)));
+  return result;
 }
 
 /**

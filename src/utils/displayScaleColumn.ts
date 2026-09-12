@@ -9,7 +9,9 @@ import { estimateQuestionNumberTextWidthPt } from "./questionNumberMetrics";
 import {
   columnIndexFromQuestionXPt,
   computePageColumnBand,
+  isLayoutItemFullWidth,
   mmToPdfPt,
+  pageContentWidthFromBand,
   questionNumberImageGapPt,
   type LayoutGeometryInput,
   type PdfColumnBand,
@@ -32,24 +34,39 @@ export function availableImageWidthPt(
   displayNumber: number | null | undefined,
   imageGapPt: number,
   questionNumberFontPt: number,
+  opts?: { fullWidth?: boolean },
 ): number {
+  const contentW = opts?.fullWidth
+    ? pageContentWidthFromBand(band)
+    : band.colWidthPt;
   const numTextW = estimateQuestionNumberTextWidthPt(displayNumber, questionNumberFontPt);
-  return Math.max(0, band.colWidthPt - numTextW - imageGapPt - IMG_COL_RIGHT_PAD_PT);
+  return Math.max(0, contentW - numTextW - imageGapPt - IMG_COL_RIGHT_PAD_PT);
 }
 
-/** Mevcut ölçekteki görsel genişliğinden sütun genişliğine göre üst yüzde sınırı. */
+/** Mevcut ölçekteki görsel genişliğinden (tek sütun veya geniş) üst yüzde sınırı. */
 export function maxDisplayScalePctForLayoutItem(
   item: LayoutItem,
   currentScale: number,
   band: PdfColumnBand,
   imageGapPt: number,
   questionNumberFontPt: number,
+  opts?: { questionLayoutMode?: string | null },
 ): number {
   const imgW = item.img_w_pt;
   if (imgW == null || imgW <= 0 || !Number.isFinite(currentScale) || currentScale <= 0) {
     return DISPLAY_SCALE_MAX_PCT;
   }
-  const availW = availableImageWidthPt(band, item.display_number, imageGapPt, questionNumberFontPt);
+  const fullWidth = isLayoutItemFullWidth(item, {
+    questionLayoutMode: opts?.questionLayoutMode,
+    colWidthPt: band.colWidthPt,
+  });
+  const availW = availableImageWidthPt(
+    band,
+    item.display_number,
+    imageGapPt,
+    questionNumberFontPt,
+    { fullWidth },
+  );
   if (availW <= 0) return DISPLAY_SCALE_MIN_PCT;
   const naturalW = imgW / currentScale;
   if (naturalW <= 0) return DISPLAY_SCALE_MAX_PCT;
@@ -63,6 +80,7 @@ export function clampDisplayScalePctToColumn(
   geometry: LayoutGeometryInput,
   columns: number,
   questionNumberFontPt: number,
+  opts?: { questionLayoutMode?: string | null },
 ): number {
   const pageNum = item.page_num ?? 1;
   const band = computePageColumnBand({ ...geometry, pageNum, columns });
@@ -73,6 +91,7 @@ export function clampDisplayScalePctToColumn(
     band,
     imageGapPt,
     questionNumberFontPt,
+    opts,
   );
   return Math.max(DISPLAY_SCALE_MIN_PCT, Math.min(maxPct, Math.round(sizePct)));
 }
@@ -92,6 +111,19 @@ function questionIdForOrder(questions: QuestionItem[], orderIndex: number): stri
   return questions.find((q) => q.order_index === orderIndex)?.id ?? null;
 }
 
+function isFullWidthQuestion(
+  item: LayoutItem | undefined,
+  questions: QuestionItem[],
+  orderIndex: number,
+  band?: PdfColumnBand,
+): boolean {
+  const q = questions.find((x) => x.order_index === orderIndex);
+  return isLayoutItemFullWidth(item ?? {}, {
+    questionLayoutMode: q?.layoutMode,
+    colWidthPt: band?.colWidthPt,
+  });
+}
+
 /** Büyütülen soru alt banner alanına taşıyor mu? */
 function scaledQuestionOverlapsBanner(
   layout: LayoutItem[],
@@ -109,6 +141,13 @@ function scaledQuestionOverlapsBanner(
   const pageNum =
     (questionId ? placementOverrides[questionId]?.page_num : undefined) ?? item.page_num ?? 1;
   const band = computePageColumnBand({ ...geometry, pageNum, columns: cols });
+
+  // Geniş: sayfa içeriği — sütun listesine bakma (FW orada yok)
+  if (isFullWidthQuestion(item, questions, orderIndex, band)) {
+    const minBottomPt = mmToPdfPt(COLUMN_PLACEMENT_MIN_BOTTOM_GAP_MM);
+    return layoutItemVisualBottomPt(item) < band.contentBottomPt + minBottomPt - LAYOUT_EPS;
+  }
+
   const colIdx =
     (questionId ? placementOverrides[questionId]?.column_index : undefined) ??
     columnIndexFromQuestionXPt(item.x_pt, band);
@@ -143,6 +182,25 @@ function shiftScaledQuestionToNextColumn(
   const ov = overrides[questionId];
   const pageNum = ov?.page_num ?? item.page_num ?? 1;
   const band = bandForPage(pageNum);
+
+  // Geniş soru asla tek sütuna sıkıştırılmaz — yalnız sonraki sayfaya (col 0)
+  if (isFullWidthQuestion(item, questions, orderIndex, band)) {
+    const nextPage = pageNum + 1;
+    if (nextPage > maxQuestionPage + 8) {
+      return { ok: false, error: "Soru sonraki sayfaya taşınamadı." };
+    }
+    return {
+      overrides: {
+        ...overrides,
+        [questionId]: {
+          page_num: nextPage,
+          column_index: 0,
+          insert_at: "top",
+        },
+      },
+    };
+  }
+
   const colIdx = ov?.column_index ?? columnIndexFromQuestionXPt(item.x_pt, band);
 
   const target = resolveShiftTargetForBottom(pageNum, colIdx, cols, maxQuestionPage, {
@@ -166,7 +224,8 @@ function shiftScaledQuestionToNextColumn(
 }
 
 /**
- * Tek soru büyütüldükten sonra sütuna sığmıyorsa sonraki sütuna taşıyıp yeniden dizer.
+ * Tek soru büyütüldükten sonra sığmıyorsa ileri taşıyıp yeniden dizer.
+ * Geniş soru: yalnızca sonraki sayfa (tek sütuna düşürülmez).
  */
 export function tryReflowAfterQuestionScale(input: {
   rawLayout: LayoutItem[];
@@ -238,12 +297,13 @@ export function tryReflowAfterQuestionScale(input: {
   const minMm = Math.round((mmToPdfPt(COLUMN_PLACEMENT_MIN_BOTTOM_GAP_MM) * 25.4) / 72);
   return {
     ok: false,
-    error: `Soru bu boyutta hiçbir sütuna sığmıyor (alt boşluk en az ${minMm} mm).`,
+    error: `Soru bu boyutta sayfaya sığmıyor (alt boşluk en az ${minMm} mm).`,
   };
 }
 
 /**
- * Küçültme sonrası: sonraki sütun/sayfadaki sorular önceki sütuna sığıyorsa geri taşı.
+ * Küçültme sonrası: sonraki sütun/sayfadaki dar sorular önceki sütuna sığıyorsa geri taşı.
+ * Geniş sorular taşınmaz / tek sütuna sıkıştırılmaz.
  */
 export function tryCompactColumnsAfterScale(input: {
   rawLayout: LayoutItem[];
@@ -292,6 +352,16 @@ export function tryCompactColumnsAfterScale(input: {
     const slots: { page: number; col: number }[] = [];
     for (const item of applied.layout) {
       if (item.kind === "answer_key_page") continue;
+      if (
+        isFullWidthQuestion(
+          item,
+          input.questions,
+          item.order_index,
+          bandForPage(item.page_num ?? 1),
+        )
+      ) {
+        continue;
+      }
       const page = item.page_num ?? 1;
       const col = columnIndexFromQuestionXPt(item.x_pt, bandForPage(page));
       const key = `${page}:${col}`;
@@ -312,6 +382,9 @@ export function tryCompactColumnsAfterScale(input: {
       );
       if (items.length === 0) continue;
       const top = items[0]!;
+      if (isFullWidthQuestion(top, input.questions, top.order_index, bandForPage(slot.page))) {
+        continue;
+      }
       const cascade = computePrevColumnCascadeMoves({
         effectiveLayout: applied.layout,
         questions: input.questions,
@@ -326,6 +399,16 @@ export function tryCompactColumnsAfterScale(input: {
       if (!cascade.ok) continue;
 
       for (const oi of cascade.movedOrderIndices) {
+        if (
+          isFullWidthQuestion(
+            applied.layout.find((l) => l.order_index === oi),
+            input.questions,
+            oi,
+            bandForPage(slot.page),
+          )
+        ) {
+          continue;
+        }
         const qid = input.questions.find((q) => q.order_index === oi)?.id;
         if (!qid) continue;
         overrides[qid] = {
