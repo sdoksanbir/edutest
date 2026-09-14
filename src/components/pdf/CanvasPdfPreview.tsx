@@ -636,7 +636,8 @@ export default function CanvasPdfPreview({
   /** Thumbnail’da bellek için keskinlik 1; ana önizlemede kaliteye göre. */
   const sharpness = thumbnailWidthPx != null ? 1 : Math.max(1, Math.min(3, previewSharpness));
 
-  // Bu sayfadaki soru görsellerini yükle — paylaşılan cache (sayfalar arası decode yok)
+  // Bu sayfadaki soru görsellerini yükle — paylaşılan cache (sayfalar arası decode yok).
+  // Önceki görselleri silme: sayfa/özellik değişiminde boş flash ve numara kaybı hissi olmasın.
   useEffect(() => {
     let cancelled = false;
     const qs = useEditorStore.getState().questions;
@@ -663,12 +664,26 @@ export default function CanvasPdfPreview({
     }
 
     setImages((prev) => {
-      const kept = new Map<string, HTMLImageElement>();
+      let changed = false;
+      const next = new Map<string, HTMLImageElement>();
       for (const id of neededIds) {
         const cached = getCachedQuestionImage(id) ?? prev.get(id);
-        if (cached?.complete) kept.set(id, cached);
+        if (cached?.complete) {
+          next.set(id, cached);
+          if (prev.get(id) !== cached) changed = true;
+        }
       }
-      return kept;
+      if (!changed && next.size === prev.size) {
+        let same = true;
+        for (const [id, img] of prev) {
+          if (next.get(id) !== img) {
+            same = false;
+            break;
+          }
+        }
+        if (same) return prev;
+      }
+      return next;
     });
 
     const applyImg = (qid: string, img: HTMLImageElement) => {
@@ -682,28 +697,31 @@ export default function CanvasPdfPreview({
     };
 
     void (async () => {
-      for (const qid of neededIds) {
-        if (cancelled) return;
-        const cached = getCachedQuestionImage(qid);
-        if (cached) {
-          applyImg(qid, cached);
-          continue;
-        }
-        const b64 = sources.get(qid);
-        if (b64) {
-          const img = await loadQuestionImageFromData(qid, b64);
-          if (img) applyImg(qid, img);
-          continue;
-        }
-        try {
-          const dataUrl = await api.questions.getImageDataUrl(qid);
-          if (cancelled || !dataUrl) continue;
-          const img = await loadQuestionImageFromData(qid, dataUrl);
-          if (img) applyImg(qid, img);
-        } catch {
-          /* boş fasikül / eksik id */
-        }
-      }
+      const ids = [...neededIds];
+      await Promise.all(
+        ids.map(async (qid) => {
+          if (cancelled) return;
+          const cached = getCachedQuestionImage(qid);
+          if (cached) {
+            applyImg(qid, cached);
+            return;
+          }
+          const b64 = sources.get(qid);
+          if (b64) {
+            const img = await loadQuestionImageFromData(qid, b64);
+            if (!cancelled && img) applyImg(qid, img);
+            return;
+          }
+          try {
+            const dataUrl = await api.questions.getImageDataUrl(qid);
+            if (cancelled || !dataUrl) return;
+            const img = await loadQuestionImageFromData(qid, dataUrl);
+            if (!cancelled && img) applyImg(qid, img);
+          } catch {
+            /* boş fasikül / eksik id */
+          }
+        }),
+      );
     })();
 
     return () => {
@@ -3337,7 +3355,7 @@ export default function CanvasPdfPreview({
     otherPageHeaderBottomGapMm,
     drawSelectionOutline,
     drawGapIndicators,
-    images.size,
+    images,
     logoImage,
     watermarkImage,
   ]);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { api, type LayoutItem } from "../../api/client";
 import {
@@ -161,7 +161,9 @@ const PREVIEW_PT_TO_PX = 96 / 72;
 /** 100+ soru: yalnızca mevcut sayfa ±N canvas mount (Retina’da her sayfa onlarca MB). */
 const PREVIEW_PAGE_MOUNT_RADIUS = 2;
 /** Kaydırırken sayfa sökülmesin — idle olunca daralt (kısa süre = blink/zıplama) */
-const PREVIEW_PAGE_UNMOUNT_IDLE_MS = 1800;
+const PREVIEW_PAGE_UNMOUNT_IDLE_MS = 2200;
+/** Optik/nav ile sayfa atlamada IntersectionObserver’ın currentPage’i geri çekmesini engelle */
+const PREVIEW_NAV_LOCK_MS = 1400;
 
 /** Değişen sayfa numaraları — scheduleAllPreviewRedraw yerine. */
 function collectDirtyLayoutPages(
@@ -743,6 +745,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
   const pageBlockRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const scrollFromNavRef = useRef(false);
   const suppressPageObserverRef = useRef(false);
+  const previewNavLockTimerRef = useRef<number | null>(null);
   const previewScrollAnchorRef = useRef<{ top: number; left: number } | null>(null);
   const gapSliderScrollSessionRef = useRef(0);
   const questionDragLiveRef = useRef<QuestionDragLive | null>(null);
@@ -1428,18 +1431,61 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     [layoutGeometryInput, columns, pageHpt, zoom, layout, questions]
   );
 
-  const scrollToPage = useCallback((pageNum: number, behavior: ScrollBehavior = "smooth") => {
-    const el = pageBlockRefs.current.get(pageNum);
-    if (!el) return;
+  const beginPreviewNavLock = useCallback(() => {
     scrollFromNavRef.current = true;
-    el.scrollIntoView({ behavior, block: "start" });
-    window.setTimeout(() => {
+    if (currentPageDebounceRef.current != null) {
+      window.clearTimeout(currentPageDebounceRef.current);
+      currentPageDebounceRef.current = null;
+    }
+    if (previewNavLockTimerRef.current != null) {
+      window.clearTimeout(previewNavLockTimerRef.current);
+    }
+    previewNavLockTimerRef.current = window.setTimeout(() => {
+      previewNavLockTimerRef.current = null;
       scrollFromNavRef.current = false;
-    }, 500);
+    }, PREVIEW_NAV_LOCK_MS);
   }, []);
 
+  /** Hedef sayfa ±N canvas’ı hemen mount et — aksi halde optik tıklamada beyaz placeholder kalır. */
+  const ensurePagesMountedAround = useCallback(
+    (pageNum: number) => {
+      const clamped = Math.max(1, Math.min(Math.max(1, totalPages), pageNum));
+      flushSync(() => {
+        setCurrentPage(clamped);
+        setMountedPages((prev) => {
+          const next = new Set(prev);
+          let changed = !prev.has(clamped);
+          for (
+            let p = clamped - PREVIEW_PAGE_MOUNT_RADIUS;
+            p <= clamped + PREVIEW_PAGE_MOUNT_RADIUS;
+            p += 1
+          ) {
+            if (p >= 1 && p <= totalPages && !next.has(p)) {
+              next.add(p);
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+      });
+      return clamped;
+    },
+    [totalPages],
+  );
+
+  const scrollToPage = useCallback(
+    (pageNum: number, behavior: ScrollBehavior = "smooth") => {
+      const clamped = ensurePagesMountedAround(pageNum);
+      const el = pageBlockRefs.current.get(clamped);
+      if (!el) return;
+      beginPreviewNavLock();
+      el.scrollIntoView({ behavior, block: "start" });
+    },
+    [ensurePagesMountedAround, beginPreviewNavLock],
+  );
+
   const scrollToQuestionRegion = useCallback(
-    (orderIndex: number, behavior: ScrollBehavior = "smooth") => {
+    (orderIndex: number, behavior: ScrollBehavior = "auto") => {
       const item = layout.find((l) => l.order_index === orderIndex);
       if (!item) return;
       const pageNum = item.page_num ?? 1;
@@ -1472,16 +1518,15 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         if (questionTop >= viewTop + margin && questionBottom <= viewBottom - margin) return;
 
         const target = questionTop - scrollRoot.clientHeight * 0.32;
-        scrollFromNavRef.current = true;
+        beginPreviewNavLock();
         scrollRoot.scrollTo({ top: Math.max(0, target), behavior });
-        window.setTimeout(() => {
-          scrollFromNavRef.current = false;
-        }, 500);
       };
 
-      if (pageNum !== currentPageRef.current) {
-        setCurrentPage(pageNum);
-        scrollFromNavRef.current = true;
+      const pageChanged = pageNum !== currentPageRef.current;
+      ensurePagesMountedAround(pageNum);
+      beginPreviewNavLock();
+
+      if (pageChanged) {
         const pageEl = pageBlockRefs.current.get(pageNum);
         pageEl?.scrollIntoView({ behavior, block: "start" });
         window.requestAnimationFrame(() => {
@@ -1497,18 +1542,21 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
       previewScale,
       questionNumberLeftOffsetMm,
       questionNumberImageGapMm,
+      ensurePagesMountedAround,
+      beginPreviewNavLock,
     ],
   );
 
   const goToPage = useCallback(
     (pageNum: number, behavior: ScrollBehavior = "smooth") => {
       const clamped = Math.max(1, Math.min(totalPages, pageNum));
-      setCurrentPage(clamped);
       if (clamped !== currentPageRef.current) {
         scrollToPage(clamped, behavior);
+      } else {
+        ensurePagesMountedAround(clamped);
       }
     },
-    [totalPages, scrollToPage]
+    [totalPages, scrollToPage, ensurePagesMountedAround],
   );
 
   const clearQuestionSelection = useCallback(() => {
@@ -2378,10 +2426,14 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
 
     if (firstLayoutContent || selectedChanged) {
       const p = item.page_num ?? 1;
-      setCurrentPage(p);
-      if (firstLayoutContent) scrollToPage(p, "auto");
+      if (firstLayoutContent) {
+        scrollToPage(p, "auto");
+      } else {
+        // Optik/liste seçiminde currentPage kaymasın; mount penceresini genişlet
+        ensurePagesMountedAround(p);
+      }
     }
-  }, [isOpen, layout, selectedQuestion, scrollToPage]);
+  }, [isOpen, layout, selectedQuestion, scrollToPage, ensurePagesMountedAround]);
 
   /** Bölüm eklendi/düzenlendi/silindi - layout'u bölüm başlıklarıyla yeniden yükle */
   const prevSectionsRef = useRef<string>("");
@@ -4299,6 +4351,8 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
         }
         currentPageDebounceRef.current = window.setTimeout(() => {
           currentPageDebounceRef.current = null;
+          // Optik/nav kilidi bitene kadar currentPage’i geri çekme
+          if (scrollFromNavRef.current || suppressPageObserverRef.current) return;
           setCurrentPage((prev) => (prev === bestPage ? prev : bestPage!));
         }, 120);
       },
@@ -4349,6 +4403,8 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     }
     mountedPagesIdleTimerRef.current = window.setTimeout(() => {
       mountedPagesIdleTimerRef.current = null;
+      // Nav sırasında daraltma — optik tıklamada görünen sayfa beyaz placeholder’a düşmesin
+      if (scrollFromNavRef.current || suppressPageObserverRef.current) return;
       setMountedPages(() => {
         const keep = new Set<number>();
         for (
@@ -4357,6 +4413,10 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
           p += 1
         ) {
           if (p >= 1 && p <= totalPages) keep.add(p);
+        }
+        // Hâlâ görünür olan sayfaları sökme (currentPage kaymış olsa bile)
+        for (const [page, ratio] of pageIntersectRatioRef.current) {
+          if (ratio > 0.08 && page >= 1 && page <= totalPages) keep.add(page);
         }
         return keep;
       });
@@ -4370,22 +4430,22 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
     };
   }, [currentPage, totalPages, layoutReady]);
 
-  // Mount dışı sayfaların 600 DPI decode’larını bırak (M1’de kaydırınca cache şişmesin)
+  // Önizleme açıkken tüm soru görsellerini tut — yalnızca mount penceresini
+  // tutmak sayfa geri/ileri geçişte ve özellik değişiminde boş flash + geç yükleme yapıyordu.
   useEffect(() => {
-    if (!layoutReady || mountedPages.size === 0) return;
+    if (!layoutReady) return;
     const qs = useEditorStore.getState().questions;
-    const qByOrder = new Map(qs.map((q) => [q.order_index, q]));
     const keep = new Set<string>();
-    const layoutSrc = layoutLiveRef.current?.length ? layoutLiveRef.current : layout;
-    for (const item of layoutSrc) {
-      if (!mountedPages.has(item.page_num) || item.kind === "answer_key_page") continue;
-      const q =
-        (item.question_id ? qs.find((x) => x.id === item.question_id) : undefined) ??
-        qByOrder.get(item.order_index);
+    for (const q of qs) {
       if (q?.id) keep.add(q.id);
     }
+    const layoutSrc = layoutLiveRef.current?.length ? layoutLiveRef.current : layout;
+    for (const item of layoutSrc) {
+      if (item.kind === "answer_key_page") continue;
+      if (item.question_id) keep.add(item.question_id);
+    }
     retainQuestionImages(keep);
-  }, [mountedPages, layout, layoutReady]);
+  }, [layout, layoutReady, questions.length]);
 
   useLayoutEffect(() => {
     // Yalnızca kaydırma kilidi aktifken geri yükle — her render'da scrollTop yazmak titreme yapar
@@ -5297,7 +5357,7 @@ function PdfPreviewModalContent({ isOpen, onClose, variant = "test" }: PdfPrevie
                             mountHeavy ? (
                             <>
                               <CanvasPdfPreview
-                                key={`cv-${pageNum}-${headerStyleId}-${headerThemeEpoch}-${isTrial ? "t" : "x"}`}
+                                key={`cv-${pageNum}-${isTrial ? "t" : isFasikul ? "f" : "x"}`}
                                 layout={layout}
                                 pageWpt={pageWpt}
                                 pageHpt={pageHpt}

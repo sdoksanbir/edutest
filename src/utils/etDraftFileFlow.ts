@@ -2,7 +2,26 @@ import { useEditorStore } from "../store/editorStore";
 import { buildEtDraftPayload, ET_FILE_EXTENSION, parseEtDraftJson } from "./buildEtDraftPayload";
 import { api } from "../api/client";
 import type { DraftFilePayload } from "../store/editorStore";
+import { loadQuestionImageFromData } from "./questionImageCache";
 
+async function warmQuestionImageCache(questions: DraftFilePayload["questions"]) {
+  const slice = questions.slice(0, 40);
+  await Promise.all(
+    slice.map(async (q) => {
+      if (!q?.id) return;
+      try {
+        if (q.image_base64) {
+          await loadQuestionImageFromData(q.id, q.image_base64);
+          return;
+        }
+        const dataUrl = await api.questions.getImageDataUrl(q.id);
+        if (dataUrl) await loadQuestionImageFromData(q.id, dataUrl);
+      } catch {
+        /* eksik görsel */
+      }
+    }),
+  );
+}
 async function saveEtInBrowser(fileName: string, json: string) {
   const blob = new Blob([json], { type: "application/json" });
   const savePicker = (
@@ -81,6 +100,8 @@ async function applyLoadedDraft(draft: DraftFilePayload) {
   } catch {
     /* bellek yeterli */
   }
+  // Önizleme açılınca ilk sayfada boş/geç gelmesin diye görselleri ısıt
+  void warmQuestionImageCache(draft.questions);
 }
 
 /** Popup yok — doğrudan .et dosya seçici. */

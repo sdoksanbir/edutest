@@ -159,8 +159,30 @@ export function remove(id: string) {
   questions.splice(idx, 1)
 }
 
+/**
+ * Taslak / geri yükleme: base64’i diske yazar, image_path günceller.
+ * Böylece sayfa/özellik değişince getImage diskten güvenilir okunur;
+ * bellek + IPC şişmesi azalır.
+ */
 export function replaceAll(items: QuestionItem[]) {
-  questions.splice(0, questions.length, ...items)
+  const next = items.map((item) => {
+    const copy: QuestionItem = { ...item }
+    if (typeof copy.image_base64 === 'string' && copy.image_base64.length > 32) {
+      try {
+        copy.image_path = saveImageFromBase64(copy.image_base64)
+      } catch {
+        /* mevcut image_path varsa koru */
+      }
+      delete copy.image_base64
+    } else if (typeof copy.image_path === 'string' && copy.image_path) {
+      if (!fs.existsSync(copy.image_path)) {
+        const candidate = path.join(imagesDir(), path.basename(copy.image_path))
+        if (fs.existsSync(candidate)) copy.image_path = candidate
+      }
+    }
+    return copy
+  })
+  questions.splice(0, questions.length, ...next)
 }
 
 export function clearAll() {

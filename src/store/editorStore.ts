@@ -2913,13 +2913,37 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     try {
       const { items } = await api.questions.list();
       set((state) => {
-        const virtual = state.questions.filter((q) => q.image_base64);
-        const fromBackend = items.filter((b) => !virtual.some((v) => v.id === b.id));
-        const merged = [...virtual, ...fromBackend].sort((a, b) => a.order_index - b.order_index);
+        // Taslak/geri yükleme sonrası: editördeki (özellikle image_base64’li) soruları
+        // backend listesiyle ezme — aksi halde kırpma/önizlemede görseller kaybolabiliyor.
+        const byId = new Map(state.questions.map((q) => [q.id, q]));
+        const merged: typeof state.questions = [];
+        const seen = new Set<string>();
+        for (const q of state.questions) {
+          merged.push(q);
+          seen.add(q.id);
+        }
+        for (const b of items) {
+          if (seen.has(b.id)) {
+            const cur = byId.get(b.id);
+            if (cur && !cur.image_base64 && (b as { image_base64?: string }).image_base64) {
+              const idx = merged.findIndex((x) => x.id === b.id);
+              if (idx >= 0) {
+                merged[idx] = {
+                  ...cur,
+                  image_base64: (b as { image_base64?: string }).image_base64,
+                };
+              }
+            }
+            continue;
+          }
+          merged.push(b);
+          seen.add(b.id);
+        }
+        merged.sort((a, b) => a.order_index - b.order_index);
         return {
           questions: merged.map((q, i) => ({ ...q, order_index: i })),
           questionsLoaded: true,
-          isDirty: virtual.length > 0,
+          isDirty: state.isDirty || state.questions.some((q) => !!q.image_base64),
         };
       });
     } catch (e) {
