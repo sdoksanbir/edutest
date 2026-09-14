@@ -4,6 +4,8 @@ import * as exportService from './services/export-service.js'
 import * as googleDrive from './services/google-drive.js'
 import * as pdfStore from './services/pdf-store.js'
 import * as questionStore from './services/question-store.js'
+import * as bankQuestionStore from './services/bank-question-store.js'
+import * as storageBackup from './services/storage-backup.js'
 import type { CropBox } from './services/question-store.js'
 import { initStoragePaths } from './services/paths.js'
 
@@ -48,6 +50,19 @@ export function registerIpcHandlers(storageDir: string) {
       case 'pdfs:folders:create': {
         const { name, parentId } = payload as { name: string; parentId?: string | null }
         return { folder: pdfStore.createFolder(name, parentId) }
+      }
+
+      case 'pdfs:folders:rename': {
+        const { folderId, name } = payload as { folderId: string; name: string }
+        return { folder: pdfStore.renameFolder(folderId, name) }
+      }
+
+      case 'pdfs:folders:move': {
+        const { folderId, parentId } = payload as {
+          folderId: string
+          parentId?: string | null
+        }
+        return { folder: pdfStore.moveFolder(folderId, parentId) }
       }
 
       case 'pdfs:folders:delete': {
@@ -202,6 +217,84 @@ export function registerIpcHandlers(storageDir: string) {
         const { fileId } = payload as { fileId: string }
         return googleDrive.downloadDrivePdf(fileId)
       }
+
+      case 'bankQuestions:settings:get':
+        return { settings: bankQuestionStore.getBankSettings() }
+
+      case 'bankQuestions:settings:update':
+        return {
+          settings: bankQuestionStore.updateBankSettings(
+            (payload ?? {}) as Parameters<typeof bankQuestionStore.updateBankSettings>[0],
+          ),
+        }
+
+      case 'bankQuestions:ders:add': {
+        const { name } = payload as { name: string }
+        return { settings: bankQuestionStore.addBankDers(name) }
+      }
+
+      case 'bankQuestions:konu:add': {
+        const { ders, konu } = payload as { ders: string; konu: string }
+        return { settings: bankQuestionStore.addBankKonu(ders, konu) }
+      }
+
+      case 'bankQuestions:list': {
+        const filter = (payload ?? {}) as Parameters<typeof bankQuestionStore.listBankQuestions>[0]
+        return { items: bankQuestionStore.listBankQuestions(filter) }
+      }
+
+      case 'bankQuestions:create':
+        return bankQuestionStore.createBankQuestion(
+          payload as Parameters<typeof bankQuestionStore.createBankQuestion>[0],
+        )
+
+      case 'bankQuestions:update': {
+        const { id, patch } = payload as {
+          id: string
+          patch: Parameters<typeof bankQuestionStore.updateBankQuestion>[1]
+        }
+        return bankQuestionStore.updateBankQuestion(id, patch)
+      }
+
+      case 'bankQuestions:delete': {
+        const { id } = payload as { id: string }
+        return bankQuestionStore.deleteBankQuestion(id)
+      }
+
+      case 'bankQuestions:deleteMany': {
+        const { ids } = payload as { ids: string[] }
+        return bankQuestionStore.deleteBankQuestions(ids)
+      }
+
+      case 'bankQuestions:duplicate': {
+        const { id, folderId } = payload as { id: string; folderId?: string | null }
+        return bankQuestionStore.duplicateBankQuestion(id, folderId)
+      }
+
+      case 'bankQuestions:moveMany': {
+        const { ids, folderId } = payload as { ids: string[]; folderId: string | null }
+        return { items: bankQuestionStore.moveBankQuestions(ids, folderId) }
+      }
+
+      case 'bankQuestions:getImage': {
+        const { id } = payload as { id: string }
+        return bankQuestionStore.getBankQuestionImageBase64(id)
+      }
+
+      case 'storage:info':
+        return storageBackup.getStorageInfo()
+
+      case 'storage:openFolder':
+        return storageBackup.openStorageFolder()
+
+      case 'storage:exportBackup':
+        return storageBackup.exportBackup()
+
+      case 'storage:importBackup':
+        return storageBackup.importBackup()
+
+      case 'storage:wipeAll':
+        return storageBackup.wipeAllData()
 
       default:
         throw new Error(`Unknown API method: ${method}`)

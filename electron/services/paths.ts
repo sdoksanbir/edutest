@@ -17,9 +17,10 @@ export const uploadsDir = () => path.join(storageRoot, 'uploads')
 export const draftsDir = () => path.join(storageRoot, 'drafts')
 export const exportsDir = () => path.join(storageRoot, 'exports')
 export const imagesDir = () => path.join(storageRoot, 'images')
+export const bankImagesDir = () => path.join(storageRoot, 'bank-images')
 
 export function ensureStorageDirs() {
-  for (const dir of [uploadsDir(), draftsDir(), exportsDir(), imagesDir()]) {
+  for (const dir of [uploadsDir(), draftsDir(), exportsDir(), imagesDir(), bankImagesDir()]) {
     fs.mkdirSync(dir, { recursive: true })
   }
 }

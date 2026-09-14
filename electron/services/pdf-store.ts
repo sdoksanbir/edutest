@@ -108,6 +108,61 @@ export function createFolder(name: string, parentId?: string | null): PdfFolder 
   return folder
 }
 
+export function renameFolder(folderId: string, name: string): PdfFolder {
+  const trimmed = name.trim()
+  if (!trimmed) throw new Error('Klasör adı boş olamaz')
+  const meta = readMeta()
+  const idx = meta.folders.findIndex((f) => f.id === folderId)
+  if (idx < 0) throw new Error('Klasör bulunamadı')
+  const folder = meta.folders[idx]!
+  const parent = folder.parent_id ?? null
+  const siblings = meta.folders.filter(
+    (f) => f.id !== folderId && (f.parent_id ?? null) === parent,
+  )
+  if (siblings.some((f) => f.name.toLocaleLowerCase('tr') === trimmed.toLocaleLowerCase('tr'))) {
+    throw new Error('Bu isimde bir klasör zaten var')
+  }
+  const updated: PdfFolder = { ...folder, name: trimmed }
+  meta.folders[idx] = updated
+  writeMeta(meta)
+  return updated
+}
+
+/**
+ * Klasörü başka bir üst klasöre (veya köke) taşır.
+ * Kendi altına / alt klasörüne taşımayı engeller.
+ */
+export function moveFolder(folderId: string, newParentId?: string | null): PdfFolder {
+  const meta = readMeta()
+  const idx = meta.folders.findIndex((f) => f.id === folderId)
+  if (idx < 0) throw new Error('Klasör bulunamadı')
+  const folder = meta.folders[idx]!
+  const parent = newParentId ?? null
+  if (parent === folderId) throw new Error('Klasör kendi içine taşınamaz')
+  if (parent) {
+    if (!meta.folders.some((f) => f.id === parent)) throw new Error('Hedef klasör bulunamadı')
+    const descendants = collectDescendantIds(meta.folders, folderId)
+    if (descendants.has(parent)) {
+      throw new Error('Klasör kendi alt klasörüne taşınamaz')
+    }
+  }
+  if ((folder.parent_id ?? null) === parent) return folder
+  const siblings = meta.folders.filter(
+    (f) => f.id !== folderId && (f.parent_id ?? null) === parent,
+  )
+  if (
+    siblings.some(
+      (f) => f.name.toLocaleLowerCase('tr') === folder.name.toLocaleLowerCase('tr'),
+    )
+  ) {
+    throw new Error('Hedef konumda aynı isimde bir klasör var')
+  }
+  const updated: PdfFolder = { ...folder, parent_id: parent }
+  meta.folders[idx] = updated
+  writeMeta(meta)
+  return updated
+}
+
 function collectDescendantIds(folders: PdfFolder[], rootId: string): Set<string> {
   const ids = new Set<string>([rootId])
   let grew = true

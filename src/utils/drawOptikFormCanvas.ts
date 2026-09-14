@@ -385,13 +385,29 @@ function drawOmrForm(
 
   for (const col of layout.columns) {
     for (const row of col.rows) {
-      const drawRow = rows.find((r) => r.number === row.number);
+      // row.number = 1-based slot index (OMR geometri); etiket display_number'dan gelir
+      const drawRow = rows[row.number - 1];
+      const labelNum = drawRow?.number ?? row.number;
       const selected = showAnswers ? (drawRow?.answer ?? null) : null;
       const stripe = row.number % 2 === 0;
+      const section = drawRow?.sectionHeader;
 
       if (stripe) {
         ctx.fillStyle = OPTIK_FORM_COLORS.rowStripe;
         ctx.fillRect(x + col.innerX, y + row.y, col.innerW, layout.rowHeightPx);
+      }
+
+      if (section) {
+        const bandH = Math.max(3 * scale, Math.min(layout.rowHeightPx * 0.42, 5.5 * scale));
+        const bandY = y + row.y - bandH * 0.85;
+        ctx.fillStyle = section.fillColor;
+        ctx.fillRect(x + col.innerX, bandY, col.innerW, bandH);
+        ctx.fillStyle = section.textColor;
+        ctx.font = `700 ${Math.max(5 * scale, questionNumFontSize * 0.85)}px Arial`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        const title = section.title.length > 28 ? `${section.title.slice(0, 27)}…` : section.title;
+        ctx.fillText(title, x + col.innerX + 1.5 * scale, bandY + bandH / 2);
       }
 
       ctx.fillStyle = OPTIK_FORM_COLORS.marker;
@@ -407,7 +423,7 @@ function drawOmrForm(
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
       ctx.fillText(
-        `${row.number}.`,
+        `${labelNum}.`,
         x + row.numX,
         y + row.y + layout.rowHeightPx / 2,
       );

@@ -1,5 +1,5 @@
 import CollapsibleCard from "./CollapsibleCard";
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   DndContext,
@@ -18,11 +18,13 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
-import type { QuestionItem } from "../../types";
+import type { QuestionItem, SectionRange } from "../../types";
 import { computeOptikFormStats, type OptikChoice } from "../../utils/optikFormStats";
 import {
   isOptikAnswerableQuestion,
+  readingOrderIdsAfterBulkMove,
   readingOrderIdsAfterMove,
+  readingOrderIdsInsertAfter,
   resolveOptikFrameAccentColor,
   resolveOptikFrameFillColor,
   resolveOptikFrameSidebarLabel,
@@ -32,11 +34,17 @@ import {
   buildFasikulOrnekNumberByOrderIndex,
   normalizeFasikulQuestionFrame,
 } from "../../utils/fasikulQuestionFrame";
+import { SECTION_DEFAULT_FILL, SECTION_DEFAULT_TEXT } from "./ColorSwatchPicker";
 
 type Props = {
   questions: QuestionItem[];
+  sections?: SectionRange[];
+  /** order_index → display_number (layout ile aynı) */
+  displayNumberByOrder?: Map<number, number | null>;
   onReorder?: (orderedIds: string[]) => void | Promise<void>;
   onQuestionNavigate?: (questionId: string) => void;
+  /** Shift ile iki soru (ve arası) seçildiğinde bölüm ekle */
+  onRequestSectionRange?: (startIdx: number, endIdx: number) => void;
 };
 
 type SwapPrompt = {
@@ -172,7 +180,10 @@ function SortableOptikRow({
   fillColor,
   gridOptions,
   ctrlSelected,
+  rangeSelected,
+  bulkGhost,
   onCtrlSelect,
+  onRowPointerDown,
   onNavigate,
 }: {
   question: QuestionItem;
@@ -183,9 +194,22 @@ function SortableOptikRow({
   fillColor?: string | null;
   gridOptions: OptikChoice[];
   ctrlSelected?: boolean;
+  rangeSelected?: boolean;
+  bulkGhost?: boolean;
   onCtrlSelect?: (
     questionId: string,
     e: {
+      ctrlKey: boolean;
+      metaKey: boolean;
+      shiftKey: boolean;
+      preventDefault: () => void;
+      stopPropagation: () => void;
+    },
+  ) => void;
+  onRowPointerDown?: (
+    questionId: string,
+    e: {
+      shiftKey: boolean;
       ctrlKey: boolean;
       metaKey: boolean;
       preventDefault: () => void;
@@ -200,7 +224,8 @@ function SortableOptikRow({
   const answer = normalizeAnswer(question.answer_key);
   const unmarked = !isFrameRow && answer === null;
   const showFrameChrome = Boolean(accentColor);
-  const useFrameStyle = Boolean(fillColor) && !ctrlSelected && !isDragging && !unmarked;
+  const useFrameStyle =
+    Boolean(fillColor) && !ctrlSelected && !rangeSelected && !isDragging && !unmarked;
 
   const handleGripPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (e.ctrlKey || e.metaKey) {
@@ -218,25 +243,39 @@ function SortableOptikRow({
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
+        opacity: bulkGhost ? 0.35 : undefined,
         ...(useFrameStyle
           ? { backgroundColor: fillColor!, borderColor: accentColor ?? fillColor! }
           : null),
       }}
       onPointerDown={(e) => {
+        if (e.shiftKey && onRowPointerDown) {
+          e.preventDefault();
+          e.stopPropagation();
+          onRowPointerDown(question.id, e);
+          return;
+        }
         if ((e.ctrlKey || e.metaKey) && onCtrlSelect) {
+          // Odaklanma / scrollIntoView tetiklenmesin
+          e.preventDefault();
+          e.stopPropagation();
           onCtrlSelect(question.id, e);
+          return;
         }
       }}
       onClick={(e) => {
-        if (e.ctrlKey || e.metaKey) return;
+        if (e.shiftKey || e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          return;
+        }
         if ((e.target as HTMLElement).closest("button")) return;
         onNavigate?.(question.id);
       }}
       className={`optik-form-row flex items-center gap-1 rounded-lg border px-1 py-0.5 transition ${
-        onNavigate ? "cursor-pointer hover:brightness-[0.98]" : "cursor-default"
+        onNavigate || onRowPointerDown ? "cursor-pointer hover:brightness-[0.98]" : "cursor-default"
       } ${optikRowShellClass({
         isDragging,
-        ctrlSelected: Boolean(ctrlSelected),
+        ctrlSelected: Boolean(ctrlSelected) || Boolean(rangeSelected),
         unmarked,
         frameFill: useFrameStyle ? fillColor : null,
       })}`}
@@ -251,6 +290,7 @@ function SortableOptikRow({
         onClick={(e) => e.stopPropagation()}
         onPointerDown={handleGripPointerDown}
         {...attributes}
+        tabIndex={-1}
       >
         <GripVertical className="h-3.5 w-3.5" aria-hidden />
       </button>
@@ -293,6 +333,7 @@ function OptikRowPreview({
   accentColor,
   fillColor,
   gridOptions,
+  bulkCount,
 }: {
   question: QuestionItem;
   number: number | null;
@@ -301,61 +342,82 @@ function OptikRowPreview({
   accentColor?: string | null;
   fillColor?: string | null;
   gridOptions: OptikChoice[];
+  bulkCount?: number;
 }) {
   const answer = normalizeAnswer(question.answer_key);
   const unmarked = !isFrameRow && answer === null;
   const showFrameChrome = Boolean(accentColor);
   return (
-    <div
-      className={`optik-form-row flex items-center gap-1 rounded-lg border px-1 py-0.5 shadow-lg ${optikRowShellClass(
-        {
-          isDragging: false,
-          ctrlSelected: false,
-          unmarked,
-          frameFill: fillColor,
-        },
-      )}`}
-      style={
-        fillColor && !unmarked
-          ? { backgroundColor: fillColor, borderColor: accentColor ?? fillColor }
-          : undefined
-      }
-    >
-      <GripVertical
-        className={`h-3 w-3 shrink-0 ${unmarked ? "text-red-600" : "text-slate-500"}`}
-        aria-hidden
-      />
-      <span
-        className={`min-w-[3.25rem] max-w-[7rem] shrink-0 truncate text-[0.6875rem] font-bold ${
-          showFrameChrome ? "" : unmarked ? "text-red-700" : "text-slate-700"
-        }`}
-        style={showFrameChrome ? { color: accentColor ?? undefined } : undefined}
+    <div className="relative">
+      {bulkCount != null && bulkCount > 1 ? (
+        <span className="absolute -right-1 -top-1 z-10 rounded-full bg-sky-600 px-1.5 py-0.5 text-[0.625rem] font-bold text-white shadow">
+          {bulkCount}
+        </span>
+      ) : null}
+      <div
+        className={`optik-form-row flex items-center gap-1 rounded-lg border px-1 py-0.5 shadow-lg ${optikRowShellClass(
+          {
+            isDragging: false,
+            ctrlSelected: false,
+            unmarked,
+            frameFill: fillColor,
+          },
+        )}`}
+        style={
+          fillColor && !unmarked
+            ? { backgroundColor: fillColor, borderColor: accentColor ?? fillColor }
+            : undefined
+        }
       >
-        {isFrameRow || showFrameChrome ? label : number}
-      </span>
-      {!isFrameRow ? (
-        <div className="optik-form-bubbles">
-          {gridOptions.map((opt) => {
-            const selected = answer === opt;
-            return (
-              <span key={opt} className={answerBubbleClass(selected, unmarked)}>
-                {opt}
-              </span>
-            );
-          })}
-        </div>
-      ) : (
-        <span className="truncate text-[0.625rem] font-medium text-slate-400">cevap yok</span>
-      )}
+        <GripVertical
+          className={`h-3 w-3 shrink-0 ${unmarked ? "text-red-600" : "text-slate-500"}`}
+          aria-hidden
+        />
+        <span
+          className={`min-w-[3.25rem] max-w-[7rem] shrink-0 truncate text-[0.6875rem] font-bold ${
+            showFrameChrome ? "" : unmarked ? "text-red-700" : "text-slate-700"
+          }`}
+          style={showFrameChrome ? { color: accentColor ?? undefined } : undefined}
+        >
+          {isFrameRow || showFrameChrome ? label : number}
+        </span>
+        {!isFrameRow ? (
+          <div className="optik-form-bubbles">
+            {gridOptions.map((opt) => {
+              const selected = answer === opt;
+              return (
+                <span key={opt} className={answerBubbleClass(selected, unmarked)}>
+                  {opt}
+                </span>
+              );
+            })}
+          </div>
+        ) : (
+          <span className="truncate text-[0.625rem] font-medium text-slate-400">cevap yok</span>
+        )}
+      </div>
     </div>
   );
 }
 
-export default function OptikFormSidebar({ questions, onReorder, onQuestionNavigate }: Props) {
+export default function OptikFormSidebar({
+  questions,
+  sections = [],
+  displayNumberByOrder,
+  onReorder,
+  onQuestionNavigate,
+  onRequestSectionRange,
+}: Props) {
   const stats = useMemo(() => computeOptikFormStats(questions), [questions]);
   const gridOptions = stats.activeOptions;
+  const sectionByStart = useMemo(() => {
+    const m = new Map<number, SectionRange>();
+    for (const s of sections) m.set(s.start_idx, s);
+    return m;
+  }, [sections]);
+
   const rowMeta = useMemo(() => {
-    let n = 0;
+    let fallbackN = 0;
     const ornekByOrder = buildFasikulOrnekNumberByOrderIndex(questions);
     return questions.map((q) => {
       const answerable = isOptikAnswerableQuestion(q);
@@ -377,7 +439,10 @@ export default function OptikFormSidebar({ questions, onReorder, onQuestionNavig
           fillColor,
         };
       }
-      n += 1;
+      fallbackN += 1;
+      const fromLayout = displayNumberByOrder?.get(q.order_index);
+      const n =
+        fromLayout != null && Number.isFinite(fromLayout) ? fromLayout : fallbackN;
       const frameLabel = frameEnabled
         ? resolveOptikFrameSidebarLabel(q, ornekByOrder)
         : null;
@@ -391,7 +456,7 @@ export default function OptikFormSidebar({ questions, onReorder, onQuestionNavig
         fillColor: frameEnabled ? fillColor : null,
       };
     });
-  }, [questions]);
+  }, [questions, displayNumberByOrder]);
   const metaById = useMemo(() => {
     const m = new Map<string, (typeof rowMeta)[number]>();
     for (const r of rowMeta) m.set(r.id, r);
@@ -399,27 +464,65 @@ export default function OptikFormSidebar({ questions, onReorder, onQuestionNavig
   }, [rowMeta]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [ctrlSelectedIds, setCtrlSelectedIds] = useState<string[]>([]);
+  const [shiftAnchorId, setShiftAnchorId] = useState<string | null>(null);
+  const [rangeSelectedIds, setRangeSelectedIds] = useState<string[]>([]);
   const [swapPrompt, setSwapPrompt] = useState<SwapPrompt | null>(null);
+  const [bulkDragCount, setBulkDragCount] = useState(0);
+  const dragMoveIdsRef = useRef<string[]>([]);
+  const listScrollRef = useRef<HTMLDivElement>(null);
+  const listScrollTopRef = useRef(0);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } })
   );
 
+  // Seçim bandı açılınca / satır ring değişince scrollIntoView kaymasını geri al
+  useLayoutEffect(() => {
+    const el = listScrollRef.current;
+    if (!el) return;
+    el.scrollTop = listScrollTopRef.current;
+  }, [ctrlSelectedIds]);
+
   const handleDragStart = (event: DragStartEvent) => {
-    setActiveId(String(event.active.id));
-    setCtrlSelectedIds([]);
+    const id = String(event.active.id);
+    setActiveId(id);
+    setRangeSelectedIds([]);
     setSwapPrompt(null);
+    if (ctrlSelectedIds.includes(id) && ctrlSelectedIds.length > 1) {
+      const ordered = questions
+        .map((q) => q.id)
+        .filter((qid) => ctrlSelectedIds.includes(qid));
+      dragMoveIdsRef.current = ordered;
+      setBulkDragCount(ordered.length);
+    } else {
+      dragMoveIdsRef.current = [id];
+      setBulkDragCount(1);
+      if (!ctrlSelectedIds.includes(id)) {
+        setCtrlSelectedIds([]);
+      }
+    }
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
     setActiveId(null);
+    setBulkDragCount(0);
     const { active, over } = event;
-    if (!over || String(active.id) === String(over.id)) return;
+    const moving = dragMoveIdsRef.current;
+    dragMoveIdsRef.current = [];
+    if (!over || !onReorder) return;
+    const overId = String(over.id);
+    const activeIdStr = String(active.id);
+    if (moving.length <= 1) {
+      if (overId === activeIdStr) return;
+      const ids = questions.map((q) => q.id);
+      onReorder(readingOrderIdsAfterMove(ids, activeIdStr, overId));
+      setCtrlSelectedIds([]);
+      return;
+    }
+    if (moving.includes(overId)) return;
     const ids = questions.map((q) => q.id);
-    const from = ids.indexOf(String(active.id));
-    const to = ids.indexOf(String(over.id));
-    if (from < 0 || to < 0 || from === to) return;
-    onReorder?.(readingOrderIdsAfterMove(ids, String(active.id), String(over.id)));
+    onReorder(readingOrderIdsAfterBulkMove(ids, moving, overId));
+    setCtrlSelectedIds([]);
   };
 
   const handleCtrlSelect = (
@@ -427,6 +530,7 @@ export default function OptikFormSidebar({ questions, onReorder, onQuestionNavig
     e: {
       ctrlKey: boolean;
       metaKey: boolean;
+      shiftKey?: boolean;
       preventDefault: () => void;
       stopPropagation: () => void;
     },
@@ -435,29 +539,91 @@ export default function OptikFormSidebar({ questions, onReorder, onQuestionNavig
     if (!e.ctrlKey && !e.metaKey) return;
     e.preventDefault();
     e.stopPropagation();
+    if (listScrollRef.current) {
+      listScrollTopRef.current = listScrollRef.current.scrollTop;
+    }
+    setRangeSelectedIds([]);
+    setShiftAnchorId(null);
 
-    if (ctrlSelectedIds.includes(questionId)) {
-      setCtrlSelectedIds((prev) => prev.filter((id) => id !== questionId));
+    // Ctrl+Shift: seçim aralığını genişlet (bölüm modalı açmadan)
+    if (e.shiftKey && ctrlSelectedIds.length > 0) {
+      const ids = questions.map((q) => q.id);
+      const anchorId = ctrlSelectedIds[ctrlSelectedIds.length - 1]!;
+      const a = ids.indexOf(anchorId);
+      const b = ids.indexOf(questionId);
+      if (a >= 0 && b >= 0) {
+        const lo = Math.min(a, b);
+        const hi = Math.max(a, b);
+        const range = ids.slice(lo, hi + 1);
+        setCtrlSelectedIds((prev) => {
+          const set = new Set(prev);
+          for (const id of range) set.add(id);
+          return ids.filter((id) => set.has(id));
+        });
+      }
       return;
     }
-    if (ctrlSelectedIds.length === 0) {
-      setCtrlSelectedIds([questionId]);
+
+    setCtrlSelectedIds((prev) => {
+      if (prev.includes(questionId)) {
+        return prev.filter((id) => id !== questionId);
+      }
+      return [...prev, questionId];
+    });
+  };
+
+  const handleShiftRange = (
+    questionId: string,
+    e: {
+      shiftKey: boolean;
+      ctrlKey: boolean;
+      metaKey: boolean;
+      preventDefault: () => void;
+      stopPropagation: () => void;
+    },
+  ) => {
+    if (!e.shiftKey) return;
+    // Ctrl+Shift seçim için ctrl handler'a bırak
+    if (e.ctrlKey || e.metaKey) return;
+    if (!onRequestSectionRange) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setCtrlSelectedIds([]);
+    setSwapPrompt(null);
+
+    const orders = questions.map((q) => q.order_index);
+    const ids = questions.map((q) => q.id);
+    const clickedIdx = ids.indexOf(questionId);
+    if (clickedIdx < 0) return;
+
+    if (!shiftAnchorId) {
+      setShiftAnchorId(questionId);
+      setRangeSelectedIds([questionId]);
+      onQuestionNavigate?.(questionId);
       return;
     }
-    if (ctrlSelectedIds.length === 1 && ctrlSelectedIds[0] !== questionId) {
-      const firstId = ctrlSelectedIds[0]!;
-      const labelA = metaById.get(firstId)?.swapLabel ?? firstId;
-      const labelB = metaById.get(questionId)?.swapLabel ?? questionId;
-      setCtrlSelectedIds([firstId, questionId]);
-      setSwapPrompt({ idA: firstId, idB: questionId, labelA, labelB });
+
+    const anchorIdx = ids.indexOf(shiftAnchorId);
+    if (anchorIdx < 0) {
+      setShiftAnchorId(questionId);
+      setRangeSelectedIds([questionId]);
       return;
     }
-    setCtrlSelectedIds([questionId]);
+
+    const startPos = Math.min(anchorIdx, clickedIdx);
+    const endPos = Math.max(anchorIdx, clickedIdx);
+    const rangeIds = ids.slice(startPos, endPos + 1);
+    setRangeSelectedIds(rangeIds);
+
+    const startOrder = Math.min(orders[startPos]!, orders[endPos]!);
+    const endOrder = Math.max(orders[startPos]!, orders[endPos]!);
+    if (endOrder > startOrder || rangeIds.length > 1) {
+      onRequestSectionRange(startOrder, endOrder);
+    }
   };
 
   const cancelSwap = () => {
     setSwapPrompt(null);
-    setCtrlSelectedIds([]);
   };
 
   const confirmSwap = () => {
@@ -469,6 +635,33 @@ export default function OptikFormSidebar({ questions, onReorder, onQuestionNavig
     onReorder(swapReadingOrderIds(ids, swapPrompt.idA, swapPrompt.idB));
     setSwapPrompt(null);
     setCtrlSelectedIds([]);
+  };
+
+  const openSwapFromSelection = () => {
+    if (ctrlSelectedIds.length !== 2) return;
+    const [idA, idB] = ctrlSelectedIds;
+    if (!idA || !idB) return;
+    setSwapPrompt({
+      idA,
+      idB,
+      labelA: metaById.get(idA)?.swapLabel ?? idA,
+      labelB: metaById.get(idB)?.swapLabel ?? idB,
+    });
+  };
+
+  /** Seçili soruları hedef sorunun altına taşı (Ctrl seçim + normal tık) */
+  const moveSelectionUnder = (targetId: string) => {
+    if (!onReorder || ctrlSelectedIds.length === 0) return false;
+    if (ctrlSelectedIds.includes(targetId)) return false;
+    const ids = questions.map((q) => q.id);
+    const orderedSelected = ids.filter((id) => ctrlSelectedIds.includes(id));
+    if (orderedSelected.length === 0) return false;
+    const next = readingOrderIdsInsertAfter(ids, orderedSelected, targetId);
+    if (next === ids || next.every((id, i) => id === ids[i])) return false;
+    onReorder(next);
+    setCtrlSelectedIds([]);
+    setRangeSelectedIds([]);
+    return true;
   };
 
   const activeQuestion = activeId ? questions.find((q) => q.id === activeId) : null;
@@ -550,17 +743,54 @@ export default function OptikFormSidebar({ questions, onReorder, onQuestionNavig
             defaultOpen
             headerExtra={
               onReorder && questions.length > 1 ? (
-                <span className="text-[0.625rem] text-slate-400">Ctrl+tık ile yer değiştir</span>
+                <span className="text-[0.625rem] text-slate-400">Ctrl · Shift</span>
               ) : undefined
             }
             contentClassName="flex min-h-0 flex-1 flex-col"
           >
             {onReorder && questions.length > 1 && (
               <p className="mb-1 shrink-0 text-[0.625rem] text-slate-400">
-                İki soruyu Ctrl (veya ⌘) + tık ile seçip yer değiştirin; sürükleyerek de sıralayabilirsiniz
+                Ctrl+tık: seç · sonra hedef soruya tıkla (altına taşınır) · Shift: bölüm
               </p>
             )}
-            <div className="min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden pr-0.5">
+            <div
+              ref={listScrollRef}
+              className="min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden pr-0.5"
+              onScroll={(e) => {
+                listScrollTopRef.current = e.currentTarget.scrollTop;
+              }}
+            >
+              {onReorder && ctrlSelectedIds.length > 0 && (
+                <div className="sticky top-0 z-10 mb-1 flex flex-wrap items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50/95 px-2 py-1 shadow-sm backdrop-blur-sm">
+                  <span className="text-[0.625rem] font-semibold text-sky-800">
+                    {ctrlSelectedIds.length} soru seçili
+                  </span>
+                  <span className="text-[0.625rem] text-sky-700">
+                    · altına eklemek için hedef soruya tıklayın
+                  </span>
+                  {ctrlSelectedIds.length === 2 ? (
+                    <button
+                      type="button"
+                      onClick={openSwapFromSelection}
+                      className="rounded-md bg-sky-600 px-1.5 py-0.5 text-[0.625rem] font-semibold text-white hover:bg-sky-700"
+                    >
+                      Yer değiştir
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setCtrlSelectedIds([])}
+                    className="ml-auto rounded-md border border-sky-300 px-1.5 py-0.5 text-[0.625rem] font-medium text-sky-700 hover:bg-white"
+                  >
+                    Temizle
+                  </button>
+                </div>
+              )}
+              {!onReorder && onRequestSectionRange && questions.length > 1 && (
+                <p className="mb-1 shrink-0 text-[0.625rem] text-slate-400">
+                  Shift+tık ile iki soru seçerek bölüm ekleyin
+                </p>
+              )}
               {questions.length === 0 ? (
                 <p className="text-xs text-slate-400">Henüz soru yok.</p>
               ) : (
@@ -573,20 +803,54 @@ export default function OptikFormSidebar({ questions, onReorder, onQuestionNavig
                   <SortableContext items={questions.map((q) => q.id)} strategy={verticalListSortingStrategy}>
                     {questions.map((q) => {
                       const meta = metaById.get(q.id)!;
+                      const section = sectionByStart.get(q.order_index);
                       return (
-                        <SortableOptikRow
-                          key={q.id}
-                          question={q}
-                          number={meta.number}
-                          label={meta.label}
-                          isFrameRow={meta.isFrameRow}
-                          accentColor={meta.accentColor}
-                          fillColor={meta.fillColor}
-                          gridOptions={gridOptions}
-                          ctrlSelected={ctrlSelectedIds.includes(q.id)}
-                          onCtrlSelect={handleCtrlSelect}
-                          onNavigate={onQuestionNavigate}
-                        />
+                        <div key={q.id} className="space-y-1">
+                          {section ? (
+                            <div
+                              className="rounded-md px-2 py-1 text-[0.625rem] font-bold tracking-wide shadow-sm"
+                              style={{
+                                backgroundColor: section.fill_color || SECTION_DEFAULT_FILL,
+                                color: section.text_color || SECTION_DEFAULT_TEXT,
+                              }}
+                              title={`Soru ${section.start_idx + 1}–${section.end_idx + 1}`}
+                            >
+                              {(section.title || "Bölüm").trim()}
+                            </div>
+                          ) : null}
+                          <SortableOptikRow
+                            question={q}
+                            number={meta.number}
+                            label={meta.label}
+                            isFrameRow={meta.isFrameRow}
+                            accentColor={meta.accentColor}
+                            fillColor={meta.fillColor}
+                            gridOptions={gridOptions}
+                            ctrlSelected={ctrlSelectedIds.includes(q.id)}
+                            rangeSelected={rangeSelectedIds.includes(q.id)}
+                            bulkGhost={
+                              bulkDragCount > 1 &&
+                              ctrlSelectedIds.includes(q.id) &&
+                              q.id !== activeId
+                            }
+                            onCtrlSelect={handleCtrlSelect}
+                            onRowPointerDown={
+                              onRequestSectionRange ? handleShiftRange : undefined
+                            }
+                            onNavigate={(id) => {
+                              if (ctrlSelectedIds.length > 0 && !ctrlSelectedIds.includes(id)) {
+                                if (moveSelectionUnder(id)) {
+                                  onQuestionNavigate?.(id);
+                                  return;
+                                }
+                              }
+                              setShiftAnchorId(id);
+                              setRangeSelectedIds([]);
+                              setCtrlSelectedIds([]);
+                              onQuestionNavigate?.(id);
+                            }}
+                          />
+                        </div>
                       );
                     })}
                   </SortableContext>
@@ -600,6 +864,7 @@ export default function OptikFormSidebar({ questions, onReorder, onQuestionNavig
                         accentColor={activeMeta.accentColor}
                         fillColor={activeMeta.fillColor}
                         gridOptions={gridOptions}
+                        bulkCount={bulkDragCount}
                       />
                     ) : null}
                   </DragOverlay>
@@ -609,15 +874,14 @@ export default function OptikFormSidebar({ questions, onReorder, onQuestionNavig
           </CollapsibleCard>
         </div>
       </aside>
-
-      {swapPrompt && (
+      {swapPrompt ? (
         <SwapConfirmDialog
           labelA={swapPrompt.labelA}
           labelB={swapPrompt.labelB}
           onConfirm={confirmSwap}
           onCancel={cancelSwap}
         />
-      )}
+      ) : null}
     </>
   );
 }

@@ -35,6 +35,7 @@ export default function QuestionPreviewModal({
   onClose,
 }: QuestionPreviewModalProps) {
   const navigate = useNavigate();
+  const questions = useEditorStore((s) => s.questions);
   const updateRemoveBackground = useEditorStore((s) => s.updateRemoveBackground);
   const flattenQuestionImageToSingleLayer = useEditorStore((s) => s.flattenQuestionImageToSingleLayer);
   const addQuestionImageTextOverlay = useEditorStore((s) => s.addQuestionImageTextOverlay);
@@ -42,8 +43,32 @@ export default function QuestionPreviewModal({
   const removeQuestionImageTextOverlay = useEditorStore((s) => s.removeQuestionImageTextOverlay);
   const recomposeQuestionImage = useEditorStore((s) => s.recomposeQuestionImage);
   const setQuestionContentType = useEditorStore((s) => s.setQuestionContentType);
-  const latestQuestion =
-    useEditorStore((s) => s.questions.find((x) => x.id === question.id)) ?? question;
+
+  const [activeId, setActiveId] = useState(question.id);
+  useEffect(() => {
+    if (isOpen) setActiveId(question.id);
+  }, [isOpen, question.id]);
+
+  const activeIndex = useMemo(
+    () => questions.findIndex((q) => q.id === activeId),
+    [questions, activeId],
+  );
+  const storeQuestion = useEditorStore((s) => s.questions.find((x) => x.id === activeId));
+  const latestQuestion = storeQuestion ?? question;
+
+  const canGoPrev = activeIndex > 0;
+  const canGoNext = activeIndex >= 0 && activeIndex < questions.length - 1;
+  const goPrev = useCallback(() => {
+    if (activeIndex <= 0) return;
+    const prev = questions[activeIndex - 1];
+    if (prev) setActiveId(prev.id);
+  }, [questions, activeIndex]);
+  const goNext = useCallback(() => {
+    if (activeIndex < 0 || activeIndex >= questions.length - 1) return;
+    const next = questions[activeIndex + 1];
+    if (next) setActiveId(next.id);
+  }, [questions, activeIndex]);
+
   const imageSrc = useQuestionImageSrc(latestQuestion);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -184,7 +209,7 @@ export default function QuestionPreviewModal({
         textPreviewRafRef.current = null;
       }
     }
-  }, [isOpen]);
+  }, [isOpen, activeId]);
 
   useEffect(() => {
     if (isOpen && imageSrc) loadImageToCanvas();
@@ -499,6 +524,24 @@ export default function QuestionPreviewModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [isOpen, selectedOverlayId, latestQuestion.id, removeQuestionImageTextOverlay]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (mathModalOpen || captionModalOpen) return;
+      const t = ev.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (ev.key === "ArrowLeft") {
+        ev.preventDefault();
+        goPrev();
+      } else if (ev.key === "ArrowRight") {
+        ev.preventDefault();
+        goNext();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, mathModalOpen, captionModalOpen, goPrev, goNext]);
+
   const handleApplyEraser = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -645,10 +688,50 @@ export default function QuestionPreviewModal({
       tabIndex={0}
       onKeyDown={(e) => {
         if (e.key === "Escape") onClose();
+        if (mathModalOpen || captionModalOpen) return;
+        const t = e.target as HTMLElement | null;
+        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          goPrev();
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          goNext();
+        }
       }}
     >
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          goPrev();
+        }}
+        disabled={!canGoPrev}
+        className="absolute left-3 top-1/2 z-[60] grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full border border-white/30 bg-slate-900/75 text-white shadow-lg transition hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-25 sm:left-6"
+        aria-label="Önceki soru"
+        title="Önceki soru (←)"
+      >
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+          <path d="m15 18-6-6 6-6" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          goNext();
+        }}
+        disabled={!canGoNext}
+        className="absolute right-3 top-1/2 z-[60] grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full border border-white/30 bg-slate-900/75 text-white shadow-lg transition hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-25 sm:right-6"
+        aria-label="Sonraki soru"
+        title="Sonraki soru (→)"
+      >
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+          <path d="m9 18 6-6-6-6" />
+        </svg>
+      </button>
       <div
-        className={`w-full max-w-4xl rounded-2xl bg-white p-4 shadow-2xl ${
+        className={`relative w-full max-w-4xl rounded-2xl bg-white p-4 shadow-2xl ${
           isExplanation ? "border-l-[5px] border-l-teal-500 ring-1 ring-teal-200/50" : ""
         }`}
         onClick={(e) => e.stopPropagation()}
@@ -656,6 +739,11 @@ export default function QuestionPreviewModal({
       >
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            {questions.length > 1 && activeIndex >= 0 ? (
+              <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-bold tabular-nums text-slate-700">
+                {activeIndex + 1} / {questions.length}
+              </span>
+            ) : null}
             <div
               className="inline-flex rounded-lg border border-slate-200/90 bg-slate-50 p-0.5 shadow-sm"
               role="group"

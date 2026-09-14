@@ -1,3 +1,4 @@
+import type { SectionRange } from "../types";
 import type { OptikChoice } from "./optikFormStats";
 
 export const OPTIK_FORM_LAYOUT = {
@@ -18,9 +19,19 @@ export const OPTIK_FORM_LAYOUT = {
   MAX_COLUMNS: 4,
 } as const;
 
+export type OptikFormSectionHeader = {
+  title: string;
+  fillColor: string;
+  textColor: string;
+};
+
 export type OptikFormDrawRow = {
+  /** Baskıda görünen soru numarası (bölüm restart dahil) */
   number: number;
   answer: OptikChoice | null;
+  orderIndex?: number;
+  /** Bu satır bir bölümün ilk sorusuysa, üstte çizilecek başlık bandı */
+  sectionHeader?: OptikFormSectionHeader | null;
 };
 
 export type OptikFormLayoutInput = {
@@ -97,14 +108,39 @@ export function computeOptikFormLayout(input: OptikFormLayoutInput): OptikFormLa
   };
 }
 
+const DEFAULT_SECTION_FILL = "#F34A2F";
+const DEFAULT_SECTION_TEXT = "#FFFFFF";
+
+function sectionHeaderAtStart(
+  orderIndex: number,
+  sections?: SectionRange[] | null,
+): OptikFormSectionHeader | null {
+  if (!sections?.length) return null;
+  const match = sections.find((s) => s.start_idx === orderIndex);
+  if (!match) return null;
+  const title = (match.title || "").trim();
+  if (!title) return null;
+  return {
+    title,
+    fillColor: match.fill_color?.trim() || DEFAULT_SECTION_FILL,
+    textColor: match.text_color?.trim() || DEFAULT_SECTION_TEXT,
+  };
+}
+
+/**
+ * Optik satırları okuma (order_index) sırasıyla üretir.
+ * Numaralar layout display_number ile uyumludur (bölüm restart dahil).
+ * Bölüm başlangıcındaki ilk soruya sectionHeader eklenir (OMR satır sayısı değişmez).
+ */
 export function optikRowsFromLayoutItems(
   layout: { display_number?: number | null; order_index: number; answer_key?: string | null }[],
   questions: { id: string; order_index: number; answer_key?: string }[],
+  sections?: SectionRange[] | null,
 ): OptikFormDrawRow[] {
   const valid = new Set(["A", "B", "C", "D", "E"]);
   const items = layout
     .filter((l) => l.display_number != null)
-    .sort((a, b) => (a.display_number as number) - (b.display_number as number));
+    .sort((a, b) => a.order_index - b.order_index);
 
   const mapRow = (
     number: number,
@@ -114,11 +150,18 @@ export function optikRowsFromLayoutItems(
     const q = questions.find((x) => x.order_index === orderIndex);
     const raw = (q?.answer_key ?? answerKey ?? "").trim().toUpperCase();
     const answer = valid.has(raw) ? (raw as OptikChoice) : null;
-    return { number, answer };
+    return {
+      number,
+      answer,
+      orderIndex,
+      sectionHeader: sectionHeaderAtStart(orderIndex, sections),
+    };
   };
 
   if (items.length > 0) {
-    return items.map((item) => mapRow(item.display_number as number, item.order_index, item.answer_key));
+    return items.map((item) =>
+      mapRow(item.display_number as number, item.order_index, item.answer_key),
+    );
   }
 
   // Numaralandırma kapalıysa layout'ta display_number olmayabilir — soru sırasını kullan

@@ -27,6 +27,7 @@ const FASIKUL_MIN_BOTTOM_SCRATCH_PT = fasikulMinScratchGapPt();
 /**
  * Her sorunun h_pt / img_y_top ofsetini başlık rezervine göre ayarlar,
  * sütunu standart boşlukla yeniden dizer.
+ * Bölüm başlığı (section) rezervi korunur — yalnızca fasikül rozeti değil.
  */
 export function reflowLayoutForFasikulBadgeTopReserve(input: {
   layout: LayoutItem[];
@@ -65,7 +66,9 @@ export function reflowLayoutForFasikulBadgeTopReserve(input: {
       let colNeeds = false;
       const prepared = items.map((item) => {
         const q = qByOrder.get(item.order_index);
-        const reserve = fasikulFrameBadgeTopReservePt(q?.fasikulFrame);
+        const badgeReserve = fasikulFrameBadgeTopReservePt(q?.fasikulFrame);
+        const sectionReserve = layoutItemSectionReservePt(item);
+        const reserve = badgeReserve + sectionReserve;
         const currentReserve = Math.max(
           0,
           item.y_top_pt - (item.img_y_top_pt ?? item.y_top_pt),
@@ -113,4 +116,16 @@ export function reflowLayoutForFasikulBadgeTopReserve(input: {
 
   if (updates.size === 0) return layout;
   return layout.map((l) => updates.get(l.order_index) ?? l);
+}
+
+/** Bölüm kutusu + alt boşluk (layout-engine SECTION_BOX_H + GAP ile uyumlu) */
+export function layoutItemSectionReservePt(item: LayoutItem): number {
+  const sec = item.section;
+  if (!sec) return 0;
+  const boxH = Number(sec.box_h);
+  const gapAfter = Number(sec.gap_after);
+  return (
+    (Number.isFinite(boxH) && boxH > 0 ? boxH : 22) +
+    (Number.isFinite(gapAfter) && gapAfter >= 0 ? gapAfter : 6)
+  );
 }

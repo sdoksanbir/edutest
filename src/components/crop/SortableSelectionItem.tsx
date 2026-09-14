@@ -22,6 +22,7 @@ type SortableSelectionItemProps = {
   localFilename?: string;
   onRemove: (sel: PendingSelection) => void | Promise<void>;
   onNavigate: (sourceValue: string, pageNumber: number) => void;
+  onSaveToBank?: (sel: PendingSelection) => void;
 };
 
 export default function SortableSelectionItem({
@@ -29,6 +30,7 @@ export default function SortableSelectionItem({
   localFilename,
   onRemove,
   onNavigate,
+  onSaveToBank,
 }: SortableSelectionItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: sel.id });
@@ -70,6 +72,20 @@ export default function SortableSelectionItem({
           )}
         </button>
       </div>
+      {onSaveToBank ? (
+        <button
+          type="button"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSaveToBank(sel);
+          }}
+          className="shrink-0 text-sky-300 hover:text-sky-200"
+          title="Soru bankasına kaydet"
+        >
+          Banka
+        </button>
+      ) : null}
       <button
         type="button"
         onPointerDown={(e) => e.stopPropagation()}

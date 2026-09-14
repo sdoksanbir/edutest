@@ -126,6 +126,7 @@ import {
   resolveThemeAccentHex,
   resolveThemePrimaryHex,
 } from "../../utils/pageStructureHelpers";
+import { questionDifficultyRgb } from "../../utils/questionDifficulty";
 import {
   classicBannerSubjectText,
   otherPageHeaderLeftText,
@@ -210,14 +211,26 @@ import {
   questionNumberLabel,
   QUESTION_NUM_FONT_PT,
 } from "../../utils/questionNumberMetrics";
+import { drawWrittenOpenEndedOnCanvas } from "../../utils/writtenQuestionPaperDraw";
 
 const PT_PER_INCH = 72;
 /** Ekranda sayfa boyutu (CSS) — overlay / tıklama ile aynı kalır. */
 const DISPLAY_DPI = 96;
 const DISPLAY_PT_TO_PX = DISPLAY_DPI / PT_PER_INCH;
-/** Ana önizleme varsayılan keskinlik (buffer = CSS × sharpness × dpr).
- * 2× çok pahalıydı (özellikle 2x DPR ekranda ~4× piksel); 1.25 yeterli. */
-export const DEFAULT_PREVIEW_SHARPNESS = 1.25;
+/** Ana önizleme varsayılan keskinlik (buffer = CSS × sharpness × cappedDpr).
+ * Retina (DPR 2) + yüksek sharpness bellek patlatır; 1.0 ekran pikseline yeter. */
+export const DEFAULT_PREVIEW_SHARPNESS = 1;
+
+/**
+ * Canvas buffer için DPR tavanı — M1/Retina’da native 2–3× alanı ~4–9× şişirir.
+ * 1.25 hâlâ keskin; bellek ~DPR² oranında düşer.
+ */
+export const PREVIEW_MAX_DEVICE_PIXEL_RATIO = 1.25;
+
+function previewBufferDpr(): number {
+  const raw = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+  return Math.min(Math.max(1, raw), PREVIEW_MAX_DEVICE_PIXEL_RATIO);
+}
 
 const PT_TO_MM = 25.4 / PT_PER_INCH;
 
@@ -258,6 +271,8 @@ type CanvasPdfPreviewProps = {
   optikFormEnabled?: boolean;
   optikFormPlacement?: "per_page" | "separate_page" | "end_of_test";
   optikFormQuestions?: QuestionItem[];
+  /** Bölüm başlıkları / restart numaraları için */
+  sections?: import("../../types").SectionRange[];
   /** Fasikül cevap anahtarı etiketleri (ÖRNEK 1, ÖSYM) — soru listesi */
   answerKeyQuestions?: QuestionItem[];
   optikFormOptionCount?: OptikFormOptionCount;
@@ -428,6 +443,7 @@ export default function CanvasPdfPreview({
   optikFormEnabled = false,
   optikFormPlacement = "end_of_test",
   optikFormQuestions = [],
+  sections = [],
   answerKeyQuestions = [],
   optikFormOptionCount = "auto",
   optikFormBookletType = "none",
@@ -530,7 +546,7 @@ export default function CanvasPdfPreview({
       .filter((q) => onPage.has(q.order_index))
       .map((q) => {
         const f = q.fasikulFrame;
-        return `${q.order_index}:${q.scratchGridRows ?? ""}:${f?.enabled ? 1 : 0}:${f?.showScratchGrid ? 1 : 0}:${f?.fillColor ?? ""}:${f?.fillOpacityPct ?? ""}:${f?.cornerRadiusPx ?? ""}:${f?.innerPaddingPx ?? ""}:${f?.borderStyle ?? ""}:${f?.borderWidth ?? ""}:${f?.borderColor ?? ""}:${f?.badgeStyle ?? ""}:${f?.labelText ?? ""}:${f?.labelColor ?? ""}`;
+        return `${q.order_index}:${q.scratchGridRows ?? ""}:${f?.enabled ? 1 : 0}:${f?.showScratchGrid ? 1 : 0}:${f?.fillColor ?? ""}:${f?.fillOpacityPct ?? ""}:${f?.cornerRadiusPx ?? ""}:${f?.innerPaddingPx ?? ""}:${f?.borderStyle ?? ""}:${f?.borderWidth ?? ""}:${f?.borderColor ?? ""}:${f?.badgeStyle ?? ""}:${f?.labelText ?? ""}:${f?.labelColor ?? ""}:${q.writtenType ?? ""}:${q.writtenAnswerArea ?? ""}:${q.writtenAnswerLines ?? ""}:${(q.writtenStemHtml ?? "").length}:${q.writtenPoints ?? ""}`;
       })
       .join("|");
   });
@@ -766,7 +782,7 @@ export default function CanvasPdfPreview({
       return;
     }
 
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = previewBufferDpr();
     const bufferScale = dpr * sharpness;
     let offscreen = offscreenRef.current;
     if (!offscreen) {
@@ -839,7 +855,7 @@ export default function CanvasPdfPreview({
             ]);
     const optikRowsEarly =
       optikFormEnabled && optikFormQuestions.length > 0
-        ? optikRowsFromLayoutItems(layoutData, optikFormQuestions)
+        ? optikRowsFromLayoutItems(layoutData, optikFormQuestions, sections)
         : [];
     const optikActiveOptionsEarly = resolveOptikActiveOptions(
       optikFormQuestions,
@@ -2153,13 +2169,24 @@ export default function CanvasPdfPreview({
       const imgH = item.img_h_pt!;
 
       if (sec) {
-        const secBoxH = (sec.box_h ?? 22) * scale;
-        const secYTopPt = item.y_top_pt + yShiftPt;
+        const secBoxHPt = sec.box_h ?? 22;
+        const secGapPt = sec.gap_after ?? 6;
+        const secReservePt = secBoxHPt + secGapPt;
+        const blockTopPt = item.y_top_pt + yShiftPt;
+        // Reflow bölüm rezervini ezdiyse kutuyu görselin üstüne taşı
+        const secYTopPt =
+          blockTopPt >= imgY + secReservePt - 0.5 ? blockTopPt : imgY + secReservePt;
+        const secBoxH = secBoxHPt * scale;
         const { x: secX, y: secY } = ptToCanvas(numX, secYTopPt);
         const secWpx = (item.w_pt ?? 250) * scale;
-        ctx.fillStyle = sec.fill_color || "#FFFFFF";
-        ctx.strokeStyle = sec.line_color || "#000000";
-        ctx.lineWidth = 0.8 * scale;
+        ctx.fillStyle = sec.fill_color || "#F34A2F";
+        const lineOn = (() => {
+          const t = String(sec.line_color || "").trim().toLowerCase();
+          if (!t || t === "none" || t === "transparent" || t === "off") return false;
+          return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(t);
+        })();
+        ctx.strokeStyle = lineOn ? sec.line_color! : "transparent";
+        ctx.lineWidth = lineOn ? 0.8 * scale : 0;
         ctx.beginPath();
         const r = 6 * scale;
         ctx.moveTo(secX + r, secY);
@@ -2173,8 +2200,8 @@ export default function CanvasPdfPreview({
         ctx.quadraticCurveTo(secX, secY, secX + r, secY);
         ctx.closePath();
         ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = sec.text_color || "#000000";
+        if (lineOn) ctx.stroke();
+        ctx.fillStyle = sec.text_color || "#FFFFFF";
         ctx.font = `bold ${(sec.font_pt ?? 12) * scale}px Arial, Helvetica`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -2272,10 +2299,11 @@ export default function CanvasPdfPreview({
         ? images.get(qidForImg) ?? getCachedQuestionImage(qidForImg)
         : undefined;
       const isEmptyFasikulBox = (qForEmpty?.fasikulEmptyRows ?? 0) > 0;
+      const isWrittenOpenEnded = Boolean(qForEmpty?.writtenType);
 
       const qForFrame = qForEmpty;
       const frameSettings = normalizeFasikulQuestionFrame(qForFrame?.fasikulFrame);
-      const frameVisible = fasikulFrameHasVisibleBox(frameSettings);
+      const frameVisible = !isWrittenOpenEnded && fasikulFrameHasVisibleBox(frameSettings);
       const frameWidthPt = frameSettings.enabled
         ? resolveFasikulFrameOuterWidthPt({
             leftPt: imgX,
@@ -2311,7 +2339,26 @@ export default function CanvasPdfPreview({
       const drawW = Math.max(1, imgWpx - pad * 2);
       const drawH = Math.max(1, imgHpx - pad * 2);
 
-      if (isEmptyFasikulBox) {
+      if (isWrittenOpenEnded) {
+        const accent =
+          useEditorStore.getState().writtenPaperUi?.accentColor || primaryHex || "#0D9488";
+        const dn =
+          item.display_number ??
+          (typeof qForEmpty?.order_index === "number" ? qForEmpty.order_index + 1 : 1);
+        drawWrittenOpenEndedOnCanvas({
+          ctx,
+          x: drawX,
+          y: drawY,
+          w: drawW,
+          h: drawH,
+          scale,
+          displayNumber: dn,
+          stemHtml: qForEmpty?.writtenStemHtml,
+          answerArea: qForEmpty?.writtenAnswerArea ?? "lines",
+          answerLines: qForEmpty?.writtenAnswerLines ?? 5,
+          accentHex: accent,
+        });
+      } else if (isEmptyFasikulBox) {
         /* içi boş hazır tasarım — görsel çizme */
       } else if (imgEl && imgEl.complete) {
         const fillOn = frameVisible && (frameSettings.fillOpacityPct ?? 0) > 0;
@@ -2340,11 +2387,15 @@ export default function CanvasPdfPreview({
       }
 
       const dnLabel = item.display_number;
-      const hideNumber = fasikulFrameHidesQuestionNumber(frameSettings);
+      const hideNumber =
+        isWrittenOpenEnded || fasikulFrameHidesQuestionNumber(frameSettings);
       if (dnLabel != null && questionNumberingEnabled && !hideNumber) {
         const numLabel = questionNumberLabel(dnLabel);
         const numFontPt = questionNumberFontPt;
-        ctx.fillStyle = questionNumberDrawColor(questionNumberColorMode, primaryHex);
+        const diffRgb = questionDifficultyRgb(qForEmpty?.difficulty);
+        ctx.fillStyle = diffRgb
+          ? `rgb(${Math.round(diffRgb[0] * 255)},${Math.round(diffRgb[1] * 255)},${Math.round(diffRgb[2] * 255)})`
+          : questionNumberDrawColor(questionNumberColorMode, primaryHex);
         ctx.font = `bold ${numFontPt * scale}px Helvetica, Arial`;
         ctx.textAlign = "left";
         const numLeftPx = numX * scale;
@@ -3170,6 +3221,7 @@ export default function CanvasPdfPreview({
     optikFormEnabled,
     optikFormPlacement,
     optikFormQuestions,
+    sections,
     answerKeyQuestions,
     optikFormOptionCount,
     optikFormBookletType,
@@ -3305,7 +3357,7 @@ export default function CanvasPdfPreview({
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = previewBufferDpr();
     const bufferScale = dpr * sharpness;
     canvas.width = Math.max(1, Math.round(pageWpx * bufferScale));
     canvas.height = Math.max(1, Math.round(pageHpx * bufferScale));

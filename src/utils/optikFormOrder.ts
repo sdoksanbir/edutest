@@ -192,3 +192,57 @@ export function readingOrderIdsAfterMove(
   next.splice(to, 0, moved!);
   return next;
 }
+
+/**
+ * Seçili soruları (okuma sırasındaki göreli düzen korunarak) overId konumuna toplu taşır.
+ * over seçimin içindeyse değişiklik yapılmaz.
+ */
+export function readingOrderIdsAfterBulkMove(
+  readingOrderIds: string[],
+  selectedIds: string[],
+  overId: string,
+): string[] {
+  const selectedSet = new Set(selectedIds);
+  const moving = readingOrderIds.filter((id) => selectedSet.has(id));
+  if (moving.length === 0) return readingOrderIds;
+  if (moving.length === 1) {
+    return readingOrderIdsAfterMove(readingOrderIds, moving[0]!, overId);
+  }
+  if (selectedSet.has(overId)) return readingOrderIds;
+
+  const overIndex = readingOrderIds.indexOf(overId);
+  if (overIndex < 0) return readingOrderIds;
+
+  const firstSelectedIndex = readingOrderIds.findIndex((id) => selectedSet.has(id));
+  if (firstSelectedIndex < 0) return readingOrderIds;
+
+  const remaining = readingOrderIds.filter((id) => !selectedSet.has(id));
+  let insertAt = remaining.indexOf(overId);
+  if (insertAt < 0) return readingOrderIds;
+  // Aşağı taşırken hedefin arkasına, yukarı taşırken önüne yerleştir
+  if (firstSelectedIndex < overIndex) insertAt += 1;
+
+  const next = [...remaining];
+  next.splice(insertAt, 0, ...moving);
+  return next;
+}
+
+/** Seçili soruları afterId'nin hemen altına (sonrasına) yerleştirir. */
+export function readingOrderIdsInsertAfter(
+  readingOrderIds: string[],
+  selectedIds: string[],
+  afterId: string,
+): string[] {
+  const selectedSet = new Set(selectedIds);
+  const moving = readingOrderIds.filter((id) => selectedSet.has(id));
+  if (moving.length === 0) return readingOrderIds;
+  if (selectedSet.has(afterId)) return readingOrderIds;
+
+  const remaining = readingOrderIds.filter((id) => !selectedSet.has(id));
+  const afterIdx = remaining.indexOf(afterId);
+  if (afterIdx < 0) return readingOrderIds;
+
+  const next = [...remaining];
+  next.splice(afterIdx + 1, 0, ...moving);
+  return next;
+}

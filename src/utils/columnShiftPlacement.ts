@@ -106,15 +106,6 @@ function orderItemsInColumn(
     return it.y_top_pt;
   };
 
-  const hasStoredY = items.some((it) => {
-    const id = questionIdForOrder(questions, it.order_index);
-    return id != null && yOverridesByQuestionId[id] != null;
-  });
-
-  if (hasStoredY) {
-    return [...items].sort((a, b) => yFor(b) - yFor(a));
-  }
-
   const sorted = [...items].sort((a, b) => a.order_index - b.order_index);
   const topOrders = new Set<number>();
   const bottomOrders = new Set<number>();
@@ -124,14 +115,46 @@ function orderItemsInColumn(
     if (overrides[id].insert_at === "top") topOrders.add(it.order_index);
     if (overrides[id].insert_at === "bottom") bottomOrders.add(it.order_index);
   }
+
+  const byYThenOrder = (a: LayoutItem, b: LayoutItem) => {
+    const dy = yFor(b) - yFor(a);
+    if (Math.abs(dy) > LAYOUT_EPS) return dy;
+    return a.order_index - b.order_index;
+  };
+
+  // insert_at her zaman öncelikli — Y override yalnızca grup içi sırayı belirler
   const tops = sorted
     .filter((it) => topOrders.has(it.order_index))
-    .sort((a, b) => b.order_index - a.order_index);
-  const bottoms = sorted.filter((it) => bottomOrders.has(it.order_index));
-  const mids = sorted.filter(
-    (it) => !topOrders.has(it.order_index) && !bottomOrders.has(it.order_index)
-  );
+    .sort(byYThenOrder);
+  const bottoms = sorted
+    .filter((it) => bottomOrders.has(it.order_index))
+    .sort(byYThenOrder);
+  const mids = sorted
+    .filter((it) => !topOrders.has(it.order_index) && !bottomOrders.has(it.order_index))
+    .sort(byYThenOrder);
   return [...tops, ...mids, ...bottoms];
+}
+
+function scratchBelowPtForQuestion(q: QuestionItem | undefined): number {
+  if (!fasikulFrameShowsScratchGrid(q?.fasikulFrame)) return 0;
+  return scratchOccupiedHeightPt(
+    Math.max(
+      FASIKUL_MIN_SCRATCH_ROWS,
+      q?.scratchGridRows != null && Number.isFinite(q.scratchGridRows)
+        ? Math.round(q.scratchGridRows)
+        : FASIKUL_MIN_SCRATCH_ROWS,
+    ),
+    scratchCellPt(),
+  );
+}
+
+/** Sütun paketleme yüksekliği: blok + kareli alan (yalnızca h_pt değil). */
+function itemColumnPackHeightPt(item: LayoutItem, questions: QuestionItem[]): number {
+  const q = questions.find((x) => x.order_index === item.order_index);
+  const scratch = scratchBelowPtForQuestion(q);
+  const occupied = item.y_top_pt - layoutItemOccupiedBottomPt(item, scratch);
+  if (Number.isFinite(occupied) && occupied > LAYOUT_EPS) return occupied;
+  return Math.max(item.h_pt, 1) + scratch;
 }
 
 function setItemColumnGeometry(
@@ -259,6 +282,7 @@ function packNarrowIntoSegments(
   minBottomGapPt: number,
   fixedInterGaps: boolean,
   force: boolean,
+  questions: QuestionItem[],
 ): { ok: true; items: LayoutItem[] } | { ok: false; error: string } {
   if (items.length === 0) return { ok: true, items: [] };
   if (segments.length === 0) {
@@ -287,6 +311,7 @@ function packNarrowIntoSegments(
           seg.bottom,
           minGapPt,
           bottomReserve,
+          questions,
         )
       ) {
         fitCount = n;
@@ -304,6 +329,7 @@ function packNarrowIntoSegments(
           seg.bottom,
           minGapPt,
           true,
+          questions,
         );
         if (packedOne.ok) {
           placed.push(...packedOne.items);
@@ -316,7 +342,7 @@ function packNarrowIntoSegments(
 
     const batch = remaining.splice(0, fitCount);
     const packed = force
-      ? repackColumnItems(batch, seg.top, seg.bottom, minGapPt, true)
+      ? repackColumnItems(batch, seg.top, seg.bottom, minGapPt, true, questions)
       : repackColumnWithStandardGaps(
           batch,
           seg.top,
@@ -324,6 +350,7 @@ function packNarrowIntoSegments(
           minGapPt,
           bottomReserve,
           fixedInterGaps,
+          questions,
         );
     if (!packed.ok) return packed;
     placed.push(...packed.items);
@@ -344,10 +371,11 @@ function repackColumnItems(
   contentTopPt: number,
   contentBottomPt: number,
   minGapPt: number,
-  force = false
+  force = false,
+  questions: QuestionItem[] = [],
 ): { ok: true; items: LayoutItem[] } | { ok: false; error: string } {
   if (items.length === 0) return { ok: true, items: [] };
-  const heights = items.map((l) => l.h_pt);
+  const heights = items.map((l) => itemColumnPackHeightPt(l, questions));
   const totalH = heights.reduce((s, h) => s + h, 0);
   const usable = contentTopPt - contentBottomPt;
   const remaining = usable - totalH;
@@ -388,9 +416,10 @@ export function columnFitsWithStandardGaps(
   contentBottomPt: number,
   standardGapPt: number,
   minBottomGapPt: number,
+  questions: QuestionItem[] = [],
 ): boolean {
   if (items.length === 0) return true;
-  const totalH = items.reduce((s, l) => s + l.h_pt, 0);
+  const totalH = items.reduce((s, l) => s + itemColumnPackHeightPt(l, questions), 0);
   const usable = contentTopPt - contentBottomPt;
   const interGaps = Math.max(0, items.length - 1) * standardGapPt;
   return totalH + interGaps + minBottomGapPt <= usable + LAYOUT_EPS;
@@ -404,10 +433,20 @@ function repackColumnWithStandardGaps(
   standardGapPt: number,
   minBottomGapPt: number,
   fixedInterGaps = false,
+  questions: QuestionItem[] = [],
 ): { ok: true; items: LayoutItem[] } | { ok: false; error: string } {
   if (items.length === 0) return { ok: true, items: [] };
 
-  if (!columnFitsWithStandardGaps(items, contentTopPt, contentBottomPt, standardGapPt, minBottomGapPt)) {
+  if (
+    !columnFitsWithStandardGaps(
+      items,
+      contentTopPt,
+      contentBottomPt,
+      standardGapPt,
+      minBottomGapPt,
+      questions,
+    )
+  ) {
     const minMm = Math.round((minBottomGapPt * 25.4) / 72);
     return {
       ok: false,
@@ -415,7 +454,7 @@ function repackColumnWithStandardGaps(
     };
   }
 
-  const heights = items.map((l) => l.h_pt);
+  const heights = items.map((l) => itemColumnPackHeightPt(l, questions));
   const totalH = heights.reduce((s, h) => s + h, 0);
   const gapBudget = contentTopPt - contentBottomPt - totalH;
   const gaps = computeColumnGapSizesPt(
@@ -550,6 +589,7 @@ export function computePrevColumnCascadeMoves(input: {
             contentBottom,
             standardGapPt,
             minBottomGapPt,
+            input.questions,
           )
         : packNarrowIntoSegments(
             trial,
@@ -558,6 +598,7 @@ export function computePrevColumnCascadeMoves(input: {
             minBottomGapPt,
             false,
             false,
+            input.questions,
           ).ok;
     if (!fits) break;
     movedOrderIndices.push(candidate.order_index);
@@ -588,6 +629,7 @@ export type ApplyPlacementInput = {
   questionNumberStart?: number;
   questionNumberFontPt?: number;
   yOverridesByQuestionId?: Record<string, number>;
+  sections?: import("../types").SectionRange[] | null;
 };
 
 export type ApplyPlacementOk = {
@@ -672,7 +714,7 @@ function nudgeNarrowItemsBelowFullWidth(input: {
 export function applyColumnPlacementToLayout(
   input: ApplyPlacementInput
 ): ApplyPlacementOk | ApplyPlacementErr {
-  const { baseLayout, questions, placementOverrides, geometry, columns, questionGapMinMm, force = false, questionNumberingEnabled, questionNumberStart, questionNumberFontPt = 10, yOverridesByQuestionId = {} } =
+  const { baseLayout, questions, placementOverrides, geometry, columns, questionGapMinMm, force = false, questionNumberingEnabled, questionNumberStart, questionNumberFontPt = 10, yOverridesByQuestionId = {}, sections } =
     input;
   const minGapPt = placementMinInterGapPt(questionGapMinMm, questions);
   const minBottomGapPt = mmToPdfPt(placementMinBottomGapMm(questions));
@@ -779,7 +821,7 @@ export function applyColumnPlacementToLayout(
     const packed =
       fwIntervals.length === 0
         ? force
-          ? repackColumnItems(placed, contentTop, contentBottom, minGapPt, true)
+          ? repackColumnItems(placed, contentTop, contentBottom, minGapPt, true, questions)
           : repackColumnWithStandardGaps(
               placed,
               contentTop,
@@ -787,6 +829,7 @@ export function applyColumnPlacementToLayout(
               minGapPt,
               minBottomGapPt,
               fixedInterGaps,
+              questions,
             )
         : packNarrowIntoSegments(
             placed,
@@ -795,6 +838,7 @@ export function applyColumnPlacementToLayout(
             minBottomGapPt,
             fixedInterGaps,
             force,
+            questions,
           );
     if (!packed.ok) return packed;
 
@@ -862,6 +906,7 @@ export function applyColumnPlacementToLayout(
       questionNumberingEnabled,
       questionNumberStart,
       questionNumberFontPt,
+      sections,
     }),
     yTopUpdatesByQuestionId: yTopUpdates,
   };
@@ -884,6 +929,7 @@ export type TryColumnShiftInput = {
   questionNumberingEnabled?: boolean;
   questionNumberStart?: number;
   questionNumberFontPt?: number;
+  sections?: import("../types").SectionRange[] | null;
 };
 
 export type TryColumnShiftOk = {
@@ -909,6 +955,7 @@ function commitPlacementOverrides(
     questionNumberingEnabled?: boolean;
     questionNumberStart?: number;
     questionNumberFontPt?: number;
+    sections?: import("../types").SectionRange[] | null;
   },
   questionId: string,
   placementOverride: LayoutPlacementOverride
@@ -928,6 +975,7 @@ function commitMultiplePlacementOverrides(
     questionNumberingEnabled?: boolean;
     questionNumberStart?: number;
     questionNumberFontPt?: number;
+    sections?: import("../types").SectionRange[] | null;
   },
   addedOverrides: Record<string, LayoutPlacementOverride>,
   focusQuestionId: string,
@@ -948,6 +996,7 @@ function commitMultiplePlacementOverrides(
     questionNumberingEnabled: input.questionNumberingEnabled,
     questionNumberStart: input.questionNumberStart,
     questionNumberFontPt: input.questionNumberFontPt,
+    sections: input.sections,
   });
 
   if (!applied.ok) return applied;
@@ -1062,6 +1111,7 @@ export function tryColumnShiftPlacement(
     questionNumberingEnabled,
     questionNumberStart,
     questionNumberFontPt,
+    sections,
   } = input;
 
   const cols = Math.max(1, columns);
@@ -1164,6 +1214,7 @@ export function tryColumnShiftPlacement(
     questionNumberingEnabled,
     questionNumberStart,
     questionNumberFontPt,
+    sections,
   };
 
   if (cascadeOverrides && Object.keys(cascadeOverrides).length > 0) {
@@ -1298,9 +1349,12 @@ export function finalizePreviewLayout(input: {
   questionNumberingEnabled?: boolean;
   questionNumberStart?: number;
   questionNumberFontPt?: number;
+  sections?: import("../types").SectionRange[] | null;
 }): LayoutItem[] {
   const baseLayout = input.baseLayout ?? input.rawLayout;
   let layout = input.rawLayout;
+  /** Yerleşim override ile repack edilen sorular — eski mutlak Y tekrar uygulanmaz */
+  const packedQuestionIds = new Set<string>();
   if (Object.keys(input.placementOverrides).length > 0) {
     const placed = applyColumnPlacementToLayout({
       baseLayout,
@@ -1312,9 +1366,16 @@ export function finalizePreviewLayout(input: {
       questionNumberingEnabled: input.questionNumberingEnabled,
       questionNumberStart: input.questionNumberStart,
       questionNumberFontPt: input.questionNumberFontPt,
-      yOverridesByQuestionId: input.yOverridesByQuestionId,
+      // insert_at öncelikli sıra; eski Y ile sırayı ezme
+      yOverridesByQuestionId: {},
+      sections: input.sections,
     });
-    if (placed.ok) layout = placed.layout;
+    if (placed.ok) {
+      layout = placed.layout;
+      for (const id of Object.keys(placed.yTopUpdatesByQuestionId)) {
+        packedQuestionIds.add(id);
+      }
+    }
   }
 
   const yToApply = input.yOverridesByQuestionId;
@@ -1323,6 +1384,8 @@ export function finalizePreviewLayout(input: {
     layout = layout.map((item) => {
       const q = input.questions.find((x) => x.order_index === item.order_index);
       if (!q) return item;
+      // Sütun taşıma ile yeniden paketlenmiş sorularda stale Y çakışma yaratır
+      if (packedQuestionIds.has(q.id)) return item;
       const yt = yToApply[q.id];
       if (yt == null) return item;
       const dy = yt - item.y_top_pt;
@@ -1396,5 +1459,6 @@ export function finalizePreviewLayout(input: {
     questionNumberStart: input.questionNumberStart,
     questionNumberFontPt: input.questionNumberFontPt,
     questions: input.questions,
+    sections: input.sections,
   });
 }

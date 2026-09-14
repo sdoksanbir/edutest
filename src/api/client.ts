@@ -1,9 +1,12 @@
 import type {
+  BankQuestionItem,
+  BankSettings,
   CropBox,
   DraftInfo,
   PdfFolder,
   PdfItem,
   QuestionContentType,
+  QuestionDifficulty,
   QuestionItem,
 } from '../types'
 
@@ -65,6 +68,8 @@ export type LayoutItem = {
     font_pt: number
     box_h: number
     gap_after: number
+    start_new_page?: boolean
+    restart_numbering?: boolean
   }
   display_number?: number | null
   content_type?: string
@@ -143,6 +148,10 @@ export const api = {
       list: () => invoke<{ folders: PdfFolder[] }>('pdfs:folders:list'),
       create: (name: string, parentId?: string | null) =>
         invoke<{ folder: PdfFolder }>('pdfs:folders:create', { name, parentId }),
+      rename: (folderId: string, name: string) =>
+        invoke<{ folder: PdfFolder }>('pdfs:folders:rename', { folderId, name }),
+      move: (folderId: string, parentId?: string | null) =>
+        invoke<{ folder: PdfFolder }>('pdfs:folders:move', { folderId, parentId }),
       delete: (folderId: string) => invoke<{ ok: boolean }>('pdfs:folders:delete', { folderId }),
     },
     getPageImageDataUrl: async (
@@ -195,6 +204,66 @@ export const api = {
       return `data:image/png;base64,${b64}`
     },
     imageUrl: (id: string) => `tq-question://${id}`,
+  },
+
+  bankQuestions: {
+    getSettings: () => invoke<{ settings: BankSettings }>('bankQuestions:settings:get'),
+    updateSettings: (patch: Partial<BankSettings>) =>
+      invoke<{ settings: BankSettings }>('bankQuestions:settings:update', patch),
+    addDers: (name: string) =>
+      invoke<{ settings: BankSettings }>('bankQuestions:ders:add', { name }),
+    addKonu: (ders: string, konu: string) =>
+      invoke<{ settings: BankSettings }>('bankQuestions:konu:add', { ders, konu }),
+    list: (filter?: {
+      ders?: string
+      konu?: string | null
+      difficulty?: QuestionDifficulty | null
+      search?: string
+      folderId?: string | null
+    }) => invoke<{ items: BankQuestionItem[] }>('bankQuestions:list', filter ?? {}),
+    create: (payload: {
+      ders: string
+      konu?: string | null
+      difficulty?: QuestionDifficulty | null
+      folder_id?: string | null
+      source_pdf_id: string
+      source_pdf_filename: string
+      page_number: number
+      crop: CropBox
+      answer_key?: string
+      content_type?: QuestionContentType
+      remove_background?: boolean
+      image_base64: string
+      layoutMode?: QuestionItem['layoutMode']
+      manualScale?: number
+      normalizationScale?: number
+      capture?: QuestionItem['capture']
+      fontReference?: QuestionItem['fontReference']
+    }) => invoke<BankQuestionItem>('bankQuestions:create', payload),
+    update: (
+      id: string,
+      patch: {
+        ders?: string
+        konu?: string | null
+        difficulty?: QuestionDifficulty | null
+        folder_id?: string | null
+        image_base64?: string
+        remove_background?: boolean
+        answer_key?: string
+      },
+    ) => invoke<BankQuestionItem>('bankQuestions:update', { id, patch }),
+    delete: (id: string) => invoke<{ ok: boolean }>('bankQuestions:delete', { id }),
+    deleteMany: (ids: string[]) =>
+      invoke<{ ok: boolean }>('bankQuestions:deleteMany', { ids }),
+    duplicate: (id: string, folderId?: string | null) =>
+      invoke<BankQuestionItem>('bankQuestions:duplicate', { id, folderId }),
+    moveMany: (ids: string[], folderId: string | null) =>
+      invoke<{ items: BankQuestionItem[] }>('bankQuestions:moveMany', { ids, folderId }),
+    getImageDataUrl: async (id: string) => {
+      const b64 = await invoke<string>('bankQuestions:getImage', { id })
+      if (!b64) return ''
+      return `data:image/png;base64,${b64}`
+    },
   },
 
   drafts: {
@@ -299,5 +368,26 @@ export const api = {
       const { blob } = await api.exports.fromQuestions(payload)
       return { path: URL.createObjectURL(blob) }
     },
+  },
+
+  storage: {
+    info: () =>
+      invoke<{
+        path: string
+        bankQuestionCount: number
+        pdfCount: number
+        draftCount: number
+        bankImageCount: number
+        sessionImageCount: number
+        approxBytes: number
+      }>('storage:info'),
+    openFolder: () => invoke<{ ok: boolean }>('storage:openFolder'),
+    exportBackup: () =>
+      invoke<{ canceled: true } | { canceled: false; path: string }>('storage:exportBackup'),
+    importBackup: () =>
+      invoke<
+        { canceled: true } | { canceled: false; path: string; rewrittenPaths: boolean }
+      >('storage:importBackup'),
+    wipeAll: () => invoke<{ ok: true }>('storage:wipeAll'),
   },
 }

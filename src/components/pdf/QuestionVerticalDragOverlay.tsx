@@ -1328,14 +1328,18 @@ export default function QuestionVerticalDragOverlay({
             )}
             {showControls && (
               <>
-                {onLayoutModeChange && columns > 1 && (
+                {onLayoutModeChange && (
                   <div
                     className="absolute left-0 top-0 z-20 flex -translate-y-full gap-0 overflow-hidden rounded border border-slate-400 bg-white/95 text-[0.6rem] font-bold shadow-sm"
                     data-question-layout-mode
                   >
                     <button
                       type="button"
-                      title="Dar — tek sütun"
+                      title={
+                        columns <= 1
+                          ? "Dar — iki sütuna geçirip bu soruyu tek sütuna yerleştir (hibrit)"
+                          : "Dar — tek sütun (geniş soruların altında iki sütun paketlenir)"
+                      }
                       aria-pressed={qItem?.layoutMode !== "full-width"}
                       onClick={(e) => {
                         e.preventDefault();
@@ -1353,7 +1357,11 @@ export default function QuestionVerticalDragOverlay({
                     </button>
                     <button
                       type="button"
-                      title="Geniş — tüm sütunlara yay"
+                      title={
+                        columns <= 1
+                          ? "Geniş — sayfa genişliği; altındaki dar sorular iki sütuna ayrılır"
+                          : "Geniş — tüm sütunlara yay (üstte tek bant / hibrit)"
+                      }
                       aria-pressed={qItem?.layoutMode === "full-width"}
                       onClick={(e) => {
                         e.preventDefault();

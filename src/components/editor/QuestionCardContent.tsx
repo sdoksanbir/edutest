@@ -1,6 +1,16 @@
 import type { QuestionItem } from "../../types";
 import QuestionAnswerChips from "./QuestionAnswerChips";
 import { useQuestionImageSrc } from "../../hooks/useQuestionImageSrc";
+import {
+  questionDifficultyCardClass,
+  questionDifficultyNumberBadgeClass,
+  QUESTION_DIFFICULTY_LABEL,
+} from "../../utils/questionDifficulty";
+import {
+  QUESTION_CARD_IMAGE_BOX_CLASS,
+  QUESTION_CARD_IMAGE_CLASS,
+  QUESTION_CARD_IMAGE_PLACEHOLDER_CLASS,
+} from "../../utils/questionCardLayout";
 
 type QuestionCardContentProps = {
   question: QuestionItem;
@@ -19,54 +29,65 @@ export default function QuestionCardContent({
 }: QuestionCardContentProps) {
   const src = useQuestionImageSrc(question);
   const altText = displayNumber != null ? `Soru ${displayNumber}` : "Açıklama görseli";
+  const difficulty = question.difficulty ?? null;
 
   return (
     <article
-      className={`min-w-0 rounded-xl border p-1.5 ${
-        isExplanation
-          ? "border-teal-400/55 bg-gradient-to-br from-teal-50/90 via-white to-slate-50/80 shadow-[0_6px_18px_rgba(13,148,136,0.12)] ring-1 ring-teal-200/40"
-          : "border-slate-200 bg-white shadow-[0_6px_18px_rgba(15,23,42,0.12)]"
-      }`}
+      className={`flex h-full min-w-0 flex-col overflow-hidden rounded-xl border p-1 ${questionDifficultyCardClass(difficulty, isExplanation)}`}
     >
-      <div className="mb-1 flex min-w-0 items-center justify-between gap-1">
-        <div className="flex w-[1.375rem] shrink-0 items-center justify-start">
+      <div className="flex min-w-0 items-center justify-between gap-1.5 rounded-t-lg border border-slate-700 bg-slate-800 px-1.5 py-1 shadow-inner">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
           {displayNumber != null ? (
-            <span className="text-[0.6875rem] font-bold tabular-nums leading-none text-orange-600">
-              {displayNumber}.
+            <span className={questionDifficultyNumberBadgeClass(difficulty)}>
+              {displayNumber}
             </span>
           ) : isExplanation ? (
-            <span className="block h-4 w-1 shrink-0 rounded-sm bg-teal-500 shadow-sm" aria-hidden />
+            <span className="block h-5 w-1.5 shrink-0 rounded-sm bg-teal-400 shadow-sm" aria-hidden />
+          ) : null}
+          {!isExplanation && difficulty ? (
+            <span
+              className={`truncate rounded px-1.5 py-0.5 text-[0.6rem] font-bold uppercase tracking-wide ${
+                difficulty === "kolay"
+                  ? "bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400/40"
+                  : difficulty === "orta"
+                    ? "bg-amber-500/25 text-amber-200 ring-1 ring-amber-400/40"
+                    : "bg-rose-500/25 text-rose-200 ring-1 ring-rose-400/40"
+              }`}
+            >
+              {QUESTION_DIFFICULTY_LABEL[difficulty]}
+            </span>
           ) : null}
         </div>
         {!hideActions ? (
-          <div className="flex shrink-0 gap-0.5" aria-hidden>
-            <span className="h-4 w-4 rounded border border-orange-300/80 bg-orange-50" />
-            <span className="h-4 w-4 rounded border border-rose-300/80 bg-rose-50" />
+          <div className="flex shrink-0 gap-1" aria-hidden>
+            <span className="h-6 w-6 rounded-md border border-sky-400/70 bg-slate-700" />
+            <span className="h-6 w-6 rounded-md border border-orange-400/70 bg-slate-700" />
+            <span className="h-6 w-6 rounded-md border border-rose-400/70 bg-slate-700" />
           </div>
         ) : null}
       </div>
-      <div className="min-w-0">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {src ? (
-          <img
-            src={src}
-            alt={altText}
-            className={`block h-[4.25rem] w-full object-cover sm:h-[4.5rem] ${
-              isExplanation ? "rounded-lg" : "rounded-t-lg"
-            }`}
-          />
+          <div className={`${QUESTION_CARD_IMAGE_BOX_CLASS} rounded-none border-x border-slate-200`}>
+            <img src={src} alt={altText} className={QUESTION_CARD_IMAGE_CLASS} />
+          </div>
         ) : (
-          <div className="flex h-[4.25rem] items-center justify-center bg-slate-100 text-xs text-slate-400 sm:h-[4.5rem]">
+          <div
+            className={`${QUESTION_CARD_IMAGE_PLACEHOLDER_CLASS} rounded-none border-x border-slate-200`}
+          >
             Yükleniyor…
           </div>
         )}
         {!isExplanation ? (
-          <div className="rounded-b-lg border border-orange-200/80 bg-orange-50/90 px-1 py-0.5 shadow-inner">
+          <div className="mt-auto rounded-b-lg border border-slate-700 bg-slate-800 px-1 py-0.5 shadow-inner">
             <QuestionAnswerChips
               questionId={question.id}
               selected={(question.answer_key || undefined) as import("../../store/editorStore").AnswerOption}
             />
           </div>
-        ) : null}
+        ) : (
+          <div className="mt-auto h-1 rounded-b-lg border border-t-0 border-slate-700 bg-slate-800" aria-hidden />
+        )}
       </div>
     </article>
   );

@@ -5,19 +5,36 @@
 import { useEffect, useState } from "react";
 import { useEditorStore } from "../../store/editorStore";
 import type { SectionRange } from "../../types";
-import { ColorSwatchPicker } from "../preview/ColorSwatchPicker";
+import {
+  ColorSwatchPicker,
+  SECTION_DEFAULT_FILL,
+  SECTION_DEFAULT_TEXT,
+  SECTION_FILL_PALETTE,
+  SECTION_LINE_NONE,
+  SECTION_STYLE_COMBOS,
+  SECTION_TEXT_PALETTE,
+  isSectionLineEnabled,
+  suggestedSectionTextColor,
+} from "../preview/ColorSwatchPicker";
 
 type SectionAddModalProps = {
   isOpen: boolean;
   onClose: () => void;
   /** Seçili soru (order_index). Modal açıldığında bu soru bir bölümün başlangıcıysa form doldurulur. */
   selectedQuestion?: number;
+  /** Shift ile seçilen aralık — yeni bölüm için başlangıç/bitiş önceden doldurulur */
+  initialStartIdx?: number | null;
+  initialEndIdx?: number | null;
 };
+
+const DEFAULT_LINE_WHEN_ON = "#0A1931";
 
 export default function SectionAddModal({
   isOpen,
   onClose,
   selectedQuestion = -1,
+  initialStartIdx = null,
+  initialEndIdx = null,
 }: SectionAddModalProps) {
   const questions = useEditorStore((s) => s.questions);
   const sections = useEditorStore((s) => s.sections);
@@ -32,10 +49,12 @@ export default function SectionAddModal({
   const [endIdx, setEndIdx] = useState<number | null>(null);
   const [restartNumbering, setRestartNumbering] = useState(false);
   const [startNewPage, setStartNewPage] = useState(false);
-  const [fillColor, setFillColor] = useState("#FFFFFF");
-  const [textColor, setTextColor] = useState("#000000");
-  const [lineColor, setLineColor] = useState("#000000");
+  const [fillColor, setFillColor] = useState(SECTION_DEFAULT_FILL);
+  const [textColor, setTextColor] = useState(SECTION_DEFAULT_TEXT);
+  const [lineEnabled, setLineEnabled] = useState(false);
+  const [lineColor, setLineColor] = useState(DEFAULT_LINE_WHEN_ON);
   const [fontPt, setFontPt] = useState(12);
+  const [overlapWarning, setOverlapWarning] = useState<string | null>(null);
 
   const totalQuestions = questions.length;
 
@@ -47,10 +66,47 @@ export default function SectionAddModal({
     setEndIdx(null);
     setRestartNumbering(false);
     setStartNewPage(false);
-    setFillColor("#FFFFFF");
-    setTextColor("#000000");
-    setLineColor("#000000");
+    setFillColor(SECTION_DEFAULT_FILL);
+    setTextColor(SECTION_DEFAULT_TEXT);
+    setLineEnabled(false);
+    setLineColor(DEFAULT_LINE_WHEN_ON);
     setFontPt(12);
+    setOverlapWarning(null);
+  };
+
+  const applyFillWithMatchedText = (fill: string) => {
+    setFillColor(fill);
+    setTextColor(suggestedSectionTextColor(fill));
+  };
+
+  const setStartIdxSafe = (v: number | null) => {
+    setOverlapWarning(null);
+    setStartIdx(v);
+  };
+
+  const setEndIdxSafe = (v: number | null) => {
+    setOverlapWarning(null);
+    setEndIdx(v);
+  };
+
+  /** 0-based indeksleri "3–5, 8" gibi okunaklı metne çevir */
+  const formatQuestionRanges = (indices: number[]): string => {
+    if (indices.length === 0) return "";
+    const sorted = [...indices].sort((a, b) => a - b);
+    const parts: string[] = [];
+    let from = sorted[0]!;
+    let to = from;
+    for (let i = 1; i < sorted.length; i++) {
+      const n = sorted[i]!;
+      if (n === to + 1) {
+        to = n;
+        continue;
+      }
+      parts.push(from === to ? `Soru ${from + 1}` : `Soru ${from + 1}–${to + 1}`);
+      from = to = n;
+    }
+    parts.push(from === to ? `Soru ${from + 1}` : `Soru ${from + 1}–${to + 1}`);
+    return parts.join(", ");
   };
 
   // Modal açıldığında: seçili soru bir bölümün başlangıcıysa formu doldur (_sync_section_panel_for_selected_question)
@@ -58,6 +114,39 @@ export default function SectionAddModal({
     if (!isOpen) return;
     resetForm();
     if (totalQuestions === 0) return;
+
+    const hasRange =
+      initialStartIdx != null &&
+      initialEndIdx != null &&
+      Number.isFinite(initialStartIdx) &&
+      Number.isFinite(initialEndIdx);
+
+    if (hasRange) {
+      const start = Math.max(0, Math.min(initialStartIdx!, totalQuestions - 1));
+      const end = Math.max(start, Math.min(initialEndIdx!, totalQuestions - 1));
+      const match = sections.find((r) => r.start_idx === start && r.end_idx === end);
+      if (match) {
+        const si = sections.indexOf(match);
+        setMode("edit");
+        setEditIndex(si);
+        setTitle(match.title);
+        setStartIdx(match.start_idx);
+        setEndIdx(match.end_idx);
+        setRestartNumbering(match.restart_numbering ?? false);
+        setStartNewPage(match.start_new_page ?? false);
+        setFillColor(match.fill_color ?? SECTION_DEFAULT_FILL);
+        setTextColor(match.text_color ?? SECTION_DEFAULT_TEXT);
+        const lineOn = isSectionLineEnabled(match.line_color);
+        setLineEnabled(lineOn);
+        setLineColor(lineOn ? String(match.line_color) : DEFAULT_LINE_WHEN_ON);
+        setFontPt(match.font_pt ?? 12);
+      } else {
+        setStartIdx(start);
+        setEndIdx(end);
+      }
+      return;
+    }
+
     if (selectedQuestion < 0) return;
     const idx = selectedQuestion;
     const match = sections.find((r) => r.start_idx === idx);
@@ -70,15 +159,17 @@ export default function SectionAddModal({
       setEndIdx(match.end_idx);
       setRestartNumbering(match.restart_numbering ?? false);
       setStartNewPage(match.start_new_page ?? false);
-      setFillColor(match.fill_color ?? "#FFFFFF");
-      setTextColor(match.text_color ?? "#000000");
-      setLineColor(match.line_color ?? "#000000");
+      setFillColor(match.fill_color ?? SECTION_DEFAULT_FILL);
+      setTextColor(match.text_color ?? SECTION_DEFAULT_TEXT);
+      const lineOn = isSectionLineEnabled(match.line_color);
+      setLineEnabled(lineOn);
+      setLineColor(lineOn ? String(match.line_color) : DEFAULT_LINE_WHEN_ON);
       setFontPt(match.font_pt ?? 12);
     } else {
       setStartIdx(0);
       setEndIdx(Math.max(0, totalQuestions - 1));
     }
-  }, [isOpen, totalQuestions, selectedQuestion]); // sections değişince sync etmeyiz - sadece açılışta
+  }, [isOpen, totalQuestions, selectedQuestion, initialStartIdx, initialEndIdx]); // sections değişince sync etmeyiz - sadece açılışta
 
   const handleApply = () => {
     const s = startIdx ?? 0;
@@ -107,13 +198,14 @@ export default function SectionAddModal({
       }
       if (overlaps.length > 0) {
         const uniq = [...new Set(overlaps)].sort((a, b) => a - b);
-        const qNums = uniq.map((i) => i + 1).join(", ");
-        alert(
-          `Yeni bölüm aralığı mevcut bir bölüm ile çakışıyor.\nÇakışan sorular: ${qNums}\nLütfen başka bir aralık seçin.`
+        setOverlapWarning(
+          `Bu aralık mevcut bir bölümle çakışıyor (${formatQuestionRanges(uniq)}). Başlangıç veya bitiş sorusunu değiştirip tekrar deneyin.`,
         );
         return;
       }
     }
+
+    setOverlapWarning(null);
 
     const section: SectionRange = {
       start_idx: start,
@@ -123,7 +215,7 @@ export default function SectionAddModal({
       start_new_page: startNewPage,
       fill_color: fillColor,
       text_color: textColor,
-      line_color: lineColor,
+      line_color: lineEnabled ? lineColor : SECTION_LINE_NONE,
       font_pt: fontPt,
     };
 
@@ -146,10 +238,13 @@ export default function SectionAddModal({
     setEndIdx(sec.end_idx);
     setRestartNumbering(sec.restart_numbering ?? false);
     setStartNewPage(sec.start_new_page ?? false);
-    setFillColor(sec.fill_color ?? "#FFFFFF");
-    setTextColor(sec.text_color ?? "#000000");
-    setLineColor(sec.line_color ?? "#000000");
+    setFillColor(sec.fill_color ?? SECTION_DEFAULT_FILL);
+    setTextColor(sec.text_color ?? SECTION_DEFAULT_TEXT);
+    const lineOn = isSectionLineEnabled(sec.line_color);
+    setLineEnabled(lineOn);
+    setLineColor(lineOn ? String(sec.line_color) : DEFAULT_LINE_WHEN_ON);
     setFontPt(sec.font_pt ?? 12);
+    setOverlapWarning(null);
   };
 
   const handleNewMode = () => {
@@ -160,10 +255,12 @@ export default function SectionAddModal({
     setEndIdx(endIdx ?? Math.max(0, totalQuestions - 1));
     setRestartNumbering(false);
     setStartNewPage(false);
-    setFillColor("#FFFFFF");
-    setTextColor("#000000");
-    setLineColor("#000000");
+    setFillColor(SECTION_DEFAULT_FILL);
+    setTextColor(SECTION_DEFAULT_TEXT);
+    setLineEnabled(false);
+    setLineColor(DEFAULT_LINE_WHEN_ON);
     setFontPt(12);
+    setOverlapWarning(null);
   };
 
   const sortedSections = [...sections].sort((a, b) => a.start_idx - b.start_idx);
@@ -228,11 +325,13 @@ export default function SectionAddModal({
                 <select
                   value={startIdx ?? ""}
                   onChange={(e) =>
-                    setStartIdx(
+                    setStartIdxSafe(
                       e.target.value === "" ? null : Number(e.target.value)
                     )
                   }
-                  className="w-full rounded border border-slate-600 bg-slate-700 px-2 py-1.5 text-sm text-slate-100"
+                  className={`w-full rounded border bg-slate-700 px-2 py-1.5 text-sm text-slate-100 ${
+                    overlapWarning ? "border-amber-500/70" : "border-slate-600"
+                  }`}
                 >
                   <option value="">Seç</option>
                   {Array.from({ length: totalQuestions }, (_, i) => (
@@ -247,11 +346,13 @@ export default function SectionAddModal({
                 <select
                   value={endIdx ?? ""}
                   onChange={(e) =>
-                    setEndIdx(
+                    setEndIdxSafe(
                       e.target.value === "" ? null : Number(e.target.value)
                     )
                   }
-                  className="w-full rounded border border-slate-600 bg-slate-700 px-2 py-1.5 text-sm text-slate-100"
+                  className={`w-full rounded border bg-slate-700 px-2 py-1.5 text-sm text-slate-100 ${
+                    overlapWarning ? "border-amber-500/70" : "border-slate-600"
+                  }`}
                 >
                   <option value="">Seç</option>
                   {Array.from({ length: totalQuestions }, (_, i) => (
@@ -265,6 +366,33 @@ export default function SectionAddModal({
             <p className="mt-1 text-xs text-slate-500">
               Toplam {totalQuestions} soru (1–{totalQuestions})
             </p>
+            {overlapWarning && (
+              <div
+                role="alert"
+                className="mt-2.5 flex gap-2.5 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2.5"
+              >
+                <span
+                  className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-500/25 text-[11px] font-bold text-amber-300"
+                  aria-hidden
+                >
+                  !
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-amber-200">Aralık çakışması</p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-amber-100/85">
+                    {overlapWarning}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOverlapWarning(null)}
+                  className="shrink-0 self-start rounded-md px-1.5 py-0.5 text-xs text-amber-200/80 hover:bg-amber-500/20 hover:text-amber-100"
+                  aria-label="Uyarıyı kapat"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Soru Numaraları - original-desktop section_rb_continue, section_rb_restart */}
@@ -302,36 +430,91 @@ export default function SectionAddModal({
             Soruları yeni sayfadan başlat
           </label>
 
-          {/* Bölüm Stili - original-desktop sectionStyleBox */}
+          {/* Bölüm Stili — uyumlu dolgu/yazı + çizgi varsayılan kapalı */}
           <div className="rounded-lg border border-slate-600 bg-slate-700/50 p-3">
-            <p className="mb-2 text-xs font-medium text-slate-400">Bölüm Stili</p>
-            <div className="space-y-2.5">
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">Dolgu</label>
+            <p className="mb-3 text-xs font-medium text-slate-400">Bölüm Stili</p>
+            <div className="mb-3">
+              <p className="mb-1.5 text-[11px] text-slate-500">Hazır kombinler</p>
+              <div className="flex flex-wrap gap-1.5">
+                {SECTION_STYLE_COMBOS.map((combo) => {
+                  const active =
+                    fillColor.toUpperCase() === combo.fill.toUpperCase() &&
+                    textColor.toUpperCase() === combo.text.toUpperCase();
+                  return (
+                    <button
+                      key={combo.label}
+                      type="button"
+                      title={combo.label}
+                      onClick={() => {
+                        setFillColor(combo.fill);
+                        setTextColor(combo.text);
+                      }}
+                      className={`h-7 min-w-[2.75rem] rounded-md border px-2 text-[10px] font-bold shadow-sm transition ${
+                        active
+                          ? "ring-2 ring-blue-400 ring-offset-1 ring-offset-slate-800"
+                          : "border-slate-500/60 hover:brightness-110"
+                      }`}
+                      style={{ backgroundColor: combo.fill, color: combo.text }}
+                    >
+                      Aa
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="min-w-[3.5rem] text-xs font-medium text-slate-300">Dolgu</span>
                 <ColorSwatchPicker
                   color={fillColor}
-                  onColorChange={setFillColor}
+                  onColorChange={applyFillWithMatchedText}
+                  palette={SECTION_FILL_PALETTE}
                   customTitle="Dolgu rengi"
+                  className="justify-end"
                 />
               </div>
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">Yazı</label>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="min-w-[3.5rem] text-xs font-medium text-slate-300">Yazı</span>
                 <ColorSwatchPicker
                   color={textColor}
                   onColorChange={setTextColor}
+                  palette={SECTION_TEXT_PALETTE}
                   customTitle="Yazı rengi"
+                  className="justify-end"
                 />
               </div>
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">Çizgi</label>
-                <ColorSwatchPicker
-                  color={lineColor}
-                  onColorChange={setLineColor}
-                  customTitle="Çizgi rengi"
-                />
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={lineEnabled}
+                    onChange={(e) => setLineEnabled(e.target.checked)}
+                    className="rounded accent-blue-500"
+                  />
+                  Çizgi
+                </label>
+                {lineEnabled && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 pl-6">
+                    <span className="min-w-[3.5rem] text-xs font-medium text-slate-300">Renk</span>
+                    <ColorSwatchPicker
+                      color={lineColor}
+                      onColorChange={setLineColor}
+                      palette={SECTION_FILL_PALETTE}
+                      customTitle="Çizgi rengi"
+                      className="justify-end"
+                    />
+                  </div>
+                )}
               </div>
             </div>
-            <div className="mt-2">
+            <div
+              className="mt-3 flex h-9 items-center justify-center rounded-md border border-slate-600/80 text-sm font-bold"
+              style={{ backgroundColor: fillColor, color: textColor }}
+              aria-hidden
+            >
+              {(title.trim() || "Bölüm önizleme").slice(0, 28)}
+            </div>
+            <div className="mt-3">
               <label className="mb-0.5 block text-xs text-slate-500">Yazı boyutu (pt)</label>
               <input
                 type="number"

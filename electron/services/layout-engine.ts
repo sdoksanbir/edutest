@@ -46,6 +46,10 @@ import {
   scratchCellPt,
   SCRATCH_CELL_MM,
 } from './question-scratch-grid.js'
+import {
+  isWrittenLayoutQuestion,
+  writtenQuestionDrawHeightPt,
+} from './written-question-layout.js'
 
 export type LayoutRow = {
   order_index: number
@@ -70,7 +74,24 @@ export type LayoutRow = {
   /** true: içerik kutusunu kaplar (çok sütun satırını kapatır) */
   span_full_width?: boolean
   layout_mode?: 'single-column' | 'full-width' | 'auto'
+  /** Bölüm başlığı (soru bloğunun üstünde) */
+  section?: SectionHeaderMeta
 }
+
+export type SectionHeaderMeta = {
+  title: string
+  fill_color: string
+  text_color: string
+  line_color: string
+  font_pt: number
+  box_h: number
+  gap_after: number
+  start_new_page?: boolean
+  restart_numbering?: boolean
+}
+
+const SECTION_BOX_H_PT = 22
+const SECTION_GAP_AFTER_PT = 6
 
 type QuestionBlock = {
   order_index: number
@@ -88,6 +109,9 @@ type QuestionBlock = {
   layout_mode: 'single-column' | 'full-width' | 'auto'
   /** Üst dış fasikül başlığı için y_top → img_y_top ofseti */
   badge_top_reserve_pt?: number
+  /** Bölüm başlığı yüksekliği (box_h + gap_after) — img_y_top ofseti */
+  section_reserve_pt?: number
+  section?: SectionHeaderMeta
 }
 
 type LayoutEntry = QuestionBlock & {
@@ -358,6 +382,33 @@ export function computeGeometry(payload: Record<string, unknown>, pageNum: numbe
   }
 }
 
+function parseSectionHeadersByStartIdx(
+  payload: Record<string, unknown>,
+): Map<number, SectionHeaderMeta> {
+  const raw = payload.sections
+  const map = new Map<number, SectionHeaderMeta>()
+  if (!Array.isArray(raw)) return map
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue
+    const s = entry as Record<string, unknown>
+    const startIdx = Number(s.start_idx)
+    if (!Number.isFinite(startIdx)) continue
+    const fontRaw = Number(s.font_pt)
+    map.set(startIdx, {
+      title: String(s.title ?? 'Bölüm').trim() || 'Bölüm',
+      fill_color: String(s.fill_color ?? '#F34A2F'),
+      text_color: String(s.text_color ?? '#FFFFFF'),
+      line_color: String(s.line_color ?? 'none'),
+      font_pt: Number.isFinite(fontRaw) && fontRaw > 0 ? fontRaw : 12,
+      box_h: SECTION_BOX_H_PT,
+      gap_after: SECTION_GAP_AFTER_PT,
+      start_new_page: s.start_new_page === true,
+      restart_numbering: s.restart_numbering === true,
+    })
+  }
+  return map
+}
+
 /** Geçiş 1: kesin genişlik/yükseklik (single veya full-width). */
 function prepareQuestionBlocks(
   questions: Array<Record<string, unknown>>,
@@ -370,6 +421,7 @@ function prepareQuestionBlocks(
   const sorted = [...questions].sort(
     (a, b) => Number(a.order_index ?? 0) - Number(b.order_index ?? 0),
   )
+  const sectionByStart = parseSectionHeadersByStartIdx(payload)
 
   const blocks: QuestionBlock[] = []
   const numImageGapPt = questionNumberImageGapPt(payload)
@@ -385,6 +437,9 @@ function prepareQuestionBlocks(
 
   for (let i = 0; i < sorted.length; i++) {
     const q = sorted[i]!
+    const orderIndex = Number(q.order_index ?? i)
+    const section = sectionByStart.get(orderIndex)
+    const sectionReservePt = section ? section.box_h + section.gap_after : 0
     const emptyRowsRaw = Number(
       (q as { fasikulEmptyRows?: unknown }).fasikulEmptyRows ?? 0,
     )
@@ -416,8 +471,8 @@ function prepareQuestionBlocks(
       const badgeTopReservePt = fasikulFrameBadgeTopReservePt(q.fasikulFrame)
       const emptyGap = fasikulEmptyBoxBottomGapPt(FASIKUL_SCRATCH_CELL_MM)
       blocks.push({
-        order_index: Number(q.order_index ?? i),
-        block_h: Math.max(12, drawH + badgeTopReservePt),
+        order_index: orderIndex,
+        block_h: Math.max(12, drawH + badgeTopReservePt + sectionReservePt),
         draw_w: drawW,
         draw_h: drawH,
         preferred_gap_pt: emptyGap,
@@ -453,6 +508,55 @@ function prepareQuestionBlocks(
         span_full_width: false,
         layout_mode: 'single-column',
         badge_top_reserve_pt: badgeTopReservePt,
+        section_reserve_pt: sectionReservePt > 0 ? sectionReservePt : undefined,
+        section,
+      })
+      continue
+    }
+
+    /** Yazılı açık uçlu vb. — görsel yok; rozet + metin + cevap satırları */
+    if (isWrittenLayoutQuestion(q)) {
+      const drawW = Math.max(40, singleAvailW)
+      const drawH = Math.max(28, writtenQuestionDrawHeightPt(q, drawW))
+      const writtenGap = mmToPt(6)
+      blocks.push({
+        order_index: orderIndex,
+        block_h: Math.max(12, drawH + sectionReservePt),
+        draw_w: drawW,
+        draw_h: drawH,
+        preferred_gap_pt: Math.max(writtenGap, Math.min(qPreferredGap, mmToPt(10))),
+        min_gap_pt: writtenGap,
+        image_base64: undefined,
+        question_id: String(q.id ?? ''),
+        answer_key: String(q.answer_key ?? '').trim().toUpperCase() || '?',
+        content_type: String(q.content_type ?? 'question'),
+        scale_diag: buildLayoutScaleDiagMeta({
+          sourceWpx: 1,
+          sourceHpx: 1,
+          availWPt: drawW,
+          requestedScale: 1,
+          finalDrawWPt: drawW,
+          finalDrawHPt: drawH,
+          growOverflowTolerance: 1,
+          allowSlightOverflow: false,
+          maxAllowedWPt: drawW,
+          nativeWidthPt: drawW,
+          nativeHeightPt: drawH,
+          pixelsPerPdfPoint: 1,
+          manualScale: 1,
+          normalizationScale: 1,
+          metadataSource: 'legacy-fallback',
+          layoutMode: 'single-column',
+          singleColumnFulfillment: 1,
+          fullWidthAvailW: fullWidthAvailW,
+          fullWidthAppliedScale: 1,
+          fullWidthFulfillment: 1,
+          layoutRecommendation: 'SINGLE_COLUMN',
+        }),
+        span_full_width: false,
+        layout_mode: 'single-column',
+        section_reserve_pt: sectionReservePt > 0 ? sectionReservePt : undefined,
+        section,
       })
       continue
     }
@@ -533,8 +637,8 @@ function prepareQuestionBlocks(
     }
 
     blocks.push({
-      order_index: Number(q.order_index ?? i),
-      block_h: Math.max(12, drawH + badgeTopReservePt),
+      order_index: orderIndex,
+      block_h: Math.max(12, drawH + badgeTopReservePt + sectionReservePt),
       draw_w: drawW,
       draw_h: drawH,
       preferred_gap_pt: qPreferredGap,
@@ -547,6 +651,8 @@ function prepareQuestionBlocks(
       span_full_width: useFullWidth,
       layout_mode: metrics.layoutMode,
       badge_top_reserve_pt: badgeTopReservePt,
+      section_reserve_pt: sectionReservePt > 0 ? sectionReservePt : undefined,
+      section,
     })
   }
   return blocks
@@ -655,12 +761,27 @@ function backfillColumnsInReadingOrder(
   const fixedInterGaps = useFasikulFixedInterGaps(payload)
   const slots = buildColumnSlots(entries, payload)
 
+  /** start_new_page bölümleri: bu order ve sonrası daha erken sayfaya çekilmesin */
+  const sectionPageFloor = new Map<number, number>()
+  for (const e of entries) {
+    if (!e.section?.start_new_page) continue
+    sectionPageFloor.set(e.order_index, e.page_num)
+  }
+  const minAllowedPage = (orderIndex: number): number => {
+    let floor = 1
+    for (const [startOrder, page] of sectionPageFloor) {
+      if (startOrder <= orderIndex) floor = Math.max(floor, page)
+    }
+    return floor
+  }
+
   for (let i = 0; i < slots.length - 1; i++) {
     const target = slots[i]!
     const source = slots[i + 1]!
 
     while (source.entries.length > 0) {
       const candidate = source.entries[0]!
+      if (target.pageNum < minAllowedPage(candidate.order_index)) break
       const trial = [...target.entries, candidate]
       if (!columnBufferFits(trial, target.availableHeight, columnBottomMinPt)) break
 
@@ -830,6 +951,27 @@ function computeLayoutEntriesFlexible(
   while (i < questionData.length) {
     const q = questionData[i]!
 
+    if (q.section?.start_new_page) {
+      const pageHasPlaced = result.some((r) => r.page_num === pageNum)
+      const midColumnWork = colBuffer.length > 0 || colIdx > 0
+      const notAtColTop =
+        Math.abs(colTop - contentTopForCol(pageNum, colIdx)) > LAYOUT_EPS
+      if (pageHasPlaced || midColumnWork || notAtColTop) {
+        if (colBuffer.length > 0) {
+          flushColumn(
+            computeAppliedGaps(colBuffer, availableHeight, columnBottomMinPt, fixedInterGaps),
+          )
+        }
+        pageNum += 1
+        colIdx = 0
+        colYTops = Array.from({ length: cols }, (_, c) => contentTopForCol(pageNum, c))
+        const gNew = computeGeometry(payload, pageNum)
+        colTop = contentTopForColumn(payload, pageNum, 0, gNew.page_h_pt, gNew.page_w_pt, gNew.cols)
+        colYTops[0] = colTop
+        availableHeight = colTop - gNew.contentBottom
+      }
+    }
+
     if (q.span_full_width) {
       placeFullWidth(q)
       i += 1
@@ -876,8 +1018,22 @@ function applyDisplayNumbers(entries: LayoutEntry[], payload: Record<string, unk
   const qByOrder = new Map(
     questions.map((q) => [Number(q.order_index ?? -1), q] as const),
   )
+  const restartAt = new Set<number>()
+  const rawSections = payload.sections
+  if (Array.isArray(rawSections)) {
+    for (const entry of rawSections) {
+      if (!entry || typeof entry !== 'object') continue
+      const s = entry as Record<string, unknown>
+      if (s.restart_numbering === true && Number.isFinite(Number(s.start_idx))) {
+        restartAt.add(Number(s.start_idx))
+      }
+    }
+  }
   let counter = start
   for (const e of entries) {
+    if (restartAt.has(e.order_index) || e.section?.restart_numbering) {
+      counter = 1
+    }
     const q = qByOrder.get(e.order_index)
     const skip = q
       ? !isOptikAnswerableLayoutQuestion(q)
@@ -918,7 +1074,10 @@ function entriesToLayoutRows(
       // draw_w < sütun: sola hizalı (numara sonrası); sütuna yayılmaz
       img_x_pt: entry.x_pt + numTextW + imageGapPt,
       // Başlık kutunun dışında: blok tepesi y_top, görsel reserve kadar aşağıda
-      img_y_top_pt: entry.y_top_pt - (entry.badge_top_reserve_pt ?? 0),
+      img_y_top_pt:
+        entry.y_top_pt -
+        (entry.section_reserve_pt ?? 0) -
+        (entry.badge_top_reserve_pt ?? 0),
       img_w_pt: entry.draw_w,
       img_h_pt: entry.draw_h,
       image_base64: skipImages ? undefined : entry.image_base64,
@@ -929,6 +1088,7 @@ function entriesToLayoutRows(
       scale_diag: entry.scale_diag,
       span_full_width: span,
       layout_mode: entry.layout_mode,
+      section: entry.section,
     }
   })
 }
@@ -1110,12 +1270,26 @@ function reapplyDisplayNumbersByReadingOrder(
   const qByOrder = new Map(
     questions.map((q) => [Number(q.order_index ?? -1), q] as const),
   )
+  const restartAt = new Set<number>()
+  const rawSections = payload.sections
+  if (Array.isArray(rawSections)) {
+    for (const entry of rawSections) {
+      if (!entry || typeof entry !== 'object') continue
+      const s = entry as Record<string, unknown>
+      if (s.restart_numbering === true && Number.isFinite(Number(s.start_idx))) {
+        restartAt.add(Number(s.start_idx))
+      }
+    }
+  }
 
   for (const pageNum of pageNums) {
     const geom = computeGeometry(payload, pageNum)
     for (let col = 0; col < cols; col++) {
       const items = getColumnItemsSortedTopFirstLayout(layout, pageNum, col, geom.columnX)
       for (const item of items) {
+        if (restartAt.has(item.order_index) || item.section?.restart_numbering) {
+          counter = 1
+        }
         const q = qByOrder.get(item.order_index)
         const skip = q
           ? !isOptikAnswerableLayoutQuestion(q)

@@ -56,6 +56,54 @@ export interface QuestionCaptureMeta {
 
 export type QuestionLayoutMode = 'single-column' | 'full-width' | 'auto'
 
+export type QuestionDifficulty = 'kolay' | 'orta' | 'zor'
+
+/** Soru bankasında saklanan kırpılmış soru kaydı */
+export interface BankQuestionItem {
+  id: string
+  ders: string
+  /** null = konu atanmamış */
+  konu: string | null
+  difficulty: QuestionDifficulty | null
+  /** Klasör id — null = kök */
+  folder_id: string | null
+  source_pdf_id: string
+  source_pdf_filename: string
+  page_number: number
+  crop: CropBox
+  answer_key: string
+  content_type: QuestionContentType
+  remove_background: boolean
+  image_path: string
+  created_at: string
+  layoutMode?: QuestionLayoutMode
+  manualScale?: number
+  normalizationScale?: number
+  capture?: QuestionCaptureMeta
+  fontReference?: FontReferenceV1
+}
+
+export interface BankSettings {
+  defaultDers: string
+  dersList: string[]
+  konuByDers: Record<string, string[]>
+}
+
+/** Yazılı modülü soru tipi */
+export type WrittenQuestionTypeId =
+  | 'open-ended'
+  | 'true-false'
+  | 'multiple-choice'
+  | 'fill-blank'
+  | 'matching'
+  | 'ordering'
+  | 'table-box'
+  | 'grouping'
+  | 'image-label'
+  | 'reading'
+
+export type WrittenAnswerArea = 'lines' | 'box' | 'none'
+
 export interface QuestionItem {
   id: string
   pdf_id: string
@@ -91,6 +139,16 @@ export interface QuestionItem {
    * Sütun yerleşimi: single-column (varsayılan) | full-width (2 sütuna yay) | auto (şimdilik single)
    */
   layoutMode?: QuestionLayoutMode
+  /** Kolay / Orta / Zor — editör kart rengi */
+  difficulty?: QuestionDifficulty | null
+  /** @deprecated Konu adı için `konu` kullanın */
+  category?: string | null
+  /** Soru bankası ders adı */
+  ders?: string | null
+  /** Soru bankası konu adı */
+  konu?: string | null
+  /** Bankadan eklendiyse kaynak banka soru id — kaydet butonu gizlenir */
+  bankSourceId?: string | null
   /** Satır yüksekliği eşlendi; yerleşim font_line_px ile boyutlandırır. */
   ocr_font_matched?: boolean
   /** Eşitlemede ölçülen / fırınlanan gövde satır yüksekliği (px). */
@@ -136,6 +194,14 @@ export interface QuestionItem {
    * Layout bu yüksekliği kullanır; image_base64 şeffaf yer tutucu olabilir.
    */
   fasikulEmptyRows?: number
+  /** Yazılı modülü soru tipi (crop sorularından ayırt etmek için) */
+  writtenType?: WrittenQuestionTypeId
+  /** Yazılı soru metni (HTML — Quill) */
+  writtenStemHtml?: string
+  /** Açık uçlu cevap alanı */
+  writtenAnswerArea?: WrittenAnswerArea
+  writtenAnswerLines?: number
+  writtenPoints?: number
 }
 
 export interface SectionRange {
@@ -179,6 +245,8 @@ export type ModalKey =
   | 'save-draft'
   | 'load-draft'
   | 'pick-draft-questions'
+  | 'pick-bank-questions'
+  | 'save-to-bank'
   | 'google-drive'
   | null
 

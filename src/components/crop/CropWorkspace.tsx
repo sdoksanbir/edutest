@@ -1,3 +1,4 @@
+import { ENABLE_AUTO_QUESTION_DETECT } from "../../config/featureFlags";
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import ReactCrop, { type Crop, type PixelCrop } from "react-image-crop";
@@ -48,22 +49,40 @@ import {
   setZoomForSource,
   getChoiceCount,
   setChoiceCount,
+  getBankCropTarget,
+  setBankCropTarget,
+  clearBankCropTarget,
   type LocalPdfEntry,
   type LocalImageEntry,
 } from "../../store/cropLocalStore";
+import {
+  findDuplicateBankQuestion,
+  resolveBankSaveFolderId,
+  saveQuestionItemToBank,
+  type BankCropTarget,
+} from "../../utils/bankQuestionUtils";
 import { validateImageFile } from "../../utils/imageValidation";
 import { useEditorStore } from "../../store/editorStore";
 import { buildQuestionNumberMap, normalizeContentType } from "../../utils/questionNumbering";
 import {
   percentCropToNormalizedRect,
   trimCropToContent,
-  normalizedRectToPercentCrop,
   computeDisplayedSize,
   computeFitZoomByWidth,
   computeFitZoomByHeight,
 } from "../../utils/cropCoordUtils";
+import {
+  detectQuestionRectsFromImageAsync,
+  filterNewQuestionRects,
+  getLastQuestionDetectionDebug,
+} from "../../utils/detectPageQuestionRects";
+import type { QuestionDetectionDebug } from "../../utils/questionDetection/questionDetectionTypes";
 import AnswerMarkPanel, { type CropLayoutMode } from "./AnswerMarkPanel";
 import LocalPdfDeleteModal from "../modals/LocalPdfDeleteModal";
+import DetectionDraftOverlay, {
+  type DetectionDraft,
+} from "./DetectionDraftOverlay";
+import QuestionDetectionDebugOverlay from "./QuestionDetectionDebugOverlay";
 import SelectionOverlay from "./SelectionOverlay";
 import SortableSelectionItem from "./SortableSelectionItem";
 
@@ -106,6 +125,20 @@ export default function CropWorkspace() {
   const reorderQuestions = useEditorStore((s) => s.reorderQuestions);
   const updateQuestionCrop = useEditorStore((s) => s.updateQuestionCrop);
   const updateQuestionCropAndImage = useEditorStore((s) => s.updateQuestionCropAndImage);
+  const openSaveToBank = useEditorStore((s) => s.openSaveToBank);
+  const [bankCropTarget, setBankCropTargetState] = useState<BankCropTarget | null>(
+    () => getBankCropTarget(),
+  );
+  const [bankSaveHint, setBankSaveHint] = useState<string | null>(null);
+  const [detectingQuestions, setDetectingQuestions] = useState(false);
+  const isDetectingRef = useRef(false);
+  /** Otomatik tespit taslağı — onaylanana kadar listeye eklenmez */
+  const [detectionDrafts, setDetectionDrafts] = useState<DetectionDraft[]>([]);
+  const [confirmingDrafts, setConfirmingDrafts] = useState(false);
+  const [detectionDebug, setDetectionDebug] = useState<QuestionDetectionDebug | null>(null);
+  const [showDetectionDebugOverlay, setShowDetectionDebugOverlay] = useState(
+    () => import.meta.env.DEV && localStorage.getItem("edutest-qd-debug-overlay") === "1",
+  );
 
   const [localPdfs, setLocalPdfs] = useState<LocalPdfEntry[]>([]);
   const [localImages, setLocalImages] = useState<LocalImageEntry[]>([]);
@@ -226,7 +259,23 @@ export default function CropWorkspace() {
   const locationState = location.state as {
     localPdfId?: string;
     pageNumber?: number;
+    bankCropTarget?: BankCropTarget | null;
   } | null;
+
+  useEffect(() => {
+    if (locationState?.bankCropTarget) {
+      setBankCropTarget(locationState.bankCropTarget);
+      setBankCropTargetState(locationState.bankCropTarget);
+      return;
+    }
+    // Bankadan gelmeyen kırpma oturumu — önceki banka hedefini temizle
+    if (!locationState?.localPdfId) {
+      clearBankCropTarget();
+      setBankCropTargetState(null);
+    } else {
+      setBankCropTargetState(getBankCropTarget());
+    }
+  }, [locationState?.bankCropTarget, locationState?.localPdfId, location.key]);
 
   // Mevcut soruları yükle, numaraları sıfırlamadan devam et
   useEffect(() => {
@@ -584,6 +633,42 @@ export default function CropWorkspace() {
           localPdfId: sel.localPdfId,
           fontReference: sel.fontReference,
         };
+
+        const bankTarget = getBankCropTarget();
+        if (bankTarget) {
+          const existing = await findDuplicateBankQuestion(qItem);
+          if (existing) {
+            const ok = window.confirm(
+              `Bu soru zaten soru bankasında var (${existing.ders}${
+                existing.konu ? ` / ${existing.konu}` : ""
+              }). Yine de kaydetmek istiyor musunuz?`,
+            );
+            if (!ok) {
+              setBankSaveHint("Kayıt iptal edildi — soru bankasında zaten var.");
+              return false;
+            }
+          }
+          const folderId = await resolveBankSaveFolderId(bankTarget);
+          // Ders klasöründen gelindiyse "Konu adı yok" oluşmuş olabilir — hedefi sabitle
+          if (!bankTarget.folderId) {
+            setBankCropTarget({ ...bankTarget, folderId });
+            setBankCropTargetState({ ...bankTarget, folderId });
+          }
+          await saveQuestionItemToBank(qItem, {
+            ders: bankTarget.ders,
+            konu: bankTarget.konu,
+            folderId,
+          });
+          setBankSaveHint(`Bankaya eklendi: ${bankTarget.label}`);
+          // Test taslağına ekleme — yalnızca soru bankası
+          if (import.meta.env.DEV) {
+            console.debug(
+              `[crop-perf] bankaya ekle: crop=${cropMs.toFixed(1)}ms total=${(performance.now() - t0).toFixed(1)}ms`,
+            );
+          }
+          return true;
+        }
+
         addQuestionsToWorkingDraft([qItem]);
         setLocalSourceForQuestion(sel.id, sel.localPdfId, sel.page_number);
 
@@ -678,6 +763,138 @@ export default function CropWorkspace() {
     void addSelection(answer, inlineLayout);
   };
 
+  /** Açık sayfadaki soru bölgelerini bulur — onaylanana kadar taslak olarak tutar */
+  const detectQuestionsOnCurrentPage = useCallback(async () => {
+    if (isDetectingRef.current) {
+      console.warn("[QUESTION DETECTION] skipped — already running");
+      return;
+    }
+    if (!selectedLocalPdf && !selectedLocalImage) {
+      setError("Önce bir PDF veya görsel açın.");
+      return;
+    }
+    const img = imgRef.current;
+    if (!img || !imgLoaded) {
+      setError("Sayfa görüntüsü henüz yüklenmedi.");
+      return;
+    }
+    isDetectingRef.current = true;
+    setDetectingQuestions(true);
+    setError(null);
+    try {
+      const detected = await detectQuestionRectsFromImageAsync(img, {
+        enableOcr: true,
+        debug: import.meta.env.DEV,
+      });
+      setDetectionDebug(getLastQuestionDetectionDebug());
+      if (detected.length === 0) {
+        setError("Bu sayfada otomatik soru bölgesi bulunamadı. Elle seçmeyi deneyin.");
+        return;
+      }
+      const existingOnPage = pendingSelections
+        .filter(
+          (s) =>
+            s.page_number === currentPage &&
+            s.localPdfId === (selectedLocalPdf?.id ?? selectedLocalImage?.id),
+        )
+        .map((s) => s.crop);
+      const fresh = filterNewQuestionRects(detected, existingOnPage);
+      if (fresh.length === 0) {
+        setError(
+          `Bulunan ${detected.length} bölge zaten seçili. Yeni soru eklenmedi.`,
+        );
+        return;
+      }
+
+      setDetectionDrafts(
+        fresh.map((box) => ({
+          id: crypto.randomUUID(),
+          crop: box,
+        })),
+      );
+      setBankSaveHint(
+        `${fresh.length} soru bulundu. Tutamaçlarla düzeltip «Seçimleri onayla» deyin.`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Otomatik tespit başarısız");
+    } finally {
+      isDetectingRef.current = false;
+      setDetectingQuestions(false);
+    }
+  }, [
+    selectedLocalPdf,
+    selectedLocalImage,
+    imgLoaded,
+    pendingSelections,
+    currentPage,
+  ]);
+
+  const confirmDetectionDrafts = useCallback(async () => {
+    if (detectionDrafts.length === 0) return;
+    if (!selectedLocalPdf && !selectedLocalImage) return;
+    setConfirmingDrafts(true);
+    setError(null);
+    try {
+      const localSrc = selectedLocalPdf ?? selectedLocalImage;
+      const baseNum =
+        pendingSelections.length > 0
+          ? Math.max(...pendingSelections.map((s) => s.number))
+          : 0;
+      const newSels: PendingSelection[] = detectionDrafts.map((d, i) => ({
+        id: d.id,
+        pdf_id: "",
+        page_number: currentPage,
+        crop: d.crop,
+        answer_key: "",
+        number: baseNum + i + 1,
+        remove_background: false,
+        display_scale: 1,
+        layoutMode: "single-column",
+        content_type: "question",
+        isLocal: true,
+        localPdfId: localSrc?.id,
+        localFilename: localSrc?.filename,
+      }));
+
+      setPendingSelections((prev) =>
+        [...prev, ...newSels].sort((a, b) => a.number - b.number),
+      );
+      setDetectionDrafts([]);
+
+      let added = 0;
+      for (const newSel of newSels) {
+        const ok = await addSelectionToEditor(newSel);
+        if (ok) added += 1;
+      }
+      if (added > 0) {
+        setBankSaveHint(
+          bankCropTarget
+            ? `${added} soru bankaya eklendi.`
+            : `${added} soru listeye eklendi (cevapları işaretleyin).`,
+        );
+      } else {
+        setError("Seçimler onaylandı ancak eklenemedi.");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Seçimler eklenemedi");
+    } finally {
+      setConfirmingDrafts(false);
+    }
+  }, [
+    detectionDrafts,
+    selectedLocalPdf,
+    selectedLocalImage,
+    pendingSelections,
+    currentPage,
+    addSelectionToEditor,
+    bankCropTarget,
+  ]);
+
+  const cancelDetectionDrafts = useCallback(() => {
+    setDetectionDrafts([]);
+    setBankSaveHint(null);
+  }, []);
+
   const handleAnswerChange = (sel: PendingSelection, answer: AnswerOption | null) => {
     const key = answer ?? "";
     setPendingSelections((prev) =>
@@ -752,12 +969,22 @@ export default function CropWorkspace() {
       setEditingSelectionId(sel.id);
       const norm = sel.crop as { x: number; y: number; width: number; height: number };
       editingCropRef.current = norm;
-      setCrop({
-        ...normalizedRectToPercentCrop(norm),
-        unit: "%",
-      });
+      // Tutamaçlar SelectionOverlay'de; ReactCrop yeni seçim için boş kalsın
+      setCrop(undefined);
+      setCompletedCrop(null);
+      pendingAddPercentCropRef.current = null;
     }
   };
+
+  const handleSelectionCropChange = useCallback(
+    (sel: PendingSelection, cropBox: CropBox) => {
+      editingCropRef.current = cropBox;
+      setPendingSelections((prev) =>
+        prev.map((s) => (s.id === sel.id ? { ...s, crop: cropBox } : s)),
+      );
+    },
+    [],
+  );
 
   const handleEndEditSelection = async () => {
     const selId = editingSelectionId;
@@ -872,6 +1099,7 @@ export default function CropWorkspace() {
     setCompletedCrop(null);
     pendingAddPercentCropRef.current = null;
     editingCropRef.current = null;
+    setDetectionDrafts([]);
     setImgLoaded(false);
     setNaturalImageSize(null);
 
@@ -1126,15 +1354,47 @@ export default function CropWorkspace() {
         )}
 
         <div className="ml-auto flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => navigate("/")}
-            className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-medium text-white hover:bg-slate-500"
-          >
-            Ana Editöre Dön
-          </button>
+          {bankCropTarget ? (
+            <>
+              <span className="hidden max-w-[16rem] truncate text-xs text-emerald-300 sm:inline" title={bankCropTarget.label}>
+                Banka: {bankCropTarget.label}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const ret = bankCropTarget.returnFolderId;
+                  clearBankCropTarget();
+                  setBankCropTargetState(null);
+                  navigate("/soru-bankasi", {
+                    state: ret ? { openFolderId: ret } : undefined,
+                  });
+                }}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500"
+              >
+                Soru Bankasına Dön
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => navigate("/")}
+              className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-medium text-white hover:bg-slate-500"
+            >
+              Ana Editöre Dön
+            </button>
+          )}
         </div>
       </div>
+
+      {bankCropTarget ? (
+        <div className="shrink-0 border-b border-emerald-800/60 bg-emerald-950/50 px-4 py-2 text-sm text-emerald-100">
+          PDF’den kırpılan sorular otomatik kaydedilir:{" "}
+          <strong>{bankCropTarget.label}</strong>
+          {bankSaveHint ? (
+            <span className="ml-2 text-emerald-300">· {bankSaveHint}</span>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* Main canvas + optional selections panel */}
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
@@ -1253,7 +1513,30 @@ export default function CropWorkspace() {
                     />
                   </ReactCrop>
                   </div>
-                  {pageRenderReady && (
+                  {pageRenderReady && detectionDrafts.length > 0 && (
+                    <DetectionDraftOverlay
+                      drafts={detectionDrafts}
+                      displayedW={displayedSize.w}
+                      displayedH={displayedSize.h}
+                      onCropChange={(id, crop) => {
+                        setDetectionDrafts((prev) =>
+                          prev.map((d) => (d.id === id ? { ...d, crop } : d)),
+                        );
+                      }}
+                      onRemove={(id) => {
+                        setDetectionDrafts((prev) => prev.filter((d) => d.id !== id));
+                      }}
+                    />
+                  )}
+                  {pageRenderReady && ENABLE_AUTO_QUESTION_DETECT && (
+                    <QuestionDetectionDebugOverlay
+                      debug={detectionDebug}
+                      displayedW={displayedSize.w}
+                      displayedH={displayedSize.h}
+                      visible={showDetectionDebugOverlay}
+                    />
+                  )}
+                  {pageRenderReady && detectionDrafts.length === 0 && (
                     <SelectionOverlay
                       selections={pendingSelections}
                       currentPdfId={null}
@@ -1268,6 +1551,7 @@ export default function CropWorkspace() {
                       onAnswerChange={handleAnswerChange}
                       onDelete={handleDeleteSelection}
                       onLayoutChange={handleLayoutChange}
+                      onCropChange={handleSelectionCropChange}
                     />
                   )}
                 </div>
@@ -1333,6 +1617,71 @@ export default function CropWorkspace() {
                   {n} şıklı
                 </button>
               ))}
+              <div className="h-5 w-px bg-slate-600" aria-hidden />
+              {ENABLE_AUTO_QUESTION_DETECT ? (
+                <>
+              <button
+                type="button"
+                disabled={
+                  detectingQuestions ||
+                  confirmingDrafts ||
+                  !hasSource ||
+                  !imgLoaded ||
+                  (!selectedLocalPdf && !selectedLocalImage) ||
+                  detectionDrafts.length > 0
+                }
+                onClick={() => void detectQuestionsOnCurrentPage()}
+                className="rounded border border-sky-500/70 bg-sky-600/90 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-50"
+                title="Sayfadaki soruları otomatik tespit eder (onaylamadan listeye eklemez)"
+              >
+                {detectingQuestions ? "Sorular algılanıyor…" : "Otomatik Soruları Bul"}
+              </button>
+              {import.meta.env.DEV ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !showDetectionDebugOverlay;
+                    setShowDetectionDebugOverlay(next);
+                    try {
+                      localStorage.setItem(
+                        "edutest-qd-debug-overlay",
+                        next ? "1" : "0",
+                      );
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
+                  className="rounded border border-amber-500/60 bg-amber-900/40 px-2 py-1.5 text-[10px] font-semibold text-amber-100 hover:bg-amber-800/50"
+                  title="Algılama debug overlay (yalnızca geliştirme)"
+                >
+                  QD Debug {showDetectionDebugOverlay ? "Açık" : "Kapalı"}
+                </button>
+              ) : null}
+              {detectionDrafts.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    disabled={confirmingDrafts || detectionDrafts.length === 0}
+                    onClick={() => void confirmDetectionDrafts()}
+                    className="rounded border border-emerald-500/70 bg-emerald-600/90 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                    title="Düzeltilmiş seçimleri soru listesine ekler"
+                  >
+                    {confirmingDrafts
+                      ? "Ekleniyor…"
+                      : `Seçimleri onayla (${detectionDrafts.length})`}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={confirmingDrafts}
+                    onClick={cancelDetectionDrafts}
+                    className="rounded border border-slate-500 bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 disabled:opacity-50"
+                  >
+                    İptal
+                  </button>
+                </>
+              )}
+                </>
+              ) : null}
             </div>
 
             <div className="h-8 w-px shrink-0 bg-slate-600" aria-hidden="true" />
@@ -1441,11 +1790,20 @@ export default function CropWorkspace() {
               >
                 <SortableContext items={pendingSelections.map((s) => s.id)} strategy={verticalListSortingStrategy}>
                   <ul className="space-y-2">
-                    {pendingSelections.map((s) => (
+                    {pendingSelections.map((s) => {
+                      const qInEditor = questions.find((q) => q.id === s.id);
+                      const showSaveToBank =
+                        !bankCropTarget && !qInEditor?.bankSourceId;
+                      return (
                         <SortableSelectionItem
                           key={s.id}
                           sel={s}
                           localFilename={s.localFilename}
+                          onSaveToBank={
+                            showSaveToBank
+                              ? (sel) => openSaveToBank([sel.id])
+                              : undefined
+                          }
                           onRemove={removePending}
                           onNavigate={(sourceValue, pageNumber) => {
                             const id = sourceValue.startsWith("local:")
@@ -1462,7 +1820,8 @@ export default function CropWorkspace() {
                             setCurrentPage(pageNumber);
                           }}
                         />
-                      ))}
+                      );
+                    })}
                   </ul>
                 </SortableContext>
               </DndContext>

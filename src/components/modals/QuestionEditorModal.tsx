@@ -1,8 +1,14 @@
-import ModalShell from './ModalShell'
-import { useEditorStore } from '../../store/editorStore'
+import ModalShell from "./ModalShell";
+import WrittenQuestionAddModal from "./WrittenQuestionAddModal";
+import { useEditorStore } from "../../store/editorStore";
 
 export default function QuestionEditorModal({ onClose }: { onClose: () => void }) {
-  const questions = useEditorStore((s) => s.questions)
+  const questions = useEditorStore((s) => s.questions);
+  const activeTab = useEditorStore((s) => s.activeTab);
+
+  if (activeTab === "written-paper") {
+    return <WrittenQuestionAddModal onClose={onClose} />;
+  }
 
   return (
     <ModalShell title="Soru Editörü" onClose={onClose} wide>
@@ -13,5 +19,5 @@ export default function QuestionEditorModal({ onClose }: { onClose: () => void }
         Tamam
       </button>
     </ModalShell>
-  )
+  );
 }

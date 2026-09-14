@@ -66,6 +66,7 @@ export type OptikFormExportInput = {
   headerBottomGapMm?: number;
   otherPageHeaderBottomGapMm?: number;
   writtenPaperHeader?: boolean;
+  sections?: import("../types").SectionRange[];
 };
 
 function stripPngDataUrl(dataUrl: string): string {
@@ -165,7 +166,7 @@ export async function buildOptikFormPdfOverlays(
   input: OptikFormExportInput,
 ): Promise<OptikFormPdfOverlay[]> {
   if (!input.enabled || input.questions.length === 0) return [];
-  const rows = optikRowsFromLayoutItems(input.layout, input.questions);
+  const rows = optikRowsFromLayoutItems(input.layout, input.questions, input.sections);
   if (rows.length === 0) return [];
   const activeOptions = resolveOptikActiveOptions(input.questions, input.optionCount);
   const mq = maxQuestionPageFromLayout(input.layout);

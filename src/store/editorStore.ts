@@ -8,11 +8,13 @@ import type {
   QuestionContentType,
   QuestionItem,
   QuestionImageTextOverlay,
+  QuestionDifficulty,
   CropBox,
   FontReferenceV1,
   QuestionCaptureMeta,
   SectionRange,
   FasikulQuestionFrameSettings,
+  WrittenQuestionTypeId,
 } from "../types";
 import { normalizeFasikulQuestionFrame, applyFasikulPreset, DEFAULT_FASIKUL_QUESTION_FRAME, type FasikulFramePresetId } from "../utils/fasikulQuestionFrame";
 import {
@@ -36,6 +38,11 @@ import {
   LEGACY_LAYOUT_ZOOM,
   nativeSizePtFromCapture,
 } from "../utils/questionCapture";
+import {
+  defaultWrittenPaperUi,
+  type WrittenPaperUiSettings,
+  type WrittenStudentFieldKey,
+} from "../utils/writtenPaperUi";
 import {
   clampFontEqualizeScale,
   estimateCanonicalFontHeightFromRgba,
@@ -125,7 +132,26 @@ export type TeacherNameEntry = {
   title: string;
 };
 
-type ModalKey = "pdf-bank" | "question-editor" | "add-image" | "save-draft" | "load-draft" | "pick-draft-questions" | "google-drive";
+type ModalKey =
+  | "pdf-bank"
+  | "question-editor"
+  | "add-image"
+  | "save-draft"
+  | "load-draft"
+  | "pick-draft-questions"
+  | "pick-bank-questions"
+  | "save-to-bank"
+  | "google-drive";
+
+/** Yazılı: Kaydet ile oluşan hazır şablon (başlangıçta boş liste) */
+export type WrittenTemplateItem = {
+  id: string;
+  title: string;
+  description: string;
+  badge: string;
+};
+
+export type { WrittenQuestionTypeId };
 
 /** Yaprak Test export options (original desktop Test Kağıdı parity) */
 export type AnswerKeyMode = "per_page" | "separate_page" | "end_of_test";
@@ -175,6 +201,16 @@ type EditorState = {
   writtenHeaderFieldLabels: WrittenHeaderFieldLabels;
   /** True ise ilgili alan PDF başlığında çizilmez */
   writtenHeaderFieldHidden: WrittenHeaderFieldHidden;
+  /** Yazılı kağıt UI (başlık / sınav / sayfa panelleri) */
+  writtenPaperUi: WrittenPaperUiSettings;
+  patchWrittenPaperUi: (patch: Partial<WrittenPaperUiSettings>) => void;
+  toggleWrittenStudentField: (key: WrittenStudentFieldKey) => void;
+  /**
+   * Yazılı: Kağıdı Hazırla sonrası true — sol panel ayarları + kağıt başlık/soru önizlemesi.
+   * Başlangıçta false (ana sayfa sol paneli).
+   */
+  writtenPaperPrepared: boolean;
+  setWrittenPaperPrepared: (ready: boolean) => void;
   /** Kullanıcının eklediği özel sınav tipleri */
   customExamTypes: string[];
   /** Yaprak Test: Test açıklaması metni (tek sütun için geriye uyum) */
@@ -324,6 +360,8 @@ type EditorState = {
   scratchGridColor: string;
   /** Working draft: in-memory only. Rendered in main editor. */
   questions: QuestionItem[];
+  /** Soru sınıflandırma kategori listesi (Sınıflandırma modalı) */
+  questionCategories: string[];
   /** Kağıt hazırla: Bölüm tanımları (original-desktop SectionRange) */
   sections: SectionRange[];
   questionsLoaded: boolean;
@@ -332,6 +370,15 @@ type EditorState = {
   /** Set when draft loaded from persistence. */
   persistedDraftName: string | null;
   openModal: ModalKey | null;
+  /** Soru bankasına kaydet modalı için hedef soru id'leri */
+  saveToBankQuestionIds: string[];
+  /** Yazılı hazır şablonlar — Kaydet ile eklenir, başlangıç [] */
+  writtenTemplates: WrittenTemplateItem[];
+  setWrittenTemplates: (items: WrittenTemplateItem[]) => void;
+  addWrittenTemplate: (item: WrittenTemplateItem) => void;
+  /** Soru tipi seçildikten sonra editörün okuyacağı tip */
+  pendingWrittenQuestionType: WrittenQuestionTypeId | null;
+  setPendingWrittenQuestionType: (type: WrittenQuestionTypeId | null) => void;
   setActiveTab: (tab: SidebarTab) => void;
   setTabBeforeSettings: (tab: SidebarTab | null) => void;
   setTestName: (value: string) => void;
@@ -485,6 +532,14 @@ type EditorState = {
     id: string,
     mode: 'single-column' | 'full-width' | 'auto',
   ) => void;
+  setQuestionsDifficulty: (
+    ids: string[],
+    difficulty: QuestionDifficulty | null,
+  ) => void;
+  setQuestionsCategory: (ids: string[], category: string | null) => void;
+  setQuestionsDersKonu: (ids: string[], ders: string | null, konu: string | null) => void;
+  addQuestionCategory: (name: string) => void;
+  removeQuestionCategory: (name: string) => void;
   /** Önizleme ilk açılış ölçeklerine dön */
   restoreQuestionsScaleSnapshot: (
     snapshot: Record<
@@ -575,6 +630,21 @@ type EditorState = {
     capture?: QuestionCaptureMeta,
   ) => void;
   addQuestion: (item: QuestionItem) => void;
+  /** Yazılı: tip seçince yeni soru ekle */
+  addWrittenQuestion: (type: WrittenQuestionTypeId) => string;
+  updateWrittenQuestion: (
+    id: string,
+    patch: Partial<
+      Pick<
+        QuestionItem,
+        | "writtenStemHtml"
+        | "writtenAnswerArea"
+        | "writtenAnswerLines"
+        | "writtenPoints"
+        | "writtenType"
+      >
+    >,
+  ) => void;
   /** Add multiple questions to working draft. In-memory only, sets isDirty. */
   addQuestionsToWorkingDraft: (items: QuestionItem[]) => void;
   setQuestions: (items: QuestionItem[]) => void;
@@ -584,6 +654,7 @@ type EditorState = {
   applyDraftPayload: (draft: DraftFilePayload) => void;
   fetchQuestions: () => Promise<void>;
   setOpenModal: (key: ModalKey | null) => void;
+  openSaveToBank: (questionIds: string[]) => void;
   /**
    * PDF önizlemede manuel dikey konum (soru id → y_top_pt, PDF pt).
    * Sıra değişince order_index kaymasına takılmamak için id anahtarı; API’ye gönderirken güncel order_index eşlenir.
@@ -650,6 +721,7 @@ export type DraftFilePayload = {
     pageNumberingEnabled?: boolean;
     pageNumberStart?: number;
     pageNumberFormat?: "plain" | "fraction";
+    questionCategories?: string[];
     headerConfig?: HeaderConfig;
     headerTemplates?: HeaderTemplate[];
     themeColor?: string;
@@ -842,6 +914,41 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   writtenHeaderFieldLines: emptyWrittenHeaderFieldLines(),
   writtenHeaderFieldLabels: emptyWrittenHeaderFieldLabels(),
   writtenHeaderFieldHidden: emptyWrittenHeaderFieldHidden(),
+  writtenPaperUi: defaultWrittenPaperUi(),
+  writtenPaperPrepared: false,
+  setWrittenPaperPrepared: (ready) => set({ writtenPaperPrepared: ready === true }),
+  patchWrittenPaperUi: (patch) =>
+    set((s) => ({
+      writtenPaperUi: {
+        ...defaultWrittenPaperUi(),
+        ...(s.writtenPaperUi ?? {}),
+        ...patch,
+        studentFields: {
+          ...defaultWrittenPaperUi().studentFields,
+          ...(s.writtenPaperUi?.studentFields ?? {}),
+          ...(patch.studentFields ?? {}),
+        },
+      },
+      isDirty: true,
+    })),
+  toggleWrittenStudentField: (key) =>
+    set((s) => {
+      const base = { ...defaultWrittenPaperUi(), ...(s.writtenPaperUi ?? {}) };
+      const fields = {
+        ...defaultWrittenPaperUi().studentFields,
+        ...(base.studentFields ?? {}),
+      };
+      return {
+        writtenPaperUi: {
+          ...base,
+          studentFields: {
+            ...fields,
+            [key]: !fields[key],
+          },
+        },
+        isDirty: true,
+      };
+    }),
   customExamTypes: [],
   testDescription: "",
   descriptionColumnCount: 1,
@@ -941,11 +1048,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     addTextOnLine: true,
   },
   questions: [],
+  questionCategories: [],
   sections: [],
   questionsLoaded: false,
   isDirty: false,
   persistedDraftName: null,
   openModal: null,
+  saveToBankQuestionIds: [],
+  writtenTemplates: [],
+  setWrittenTemplates: (items) => set({ writtenTemplates: items }),
+  addWrittenTemplate: (item) =>
+    set((s) => ({ writtenTemplates: [...s.writtenTemplates, item] })),
+  pendingWrittenQuestionType: null,
+  setPendingWrittenQuestionType: (type) => set({ pendingWrittenQuestionType: type }),
   layoutYTopOverridesByQuestionIdPt: {},
   mergeLayoutYTopOverridesByQuestionId: (partial) =>
     set((s) => ({
@@ -973,12 +1088,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   clearLayoutPlacementOverrides: () => set({ layoutPlacementOverridesByQuestionId: {} }),
   setActiveTab: (tab) =>
     set((state) => {
+      const leaveWritten =
+        state.activeTab === "written-paper" && tab !== "written-paper";
+      const writtenReset = leaveWritten ? { writtenPaperPrepared: false } : {};
       const nextMod = paperLayoutModuleFromTab(tab);
       const curMod = state.activeLayoutModule;
       // Ayarlar vb. — mevcut modül anlığını kaydet, canlı temayı bozma
       if (!nextMod) {
         return {
           activeTab: tab,
+          ...writtenReset,
           moduleLayouts: ensureModuleLayouts({
             ...state.moduleLayouts,
             [curMod]: captureModuleLayout(state),
@@ -986,7 +1105,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         };
       }
       if (nextMod === curMod) {
-        return { activeTab: tab };
+        return { activeTab: tab, ...writtenReset };
       }
       const savedLayouts = ensureModuleLayouts({
         ...state.moduleLayouts,
@@ -1007,6 +1126,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       };
       return {
         activeTab: tab,
+        ...writtenReset,
         activeLayoutModule: nextMod,
         moduleLayouts: savedLayouts,
         headerStyleId: applied.headerStyleId!,
@@ -1738,18 +1858,34 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
 
     dropFromStore();
+    const remaining = get().questions;
+    if (!remaining.some((q) => Boolean(q.writtenType))) {
+      set({ writtenPaperPrepared: false });
+    }
   },
   clearAllQuestions: () => {
+    const tab = get().activeTab;
     setStoredPendingSelections([]);
-    set({
-      questions: [],
-      isDirty: true,
-      layoutYTopOverridesByQuestionIdPt: {},
-      layoutPlacementOverridesByQuestionId: {},
+    set((s) => {
+      const keep =
+        tab === "written-paper"
+          ? s.questions.filter((q) => !q.writtenType)
+          : s.questions.filter((q) => Boolean(q.writtenType));
+      const next = keep.map((q, i) => ({ ...q, order_index: i }));
+      return {
+        questions: next,
+        isDirty: true,
+        layoutYTopOverridesByQuestionIdPt: {},
+        layoutPlacementOverridesByQuestionId: {},
+        writtenPaperPrepared: tab === "written-paper" ? false : s.writtenPaperPrepared,
+      };
     });
-    void api.questions.clearAll().catch((e) => {
-      console.warn("Electron soru deposu temizlenemedi:", e);
-    });
+    // Electron deposu: yalnızca tamamen boşaldıysa temizle
+    if (get().questions.length === 0) {
+      void api.questions.clearAll().catch((e) => {
+        console.warn("Electron soru deposu temizlenemedi:", e);
+      });
+    }
   },
   updateQuestionImage: (id, imageBase64) => {
     const q = get().questions.find((x) => x.id === id);
@@ -1991,25 +2127,27 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   reorderQuestions: async (orderedIds) => {
     const state = useEditorStore.getState();
     const byId = Object.fromEntries(state.questions.map((q) => [q.id, q]));
+    const idSet = new Set(orderedIds);
     const reorderedLocal = orderedIds
-      .map((id, i) => {
-        const q = byId[id];
-        if (!q) return null;
-        return { ...q, order_index: i };
-      })
-      .filter((q): q is QuestionItem => q != null)
-      .map((q, i) => ({ ...q, order_index: i }));
+      .map((id) => byId[id])
+      .filter((q): q is QuestionItem => q != null);
+    /** Diğer modülün sorularını düşürme (yazılı ↔ test ayrımı) */
+    const others = state.questions.filter((q) => !idSet.has(q.id));
+    const merged = [...reorderedLocal, ...others].map((q, i) => ({
+      ...q,
+      order_index: i,
+    }));
 
     // Görseller veya istemci-only boş fasikül kutuları varsa store’u ezme
     const keepLocal = state.questions.some(
-      (q) => q.image_base64 || (q.fasikulEmptyRows ?? 0) > 0,
+      (q) => q.image_base64 || (q.fasikulEmptyRows ?? 0) > 0 || Boolean(q.writtenType),
     );
     if (keepLocal) {
-      set({ questions: reorderedLocal, isDirty: true });
+      set({ questions: merged, isDirty: true });
       return;
     }
     try {
-      const { items } = await api.questions.reorder(orderedIds);
+      const { items } = await api.questions.reorder(merged.map((q) => q.id));
       set({ questions: items, isDirty: true });
     } catch (e) {
       console.error("Failed to reorder:", e);
@@ -2104,6 +2242,59 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         x.id === id
           ? { ...x, layoutMode: mode === 'auto' ? 'single-column' : mode }
           : x,
+      ),
+      isDirty: true,
+    })),
+  setQuestionsDifficulty: (ids, difficulty) => {
+    const idSet = new Set(ids);
+    set((s) => ({
+      questions: s.questions.map((x) =>
+        idSet.has(x.id) ? { ...x, difficulty: difficulty ?? null } : x,
+      ),
+      isDirty: true,
+    }));
+  },
+  setQuestionsCategory: (ids, category) => {
+    const idSet = new Set(ids);
+    const cleaned = category?.trim() || null;
+    set((s) => ({
+      questions: s.questions.map((x) =>
+        idSet.has(x.id) ? { ...x, category: cleaned, konu: cleaned } : x,
+      ),
+      isDirty: true,
+    }));
+  },
+  setQuestionsDersKonu: (ids, ders, konu) => {
+    const idSet = new Set(ids);
+    const d = ders?.trim() || null;
+    const k = konu?.trim() || null;
+    set((s) => ({
+      questions: s.questions.map((x) =>
+        idSet.has(x.id)
+          ? { ...x, ders: d, konu: k, category: k }
+          : x,
+      ),
+      isDirty: true,
+    }));
+  },
+  addQuestionCategory: (name) => {
+    const cleaned = name.trim();
+    if (!cleaned) return;
+    set((s) => {
+      if (s.questionCategories.some((c) => c.toLocaleLowerCase("tr") === cleaned.toLocaleLowerCase("tr"))) {
+        return s;
+      }
+      return {
+        questionCategories: [...s.questionCategories, cleaned],
+        isDirty: true,
+      };
+    });
+  },
+  removeQuestionCategory: (name) =>
+    set((s) => ({
+      questionCategories: s.questionCategories.filter((c) => c !== name),
+      questions: s.questions.map((q) =>
+        q.category === name ? { ...q, category: null } : q,
       ),
       isDirty: true,
     })),
@@ -2379,6 +2570,41 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     })),
   addQuestion: (item) =>
     set((state) => ({ questions: [...state.questions, item], isDirty: true })),
+  addWrittenQuestion: (type) => {
+    const id =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `wq-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    set((state) => {
+      const order_index = state.questions.length;
+      const item: QuestionItem = {
+        id,
+        pdf_id: "",
+        page_number: 1,
+        crop: { x: 0, y: 0, width: 1, height: 1 },
+        answer_key: "",
+        order_index,
+        content_type: "question",
+        remove_background: false,
+        writtenType: type,
+        writtenStemHtml: "",
+        writtenAnswerArea: type === "open-ended" ? "lines" : "none",
+        writtenAnswerLines: 5,
+        writtenPoints: 10,
+      };
+      return {
+        questions: [...state.questions, item],
+        isDirty: true,
+        pendingWrittenQuestionType: null,
+      };
+    });
+    return id;
+  },
+  updateWrittenQuestion: (id, patch) =>
+    set((state) => ({
+      questions: state.questions.map((q) => (q.id === id ? { ...q, ...patch } : q)),
+      isDirty: true,
+    })),
   addQuestionsToWorkingDraft: (items) =>
     set((state) => ({
       questions: [...state.questions, ...items],
@@ -2398,6 +2624,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         (es.writtenPaperOptions as { addSpacingBetweenQuestions?: boolean }).addSpacingBetweenQuestions === true;
       return {
         questions: draft.questions,
+        questionCategories: Array.isArray(es?.questionCategories)
+          ? es.questionCategories.filter((c): c is string => typeof c === "string" && c.trim().length > 0)
+          : state.questionCategories,
         persistedDraftName: draft.name,
         isDirty: false,
         testName: es?.testName ?? testInfo?.test_title ?? testInfo?.test_name ?? state.testName,
@@ -2698,5 +2927,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       set({ questionsLoaded: true });
     }
   },
-  setOpenModal: (key) => set({ openModal: key }),
+  setOpenModal: (key) =>
+    set((s) => ({
+      openModal: key,
+      saveToBankQuestionIds: key === "save-to-bank" ? s.saveToBankQuestionIds : [],
+    })),
+  openSaveToBank: (questionIds) =>
+    set({
+      saveToBankQuestionIds: questionIds,
+      openModal: "save-to-bank",
+    }),
 }));

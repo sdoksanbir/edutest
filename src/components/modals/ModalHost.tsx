@@ -2,6 +2,8 @@ import { useEditorStore } from '../../store/editorStore'
 import QuestionEditorModal from './QuestionEditorModal'
 import AddImageModal from './AddImageModal'
 import PickDraftQuestionsModal from './PickDraftQuestionsModal'
+import PickBankQuestionsModal from './PickBankQuestionsModal'
+import SaveToBankModal from './SaveToBankModal'
 import GoogleDriveModal from './GoogleDriveModal'
 
 export default function ModalHost() {
@@ -17,6 +19,10 @@ export default function ModalHost() {
       return <AddImageModal onClose={close} />
     case 'pick-draft-questions':
       return <PickDraftQuestionsModal onClose={close} />
+    case 'pick-bank-questions':
+      return <PickBankQuestionsModal onClose={close} />
+    case 'save-to-bank':
+      return <SaveToBankModal onClose={close} />
     case 'google-drive':
       return <GoogleDriveModal onClose={close} />
     case 'pdf-bank':

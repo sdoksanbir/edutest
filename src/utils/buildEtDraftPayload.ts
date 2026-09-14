@@ -65,6 +65,7 @@ export function buildEtDraftPayload(name: string): DraftFilePayload & {
       pageNumberingEnabled: s.pageNumberingEnabled,
       pageNumberStart: s.pageNumberStart,
       pageNumberFormat: s.pageNumberFormat,
+      questionCategories: s.questionCategories,
       headerConfig: { ...s.headerConfig },
       headerTemplates: s.headerTemplates,
       themeColor: s.themeColor,

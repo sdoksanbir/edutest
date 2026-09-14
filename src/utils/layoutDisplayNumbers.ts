@@ -1,5 +1,5 @@
 import type { LayoutItem } from "../api/client";
-import type { QuestionItem } from "../types";
+import type { QuestionItem, SectionRange } from "../types";
 import { getLayoutItemsInReadingOrder } from "./columnRedistribute";
 import { estimateQuestionNumberTextWidthPt } from "./questionNumberMetrics";
 import {
@@ -16,6 +16,8 @@ export type DisplayNumberLayoutInput = {
   questionNumberStart?: number;
   questionNumberFontPt?: number;
   questions?: QuestionItem[];
+  /** Bölüm başında restart_numbering → sayaç 1 */
+  sections?: SectionRange[] | null;
 };
 
 function shouldSkipDisplayNumber(
@@ -26,6 +28,20 @@ function shouldSkipDisplayNumber(
   if (q) return !isOptikAnswerableQuestion(q);
   if (item.content_type === "explanation") return true;
   return false;
+}
+
+function restartOrderIndices(
+  sections?: SectionRange[] | null,
+  layout?: LayoutItem[],
+): Set<number> {
+  const out = new Set<number>();
+  for (const sec of sections ?? []) {
+    if (sec.restart_numbering) out.add(sec.start_idx);
+  }
+  for (const item of layout ?? []) {
+    if (item.section?.restart_numbering) out.add(item.order_index);
+  }
+  return out;
 }
 
 /** Yerleşim / dikey taşıma sonrası soru numaralarını okuma sırasına göre yeniden ata. */
@@ -41,6 +57,7 @@ export function reapplyDisplayNumbersByReadingOrder(
   const modeByOrder = new Map(
     (input.questions ?? []).map((q) => [q.order_index, q.layoutMode] as const),
   );
+  const restartAt = restartOrderIndices(input.sections, layout);
 
   if (!enabled) {
     return layout.map((item) =>
@@ -66,6 +83,9 @@ export function reapplyDisplayNumbersByReadingOrder(
       questionLayoutModeByOrder: modeByOrder,
     });
     for (const item of items) {
+      if (restartAt.has(item.order_index) || item.section?.restart_numbering) {
+        counter = 1;
+      }
       if (shouldSkipDisplayNumber(item, input.questions)) {
         displayByOrder.set(item.order_index, null);
       } else {

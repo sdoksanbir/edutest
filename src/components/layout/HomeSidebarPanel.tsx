@@ -1,9 +1,11 @@
 import { useMemo } from "react";
 import { useEditorStore } from "../../store/editorStore";
-import { computeProjectStats } from "../../utils/projectStats";
-import edutestLogo from "../../assets/edutest-logo.png";
 import PreparePaperButton from "../forms/PreparePaperButton";
 import SidebarActionButtons from "./SidebarActionButtons";
+import WrittenPaperSettingsSidebar from "../written/WrittenPaperSettingsSidebar";
+import { computeProjectStats } from "../../utils/projectStats";
+import { questionsForTab } from "../../utils/questionsForTab";
+import edutestLogo from "../../assets/edutest-logo.png";
 
 function LayoutDeskIcon() {
   return (
@@ -18,7 +20,30 @@ function LayoutDeskIcon() {
 
 export default function HomeSidebarPanel() {
   const questions = useEditorStore((s) => s.questions);
-  const stats = useMemo(() => computeProjectStats(questions), [questions]);
+  const activeTab = useEditorStore((s) => s.activeTab);
+  const writtenPaperPrepared = useEditorStore((s) => s.writtenPaperPrepared);
+  const moduleQuestions = useMemo(
+    () => questionsForTab(questions, activeTab),
+    [questions, activeTab],
+  );
+  const stats = useMemo(() => computeProjectStats(moduleQuestions), [moduleQuestions]);
+  const showWrittenSettings =
+    activeTab === "written-paper" &&
+    writtenPaperPrepared &&
+    moduleQuestions.length > 0;
+
+  if (showWrittenSettings) {
+    return (
+      <>
+        <WrittenPaperSettingsSidebar />
+        <section className="tq-dash-section tq-dash-section--prepare tq-dash-panel__footer">
+          <PreparePaperButton variant="dash">
+            <LayoutDeskIcon />
+          </PreparePaperButton>
+        </section>
+      </>
+    );
+  }
 
   return (
     <>

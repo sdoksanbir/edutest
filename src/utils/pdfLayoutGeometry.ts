@@ -384,6 +384,8 @@ export type ColumnContentRectPx = {
   topPx: number;
   widthPx: number;
   heightPx: number;
+  /** 0-based sütun; hibritte bir sütunun birden fazla dikey segmenti olabilir */
+  columnIndex?: number;
 };
 
 /**
@@ -406,6 +408,117 @@ export function columnContentRectsPx(
       topPx,
       widthPx: band.colWidthPt * canvasScale,
       heightPx,
+      columnIndex: colIdx,
     };
   });
+}
+
+/** PDF Y: top > bottom. Aralıkları hole’lardan çıkar (hibrit: geniş bantları atla). */
+function subtractPdfYIntervals(
+  rangeTop: number,
+  rangeBottom: number,
+  holes: Array<{ top: number; bottom: number }>,
+  minHeightPt = 8,
+): Array<{ top: number; bottom: number }> {
+  let segs = [{ top: rangeTop, bottom: rangeBottom }];
+  for (const hole of holes) {
+    if (!(hole.top > hole.bottom)) continue;
+    const next: Array<{ top: number; bottom: number }> = [];
+    for (const seg of segs) {
+      const overlapTop = Math.min(seg.top, hole.top);
+      const overlapBottom = Math.max(seg.bottom, hole.bottom);
+      if (overlapTop <= overlapBottom) {
+        next.push(seg);
+        continue;
+      }
+      // Üst parça (yüksek Y → hole.top)
+      if (seg.top - hole.top >= minHeightPt) {
+        next.push({ top: seg.top, bottom: Math.max(hole.top, seg.bottom) });
+      }
+      // Alt parça (hole.bottom → düşük Y)
+      if (hole.bottom - seg.bottom >= minHeightPt) {
+        next.push({ top: Math.min(hole.bottom, seg.top), bottom: seg.bottom });
+      }
+    }
+    segs = next;
+  }
+  return segs.filter((s) => s.top - s.bottom >= minHeightPt);
+}
+
+/**
+ * Hibrit sayfa: geniş soru bantlarını sütun tıklama alanından çıkar.
+ * Üstte Geniş + altta Dar → overlay yalnızca dar bölgede (1./2. sütun etiketi genişin üstüne binmez).
+ */
+export function columnContentRectsPxExcludingFullWidth(opts: {
+  band: PdfColumnBand;
+  pageHpt: number;
+  canvasScale: number;
+  pageNum: number;
+  layout: Array<{
+    page_num?: number;
+    kind?: string;
+    order_index?: number;
+    span_full_width?: boolean;
+    layout_mode?: string | null;
+    w_pt?: number;
+    img_w_pt?: number | null;
+    y_top_pt?: number;
+    h_pt?: number;
+    img_y_top_pt?: number | null;
+    img_h_pt?: number | null;
+  }>;
+  questionLayoutModeByOrder?: Map<number, string | null | undefined>;
+  contentTopByColumn?: number[];
+}): ColumnContentRectPx[] {
+  const { band, pageHpt, canvasScale, pageNum, layout, questionLayoutModeByOrder, contentTopByColumn } =
+    opts;
+
+  const fwHoles: Array<{ top: number; bottom: number }> = [];
+  for (const item of layout) {
+    if (item.page_num !== pageNum || item.kind === "answer_key_page") continue;
+    if (
+      !isLayoutItemFullWidth(item, {
+        questionLayoutMode: questionLayoutModeByOrder?.get(item.order_index ?? -1),
+        colWidthPt: band.colWidthPt,
+      })
+    ) {
+      continue;
+    }
+    const top = Number(item.y_top_pt ?? item.img_y_top_pt ?? NaN);
+    const h = Number(
+      item.h_pt ??
+        (item.img_h_pt != null && item.img_y_top_pt != null
+          ? item.y_top_pt != null
+            ? item.y_top_pt - (item.img_y_top_pt - item.img_h_pt)
+            : item.img_h_pt
+          : NaN),
+    );
+    if (!Number.isFinite(top) || !Number.isFinite(h) || h <= 0) continue;
+    const bottom = top - h;
+    // Küçük tampon: etiket / çizgi FW’ye değmesin
+    fwHoles.push({ top: top + 2, bottom: bottom - 4 });
+  }
+
+  if (fwHoles.length === 0) {
+    return columnContentRectsPx(band, pageHpt, canvasScale, contentTopByColumn);
+  }
+
+  const pageBottom = band.contentBottomPt;
+  const out: ColumnContentRectPx[] = [];
+  band.columnXPt.forEach((x, colIdx) => {
+    const rangeTop = contentTopByColumn?.[colIdx] ?? band.contentTopPt;
+    const segments = subtractPdfYIntervals(rangeTop, pageBottom, fwHoles);
+    for (const seg of segments) {
+      const heightPt = Math.max(0, seg.top - seg.bottom);
+      if (heightPt < 8) continue;
+      out.push({
+        leftPx: x * canvasScale,
+        topPx: (pageHpt - seg.top) * canvasScale,
+        widthPx: band.colWidthPt * canvasScale,
+        heightPx: heightPt * canvasScale,
+        columnIndex: colIdx,
+      });
+    }
+  });
+  return out;
 }

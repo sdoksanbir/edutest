@@ -613,10 +613,17 @@ export default function OpticalFormRenderer({
       {layout.columns.map((col, ci) => (
         <g key={ci}>
           {col.rows.map((row) => {
-            const answer = showAnswers
-              ? (rows.find((r) => r.number === row.number)?.answer ?? null)
-              : null;
+            const drawRow = rows[row.number - 1];
+            const labelNum = drawRow?.number ?? row.number;
+            const answer = showAnswers ? (drawRow?.answer ?? null) : null;
             const stripe = row.number % 2 === 0;
+            const section = drawRow?.sectionHeader;
+            const bandH = Math.max(6, Math.min(layout.rowHeightPx * 0.42, 11));
+            const bandY = row.y - bandH * 0.85;
+            const sectionTitle =
+              section && section.title.length > 28
+                ? `${section.title.slice(0, 27)}…`
+                : section?.title;
             return (
               <g key={row.number}>
                 {stripe ? (
@@ -628,6 +635,29 @@ export default function OpticalFormRenderer({
                     fill={OPTIK_FORM_COLORS.rowStripe}
                     opacity={0.85}
                   />
+                ) : null}
+                {section ? (
+                  <g>
+                    <rect
+                      x={col.innerX}
+                      y={bandY}
+                      width={col.innerW}
+                      height={bandH}
+                      fill={section.fillColor}
+                    />
+                    <text
+                      x={col.innerX + 3}
+                      y={bandY + bandH / 2}
+                      textAnchor="start"
+                      dominantBaseline="middle"
+                      fill={section.textColor}
+                      fontSize={Math.max(7, questionNumFontSize * 0.85)}
+                      fontWeight="700"
+                      fontFamily="Arial, Helvetica, sans-serif"
+                    >
+                      {sectionTitle}
+                    </text>
+                  </g>
                 ) : null}
                 <rect
                   x={row.timingMark.x}
@@ -646,7 +676,7 @@ export default function OpticalFormRenderer({
                   fontWeight="700"
                   fontFamily="Arial, Helvetica, sans-serif"
                 >
-                  {row.number}.
+                  {labelNum}.
                 </text>
                 {row.bubbles.map((b) => (
                   <g key={b.choice}>

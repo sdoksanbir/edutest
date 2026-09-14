@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { useEditorStore } from "../../store/editorStore";
 import { openGoogleDriveFlow } from "../../utils/openGoogleDriveFlow";
+import { loadEtDraftFromComputer } from "../../utils/etDraftFileFlow";
 
 function CropIcon() {
   return (
@@ -36,15 +37,71 @@ function DriveIcon() {
   );
 }
 
+/** Yazılı boş durum — kağıt + kalem */
+function WrittenDocPencilIcon() {
+  return (
+    <svg width="72" height="72" viewBox="0 0 72 72" fill="none" aria-hidden>
+      <rect x="18" y="12" width="32" height="42" rx="3" fill="#F1F5F9" stroke="#CBD5E1" strokeWidth="1.5" />
+      <path d="M24 24h16M24 30h16M24 36h10" stroke="#94A3B8" strokeWidth="1.5" strokeLinecap="round" />
+      <path
+        d="M40 44.5 52.5 22.5a2.2 2.2 0 0 1 3 3L43 47.5l-5.5 1.5 1.5-5.5Z"
+        fill="#FDA4AF"
+        stroke="#FB7185"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+      <path d="M50.8 24.8 55.2 28" stroke="#FB7185" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 const QUICK_ACTIONS = [
   { id: "crop", label: "PDF Kırpma", icon: CropIcon, action: "crop" as const },
   { id: "image", label: "Görsel Ekle", icon: ImagePlusIcon, action: "image" as const },
   { id: "drive", label: "Drive'dan Aç", icon: DriveIcon, action: "drive" as const },
 ];
 
+function WrittenEmptyState() {
+  const setOpenModal = useEditorStore((s) => s.setOpenModal);
+
+  const handleAddQuestion = () => {
+    setOpenModal("question-editor");
+  };
+
+  const handleLoadDraft = () => {
+    void loadEtDraftFromComputer().catch((e) => {
+      window.alert(e instanceof Error ? e.message : "Taslak yüklenemedi");
+    });
+  };
+
+  return (
+    <div className="tq-empty-state tq-empty-state--written">
+      <div className="tq-empty-state__icon-wrap tq-empty-state__icon-wrap--written" aria-hidden>
+        <WrittenDocPencilIcon />
+      </div>
+      <h3 className="tq-empty-state__title tq-empty-state__title--written">
+        Yazılı sınav sorusu henüz eklenmedi
+      </h3>
+      <div className="tq-empty-written-actions">
+        <button type="button" className="tq-empty-written-btn tq-empty-written-btn--primary" onClick={handleAddQuestion}>
+          <span aria-hidden>+</span> Soru Ekle
+        </button>
+        <button type="button" className="tq-empty-written-btn tq-empty-written-btn--secondary" onClick={handleLoadDraft}>
+          Taslak Yükle
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function EmptyQuestionCanvas() {
   const navigate = useNavigate();
   const setOpenModal = useEditorStore((s) => s.setOpenModal);
+  const activeTab = useEditorStore((s) => s.activeTab);
+
+  if (activeTab === "written-paper") {
+    return <WrittenEmptyState />;
+  }
 
   const handleQuick = (action: (typeof QUICK_ACTIONS)[number]["action"]) => {
     if (action === "crop") navigate("/crop-tool");

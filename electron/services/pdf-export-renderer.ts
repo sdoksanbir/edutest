@@ -69,6 +69,10 @@ import {
   questionNumberLabel,
   QUESTION_NUM_FONT_PT,
 } from './question-number-metrics.js'
+import {
+  drawWrittenOpenEndedOnPdfPage,
+  isWrittenLayoutQuestion,
+} from './written-question-layout.js'
 /** Görsel tepe hizası: baseline = img_y_top - font_size × 0.85 (cap-height ofset) */
 const QUESTION_NUM_TOP_OFFSET_RATIO = 0.85
 
@@ -498,11 +502,115 @@ function buildDrawLayoutContext(payload: Record<string, unknown>): {
   }
 }
 
+/** pdf-lib drawSvgPath: y = şeklin ÜST kenarı */
+function sectionRoundRectPath(w: number, h: number, r: number): string {
+  const rad = Math.min(r, w / 2, h / 2)
+  return [
+    `M ${rad},0`,
+    `L ${w - rad},0`,
+    `Q ${w},0 ${w},${rad}`,
+    `L ${w},${h - rad}`,
+    `Q ${w},${h} ${w - rad},${h}`,
+    `L ${rad},${h}`,
+    `Q 0,${h} 0,${h - rad}`,
+    `L 0,${rad}`,
+    `Q 0,0 ${rad},0`,
+    'Z',
+  ].join(' ')
+}
+
+function drawSectionHeaderOnPdfPage(
+  page: PDFPage,
+  item: LayoutRow,
+  font: PDFFont,
+): void {
+  const sec = item.section
+  if (!sec) return
+  const boxH = Math.max(8, Number(sec.box_h) || 22)
+  const width = Math.max(1, Number(item.w_pt) || 0)
+  if (!(width > 0)) return
+  const yTop = Number(item.y_top_pt)
+  if (!Number.isFinite(yTop)) return
+  const title = String(sec.title || 'Bölüm').slice(0, 40)
+  const fontPt = Math.max(6, Number(sec.font_pt) || 12)
+  const radius = Math.min(6, width / 2, boxH / 2)
+
+  page.drawSvgPath(sectionRoundRectPath(width, boxH, radius), {
+    x: item.x_pt,
+    y: yTop,
+    color: hexToRgbColor(String(sec.fill_color || '#F34A2F')),
+    ...(isSectionLineColorEnabled(sec.line_color)
+      ? {
+          borderColor: hexToRgbColor(String(sec.line_color)),
+          borderWidth: 0.8,
+        }
+      : {}),
+  })
+
+  const textW = font.widthOfTextAtSize(title, fontPt)
+  page.drawText(title, {
+    x: item.x_pt + Math.max(0, (width - textW) / 2),
+    y: yTop - boxH / 2 - fontPt * 0.35,
+    size: fontPt,
+    font,
+    color: hexToRgbColor(String(sec.text_color || '#FFFFFF')),
+  })
+}
+
+function isSectionLineColorEnabled(lineColor?: string | null): boolean {
+  const t = String(lineColor || '').trim().toLowerCase()
+  if (!t || t === 'none' || t === 'transparent' || t === 'off') return false
+  return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(t)
+}
+
+function parseLockedSectionMeta(
+  raw: unknown,
+): LayoutRow['section'] | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const s = raw as Record<string, unknown>
+  const boxRaw = Number(s.box_h)
+  const gapRaw = Number(s.gap_after)
+  const fontRaw = Number(s.font_pt)
+  return {
+    title: String(s.title ?? 'Bölüm').trim() || 'Bölüm',
+    fill_color: String(s.fill_color ?? '#F34A2F'),
+    text_color: String(s.text_color ?? '#FFFFFF'),
+    line_color: String(s.line_color ?? 'none'),
+    font_pt: Number.isFinite(fontRaw) && fontRaw > 0 ? fontRaw : 12,
+    box_h: Number.isFinite(boxRaw) && boxRaw > 0 ? boxRaw : 22,
+    gap_after: Number.isFinite(gapRaw) && gapRaw >= 0 ? gapRaw : 6,
+    start_new_page: s.start_new_page === true,
+    restart_numbering: s.restart_numbering === true,
+  }
+}
+
+function sectionMetaFromPayloadForOrder(
+  payload: Record<string, unknown>,
+  orderIndex: number,
+  lockedSection: unknown,
+): LayoutRow['section'] | undefined {
+  const fromLocked = parseLockedSectionMeta(lockedSection)
+  if (fromLocked) return fromLocked
+  const raw = payload.sections
+  if (!Array.isArray(raw)) return undefined
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue
+    const s = entry as Record<string, unknown>
+    if (Number(s.start_idx) !== orderIndex) continue
+    return parseLockedSectionMeta({
+      ...s,
+      box_h: 22,
+      gap_after: 6,
+    })
+  }
+  return undefined
+}
+
 async function drawQuestionsOnPage(
   pdf: PDFDocument,
   page: PDFPage,
   pageItems: LayoutRow[],
-  fonts: { bold: PDFFont },
+  fonts: { bold: PDFFont; regular?: PDFFont },
   payload: Record<string, unknown>,
   layoutCtx: {
     singleAvailWPt: number
@@ -541,13 +649,17 @@ async function drawQuestionsOnPage(
   })
 
   for (const item of pageItems) {
+    drawSectionHeaderOnPdfPage(page, item, fonts.bold)
+
     const qEarly = qByOrder.get(item.order_index)
+    const isWrittenQ = qEarly ? isWrittenLayoutQuestion(qEarly as Record<string, unknown>) : false
     const frameEnabled = Boolean(
       qEarly &&
         typeof qEarly === 'object' &&
         (qEarly as { fasikulFrame?: { enabled?: boolean } }).fasikulFrame?.enabled,
     )
     if (
+      !isWrittenQ &&
       !frameEnabled &&
       item.display_number != null &&
       item.img_y_top_pt != null
@@ -568,6 +680,42 @@ async function drawQuestionsOnPage(
         : 0,
     )
     const isEmptyFasikulBox = emptyRows > 0 && frameEnabled
+
+    if (isWrittenQ && qEarly) {
+      const drawW = item.img_w_pt ?? item.w_pt ?? 0
+      const drawH = item.img_h_pt ?? item.h_pt ?? 0
+      const layoutImgTop = item.img_y_top_pt ?? item.y_top_pt ?? 0
+      const numTextW =
+        item.display_number != null
+          ? fonts.bold.widthOfTextAtSize(
+              questionNumberLabel(item.display_number),
+              numFontPt,
+            )
+          : estimateQuestionNumberTextWidthPt(item.display_number, numFontPt)
+      const x = item.img_x_pt ?? item.x_pt + numOffsetPt + numTextW + numImageGapPt
+      if (drawW > 0 && drawH > 0) {
+        const accent =
+          typeof (payload as { written_accent_color?: unknown }).written_accent_color === 'string'
+            ? String((payload as { written_accent_color?: string }).written_accent_color)
+            : themePrimaryColor(payload) || '#0D9488'
+        drawWrittenOpenEndedOnPdfPage(page, {
+          x,
+          yTop: layoutImgTop,
+          w: drawW,
+          h: drawH,
+          displayNumber: item.display_number ?? item.order_index + 1,
+          stemHtml: String((qEarly as { writtenStemHtml?: string }).writtenStemHtml ?? ''),
+          answerArea: String((qEarly as { writtenAnswerArea?: string }).writtenAnswerArea ?? 'lines'),
+          answerLines: Number((qEarly as { writtenAnswerLines?: number }).writtenAnswerLines ?? 5),
+          accentHex: accent,
+          font: fonts.regular ?? fonts.bold,
+          fontBold: fonts.bold,
+          rgb,
+        })
+        counters.renderedQuestionCount += 1
+      }
+      continue
+    }
 
     if (isEmptyFasikulBox) {
       const frameRaw =
@@ -893,7 +1041,10 @@ export async function exportPdfFromPayload(
   const locked = payload.locked_layout
   let layout: LayoutRow[]
   let usedLockedLayoutPositions = false
-  if (Array.isArray(locked) && locked.length > 0) {
+  const hasSections =
+    Array.isArray(payload.sections) && (payload.sections as unknown[]).length > 0
+  // Bölüm varken kilitli önizleme rezervi ezilmiş olabiliyor — motor yeniden hesaplasın
+  if (!hasSections && Array.isArray(locked) && locked.length > 0) {
     usedLockedLayoutPositions = true
     console.debug('[PDF_EXPORT:RENDERER] locked_layout positions', {
       exportId,
@@ -925,17 +1076,26 @@ export async function exportPdfFromPayload(
           ? (qForReserve as { fasikulFrame?: unknown }).fasikulFrame
           : undefined,
       )
+      const section = sectionMetaFromPayloadForOrder(payload, orderIndex, item.section)
+      const sectionReserve = section
+        ? Math.max(0, section.box_h) + Math.max(0, section.gap_after)
+        : 0
+      const topReserve = badgeReserve + sectionReserve
       const rawImgY = item.img_y_top_pt
-      const imgYTop =
+      let imgYTop =
         rawImgY != null && Number.isFinite(Number(rawImgY))
           ? Number(rawImgY)
-          : yTop - badgeReserve
+          : yTop - topReserve
+      if (section && yTop - imgYTop < sectionReserve - 0.5) {
+        imgYTop = yTop - topReserve
+      }
       const xPt = Number(item.x_pt ?? 0)
       const fromItem =
         !emptyOrders.has(orderIndex) &&
         ((typeof item.image_base64 === 'string' && item.image_base64) ||
           (typeof item.image_b64 === 'string' && item.image_b64) ||
           undefined)
+      const hPt = Number(item.h_pt ?? imgH)
       return {
         kind: String(item.kind ?? 'question'),
         order_index: orderIndex,
@@ -943,7 +1103,7 @@ export async function exportPdfFromPayload(
         x_pt: xPt,
         y_top_pt: yTop,
         w_pt: Number(item.w_pt ?? imgW),
-        h_pt: Number(item.h_pt ?? imgH),
+        h_pt: Math.max(hPt, imgH + topReserve),
         num_slot_w_pt: Number(item.num_slot_w_pt ?? 0),
         img_x_pt: Number(item.img_x_pt ?? xPt),
         img_y_top_pt: imgYTop,
@@ -964,10 +1124,14 @@ export async function exportPdfFromPayload(
           item.layout_mode === 'full-width' || item.layout_mode === 'auto'
             ? item.layout_mode
             : 'single-column',
+        section,
       } satisfies LayoutRow
     })
   } else {
-    console.debug('[PDF_EXPORT:RENDERER] computeLayoutFromPayload', { exportId })
+    console.debug('[PDF_EXPORT:RENDERER] computeLayoutFromPayload', {
+      exportId,
+      reason: hasSections ? 'sections_require_fresh_layout' : 'no_locked_layout',
+    })
     ;({ layout } = computeLayoutFromPayload(payload))
   }
 

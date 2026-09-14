@@ -5,6 +5,7 @@
 
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { FontReferenceV1 } from "../types";
+import type { BankCropTarget } from "../utils/bankQuestionUtils";
 
 export type LocalPdfEntry = {
   id: string;
@@ -48,6 +49,20 @@ const _zoomBySource = new Map<string, number>();
 let _choiceCount: 3 | 4 | 5 | null = null;
 /** Kaydedilmiş local soruların kaynak eşlemesi - tıklanınca sayfaya gidilebilsin */
 const _questionIdToLocalSource = new Map<string, { localPdfId: string; pageNumber: number }>();
+/** Klasörden açılan kırpma: sorular otomatik bankaya gider */
+let _bankCropTarget: BankCropTarget | null = null;
+
+export function setBankCropTarget(target: BankCropTarget | null): void {
+  _bankCropTarget = target;
+}
+
+export function getBankCropTarget(): BankCropTarget | null {
+  return _bankCropTarget;
+}
+
+export function clearBankCropTarget(): void {
+  _bankCropTarget = null;
+}
 
 export function setLocalSourceForQuestion(questionId: string, localPdfId: string, pageNumber: number): void {
   _questionIdToLocalSource.set(questionId, { localPdfId, pageNumber });

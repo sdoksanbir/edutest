@@ -852,8 +852,9 @@ export default function PageStructurePanel({
               </button>
             </div>
             <p className={`text-[11px] leading-snug ${t.labelMuted}`}>
-              Geniş: soru mevcut sütun sayısının tamamına yayılır; dar: tek sütunda kalır.
-              Önceki/sonraki dar sorularda sütun çizgisi devam eder.
+              Geniş: sayfa genişliğine yayılır (üstte tek bant). Dar: sütunlardan birine
+              yerleşir; geniş sorunun altında iki dar yan yana (hibrit) paketlenir. Tek
+              sütunlu testte Dar/Geniş kullanınca otomatik 2 sütuna geçilir.
             </p>
           </div>
           {layoutRecommendationHint ? (

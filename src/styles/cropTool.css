@@ -185,3 +185,22 @@
   box-sizing: border-box;
   border-radius: 1px;
 }
+
+.tq-crop-selection-box--editing {
+  border-color: #38bdf8;
+  border-width: 2px;
+  box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.35);
+}
+
+.tq-crop-resize-handle {
+  position: absolute;
+  z-index: 25;
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 2px solid #0ea5e9;
+  background: #f8fafc;
+  border-radius: 2px;
+  pointer-events: auto;
+  touch-action: none;
+}

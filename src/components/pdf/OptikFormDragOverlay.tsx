@@ -34,6 +34,7 @@ type Props = {
   columns: number;
   columnGapMm?: number;
   questions: QuestionItem[];
+  sections?: import("../../types").SectionRange[];
   optionCount: OptikFormOptionCount;
   bookletType: OptikFormBookletType;
   offsetYPt: number;
@@ -63,6 +64,7 @@ export default function OptikFormDragOverlay({
   columns,
   columnGapMm = 8,
   questions,
+  sections,
   optionCount,
   bookletType,
   offsetYPt,
@@ -84,7 +86,7 @@ export default function OptikFormDragOverlay({
 
   const placement = useMemo(() => {
     if (!enabled) return null;
-    const rows = optikRowsFromLayoutItems(layout, questions);
+    const rows = optikRowsFromLayoutItems(layout, questions, sections);
     if (rows.length === 0) return null;
     const activeOpts = resolveOptikActiveOptions(questions, optionCount);
 
@@ -138,6 +140,7 @@ export default function OptikFormDragOverlay({
     enabled,
     layout,
     questions,
+    sections,
     optionCount,
     bookletType,
     pageWpt,
@@ -209,7 +212,7 @@ export default function OptikFormDragOverlay({
           reservedAboveFooterPt = ak.tableHeightPx + 6;
         }
       }
-      const rows = optikRowsFromLayoutItems(layout, questions);
+      const rows = optikRowsFromLayoutItems(layout, questions, sections);
       const activeOpts = resolveOptikActiveOptions(questions, optionCount);
       const placed = resolveCompactOptikFormPlacement({
         layout,

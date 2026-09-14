@@ -53,6 +53,74 @@ export const APP_FILL_TEXT_PALETTE: AppColorSwatch[] = [
   ...APP_COLOR_SWATCH_PALETTE,
 ];
 
+/** Bölüm başlığı — varsayılan kırmızı dolgu + beyaz yazı */
+export const SECTION_DEFAULT_FILL = APP_ACCENT_DEFAULT;
+export const SECTION_DEFAULT_TEXT = APP_TEXT_ON_FILL_DEFAULT;
+/** Çizgi kapalı (PDF/canvas stroke yok) */
+export const SECTION_LINE_NONE = "none";
+
+/** Beyaz kağıt üzerinde okunaklı bölüm dolgu renkleri */
+export const SECTION_FILL_PALETTE: AppColorSwatch[] = [
+  { label: "Kırmızı", color: "#F34A2F" },
+  { label: "Lacivert", color: "#0A1931" },
+  { label: "Bordo", color: "#B71C1C" },
+  { label: "Turuncu", color: "#E65100" },
+  { label: "Yeşil", color: "#1B7A4E" },
+  { label: "Mavi", color: "#1565C0" },
+  { label: "Teal", color: "#00796B" },
+  { label: "Mor", color: "#6A1B9A" },
+  { label: "Açık kırmızı", color: "#FFCDD2" },
+  { label: "Açık mavi", color: "#BBDEFB" },
+  { label: "Açık yeşil", color: "#C8E6C9" },
+  { label: "Krem", color: "#FFF3E0" },
+  { label: "Açık gri", color: "#ECEFF1" },
+];
+
+/** Dolgu ile uyumlu yazı seçenekleri */
+export const SECTION_TEXT_PALETTE: AppColorSwatch[] = [
+  { label: "Beyaz", color: "#FFFFFF" },
+  { label: "Lacivert", color: "#0A1931" },
+  { label: "Siyah", color: "#111827" },
+  { label: "Koyu gri", color: "#374151" },
+  { label: "Kırmızı", color: "#F34A2F" },
+];
+
+/** Tek tıkla dolgu + yazı (beyaz kağıda uygun) */
+export const SECTION_STYLE_COMBOS: readonly {
+  label: string;
+  fill: string;
+  text: string;
+}[] = [
+  { label: "Kırmızı / Beyaz", fill: "#F34A2F", text: "#FFFFFF" },
+  { label: "Lacivert / Beyaz", fill: "#0A1931", text: "#FFFFFF" },
+  { label: "Bordo / Beyaz", fill: "#B71C1C", text: "#FFFFFF" },
+  { label: "Turuncu / Beyaz", fill: "#E65100", text: "#FFFFFF" },
+  { label: "Yeşil / Beyaz", fill: "#1B7A4E", text: "#FFFFFF" },
+  { label: "Mavi / Beyaz", fill: "#1565C0", text: "#FFFFFF" },
+  { label: "Teal / Beyaz", fill: "#00796B", text: "#FFFFFF" },
+  { label: "Mor / Beyaz", fill: "#6A1B9A", text: "#FFFFFF" },
+  { label: "Açık kırmızı / Lacivert", fill: "#FFCDD2", text: "#0A1931" },
+  { label: "Açık mavi / Lacivert", fill: "#BBDEFB", text: "#0A1931" },
+  { label: "Açık yeşil / Lacivert", fill: "#C8E6C9", text: "#0A1931" },
+  { label: "Krem / Lacivert", fill: "#FFF3E0", text: "#0A1931" },
+];
+
+export function isSectionLineEnabled(lineColor?: string | null): boolean {
+  const t = (lineColor || "").trim().toLowerCase();
+  if (!t || t === "none" || t === "transparent" || t === "off") return false;
+  return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(t);
+}
+
+/** Açık dolgu → koyu yazı; koyu dolgu → beyaz yazı */
+export function suggestedSectionTextColor(fillHex: string): string {
+  const n = normalizeHexColor(fillHex, SECTION_DEFAULT_FILL);
+  const r = parseInt(n.slice(1, 3), 16);
+  const g = parseInt(n.slice(3, 5), 16);
+  const b = parseInt(n.slice(5, 7), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.62 ? "#0A1931" : "#FFFFFF";
+}
+
 const PANEL_ATTR = "data-edutest-color-panel";
 
 function ColorSwatch({

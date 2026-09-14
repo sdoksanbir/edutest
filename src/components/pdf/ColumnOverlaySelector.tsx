@@ -27,12 +27,14 @@ export default function ColumnOverlaySelector({
       data-column-overlay
       aria-hidden={!enabled}
     >
-      {columnRects.map((r, i) => (
+      {columnRects.map((r, i) => {
+        const colIdx = r.columnIndex ?? i;
+        return (
         <button
-          key={i}
+          key={`${colIdx}-${i}`}
           type="button"
           className={`pointer-events-auto absolute flex flex-col items-center justify-start border-2 border-dashed transition-colors ${
-            selectedColumnIndex === i
+            selectedColumnIndex === colIdx
               ? "border-blue-400 bg-blue-500/15"
               : "border-slate-400/50 bg-slate-500/5 hover:border-blue-300/70 hover:bg-blue-500/10"
           }`}
@@ -42,20 +44,21 @@ export default function ColumnOverlaySelector({
             width: r.widthPx,
             height: r.heightPx,
           }}
-          title={`${i + 1}. sütun`}
+          title={`${colIdx + 1}. sütun`}
           onPointerDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            onColumnPointerDown(i, e.clientX, e.clientY);
+            onColumnPointerDown(colIdx, e.clientX, e.clientY);
           }}
         >
           {labels && (
             <span className="mt-1 rounded bg-slate-900/70 px-1.5 py-0.5 text-[0.625rem] font-bold text-white">
-              {i + 1}. sütun
+              {colIdx + 1}. sütun
             </span>
           )}
         </button>
-      ))}
+        );
+      })}
     </div>
   );
 }

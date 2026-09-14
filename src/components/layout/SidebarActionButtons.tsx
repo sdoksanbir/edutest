@@ -86,7 +86,16 @@ function DriveIcon() {
   );
 }
 
-type ActionTone = "blue" | "orange" | "fuchsia" | "emerald" | "amber" | "teal" | "sky" | "violet";
+function SettingsIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" />
+    </svg>
+  );
+}
+
+type ActionTone = "blue" | "orange" | "fuchsia" | "emerald" | "amber" | "teal" | "sky" | "violet" | "slate";
 
 const ACTIONS: Array<
   | {
@@ -102,16 +111,29 @@ const ACTIONS: Array<
       shortLabel: string;
       tone: ActionTone;
       icon: typeof BankIcon;
-      modal: "pdf-bank" | "question-editor" | "add-image" | "save-draft" | "load-draft" | "pick-draft-questions" | "google-drive";
+      modal: "pdf-bank" | "question-editor" | "add-image" | "save-draft" | "load-draft" | "pick-draft-questions" | "pick-bank-questions" | "google-drive";
       wide?: boolean;
       brandIcon?: boolean;
     }
 > = [
-  { label: "Soru Bankasından Seçin", shortLabel: "Soru Bankası", tone: "blue", icon: BankIcon, route: "/soru-bankasi" },
+  {
+    label: "Soru Bankası",
+    shortLabel: "Soru Bankası",
+    tone: "blue",
+    icon: BankIcon,
+    route: "/soru-bankasi",
+  },
+  {
+    label: "Soru Bankasından Seçin",
+    shortLabel: "Bankadan Seç",
+    tone: "violet",
+    icon: BankIcon,
+    modal: "pick-bank-questions",
+  },
   {
     label: "Taslaktan Soru Seç",
     shortLabel: "Taslaktan Seç",
-    tone: "violet",
+    tone: "fuchsia",
     icon: DraftPickIcon,
     modal: "pick-draft-questions",
   },
@@ -134,6 +156,7 @@ const ACTIONS: Array<
     icon: RestoreIcon,
     modal: "load-draft",
   },
+  { label: "Ayarlar", shortLabel: "Ayarlar", tone: "slate", icon: SettingsIcon, route: "/ayarlar" },
 ];
 
 export default function SidebarActionButtons() {

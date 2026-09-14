@@ -11,7 +11,7 @@
     "build": "tsc -b && vite build",
     "build:electron": "tsc -p electron/tsconfig.json && tsc -p electron/tsconfig.preload.json && node scripts/rename-preload.mjs",
     "lint": "oxlint",
-    "test": "node --experimental-strip-types scripts/test-column-bounds.mjs && node --experimental-strip-types scripts/test-bulk-scale-session.mjs && node --experimental-strip-types scripts/test-image-balance.mjs && node --experimental-strip-types scripts/test-crop-capture-sync.mjs",
+    "test": "node --experimental-strip-types scripts/test-column-bounds.mjs && node --experimental-strip-types scripts/test-bulk-scale-session.mjs && node --experimental-strip-types scripts/test-image-balance.mjs && node --experimental-strip-types scripts/test-crop-capture-sync.mjs && node --experimental-strip-types scripts/test-question-detection.mjs",
     "preview": "vite preview",
     "copy:tesseract": "node scripts/copy-tesseract-assets.mjs",
     "postinstall": "node scripts/copy-tesseract-assets.mjs && node scripts/copy-pdfjs-assets.mjs",
